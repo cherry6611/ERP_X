@@ -1,0 +1,421 @@
+import {
+  Inject,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
+import {
+  DRIZZLE_DATABASE,
+  type PostgresJsDatabase,
+} from '@server/platform';
+import { and, count, desc, eq, ilike, ne, or } from 'drizzle-orm';
+import {
+  crmContact,
+  erpAr,
+  hrDepartment,
+  hrPosition,
+  mdCustomer,
+  mdEmployee,
+  mdSupplier,
+} from '@server/database/schema';
+import { generateBizCode } from '@server/common/utils/biz-code';
+import type {
+  CreateContactDto,
+  CreateCustomerDto,
+  CreateSupplierDto,
+  CreditSummary,
+  Customer,
+  CustomerContact,
+  Employee,
+  PagedResult,
+  Supplier,
+  UpdateCustomerDto,
+  UpdateSupplierDto,
+} from '@shared/api.interface';
+
+interface CustomerRow {
+  id: string;
+  code: string;
+  name: string;
+  uscc: string | null;
+  industry: string | null;
+  creditLevel: string | null;
+  creditLimit: string | null;
+  termsDays: number | null;
+  status: string | null;
+  remark: string | null;
+  createdAt: Date;
+}
+
+@Injectable()
+export class MasterDataService {
+  constructor(
+    @Inject(DRIZZLE_DATABASE) private readonly db: PostgresJsDatabase
+  ) {}
+
+  private toCustomer(row: CustomerRow): Customer {
+    return {
+      id: row.id,
+      code: row.code,
+      name: row.name,
+      uscc: row.uscc,
+      industry: row.industry,
+      creditLevel: row.creditLevel,
+      creditLimit: Number(row.creditLimit ?? 0),
+      termsDays: row.termsDays ?? 30,
+      status: row.status ?? 'active',
+      remark: row.remark,
+      createdAt: row.createdAt.toISOString(),
+    };
+  }
+
+  async listCustomers(
+    keyword?: string,
+    page = 1,
+    pageSize = 20
+  ): Promise<PagedResult<Customer>> {
+    const where =
+      keyword && keyword.trim() !== ''
+        ? or(
+            ilike(mdCustomer.name, `%${keyword}%`),
+            ilike(mdCustomer.code, `%${keyword}%`)
+          )
+        : undefined;
+    const [{ total }] = await this.db
+      .select({ total: count() })
+      .from(mdCustomer)
+      .where(where);
+    const rows = await this.db
+      .select({
+        id: mdCustomer.id,
+        code: mdCustomer.code,
+        name: mdCustomer.name,
+        uscc: mdCustomer.uscc,
+        industry: mdCustomer.industry,
+        creditLevel: mdCustomer.creditLevel,
+        creditLimit: mdCustomer.creditLimit,
+        termsDays: mdCustomer.termsDays,
+        status: mdCustomer.status,
+        remark: mdCustomer.remark,
+        createdAt: mdCustomer.createdAt,
+      })
+      .from(mdCustomer)
+      .where(where)
+      .orderBy(desc(mdCustomer.createdAt))
+      .limit(pageSize)
+      .offset((page - 1) * pageSize);
+    return {
+      items: rows.map((row: CustomerRow) => this.toCustomer(row)),
+      total,
+      page,
+      pageSize,
+    };
+  }
+
+  async createCustomer(dto: CreateCustomerDto): Promise<Customer> {
+    const code = await generateBizCode(this.db, mdCustomer, mdCustomer.code, 'CUS');
+    const rows: CustomerRow[] = await this.db
+      .insert(mdCustomer)
+      .values({
+        code,
+        name: dto.name,
+        uscc: dto.uscc,
+        industry: dto.industry,
+        creditLevel: dto.creditLevel,
+        creditLimit: String(dto.creditLimit ?? 0),
+        termsDays: dto.termsDays ?? 30,
+        status: dto.status ?? 'active',
+        remark: dto.remark,
+      })
+      .returning();
+    return this.toCustomer(rows[0]);
+  }
+
+  async updateCustomer(id: string, dto: UpdateCustomerDto): Promise<Customer> {
+    const patch: Record<string, unknown> = { updatedAt: new Date() };
+    if (dto.name !== undefined) patch.name = dto.name;
+    if (dto.uscc !== undefined) patch.uscc = dto.uscc;
+    if (dto.industry !== undefined) patch.industry = dto.industry;
+    if (dto.creditLevel !== undefined) patch.creditLevel = dto.creditLevel;
+    if (dto.creditLimit !== undefined) patch.creditLimit = String(dto.creditLimit);
+    if (dto.termsDays !== undefined) patch.termsDays = dto.termsDays;
+    if (dto.status !== undefined) patch.status = dto.status;
+    if (dto.remark !== undefined) patch.remark = dto.remark;
+    const rows: CustomerRow[] = await this.db
+      .update(mdCustomer)
+      .set(patch)
+      .where(eq(mdCustomer.id, id))
+      .returning();
+    if (rows.length === 0) throw new NotFoundException('客户不存在');
+    return this.toCustomer(rows[0]);
+  }
+
+  async listContacts(customerId: string): Promise<CustomerContact[]> {
+    return this.db
+      .select({
+        id: crmContact.id,
+        customerId: crmContact.customerId,
+        name: crmContact.name,
+        phone: crmContact.phone,
+        email: crmContact.email,
+        position: crmContact.position,
+        isPrimary: crmContact.isPrimary,
+        remark: crmContact.remark,
+      })
+      .from(crmContact)
+      .where(eq(crmContact.customerId, customerId))
+      .orderBy(desc(crmContact.isPrimary));
+  }
+
+  async createContact(customerId: string, dto: CreateContactDto): Promise<CustomerContact> {
+    const customer = await this.db
+      .select({ id: mdCustomer.id })
+      .from(mdCustomer)
+      .where(eq(mdCustomer.id, customerId));
+    if (customer.length === 0) throw new NotFoundException('客户不存在');
+    if (dto.isPrimary === true) {
+      await this.db
+        .update(crmContact)
+        .set({ isPrimary: false, updatedAt: new Date() })
+        .where(eq(crmContact.customerId, customerId));
+    }
+    const rows = await this.db
+      .insert(crmContact)
+      .values({
+        customerId,
+        name: dto.name,
+        phone: dto.phone,
+        email: dto.email,
+        position: dto.position,
+        isPrimary: dto.isPrimary ?? false,
+        remark: dto.remark,
+      })
+      .returning({
+        id: crmContact.id,
+        customerId: crmContact.customerId,
+        name: crmContact.name,
+        phone: crmContact.phone,
+        email: crmContact.email,
+        position: crmContact.position,
+        isPrimary: crmContact.isPrimary,
+        remark: crmContact.remark,
+      });
+    return rows[0];
+  }
+
+  async updateContact(id: string, dto: CreateContactDto): Promise<CustomerContact> {
+    const existing = await this.db
+      .select({ customerId: crmContact.customerId })
+      .from(crmContact)
+      .where(eq(crmContact.id, id));
+    if (existing.length === 0) throw new NotFoundException('联系人不存在');
+    if (dto.isPrimary === true) {
+      await this.db
+        .update(crmContact)
+        .set({ isPrimary: false, updatedAt: new Date() })
+        .where(
+          and(
+            eq(crmContact.customerId, existing[0].customerId),
+            ne(crmContact.id, id)
+          )
+        );
+    }
+    const patch: Record<string, unknown> = { updatedAt: new Date() };
+    if (dto.name !== undefined) patch.name = dto.name;
+    if (dto.phone !== undefined) patch.phone = dto.phone;
+    if (dto.email !== undefined) patch.email = dto.email;
+    if (dto.position !== undefined) patch.position = dto.position;
+    if (dto.isPrimary !== undefined) patch.isPrimary = dto.isPrimary;
+    if (dto.remark !== undefined) patch.remark = dto.remark;
+    const rows = await this.db
+      .update(crmContact)
+      .set(patch)
+      .where(eq(crmContact.id, id))
+      .returning({
+        id: crmContact.id,
+        customerId: crmContact.customerId,
+        name: crmContact.name,
+        phone: crmContact.phone,
+        email: crmContact.email,
+        position: crmContact.position,
+        isPrimary: crmContact.isPrimary,
+        remark: crmContact.remark,
+      });
+    return rows[0];
+  }
+
+  async deleteContact(id: string): Promise<void> {
+    const rows = await this.db
+      .delete(crmContact)
+      .where(eq(crmContact.id, id))
+      .returning({ id: crmContact.id });
+    if (rows.length === 0) throw new NotFoundException('联系人不存在');
+  }
+
+  async getCredit(customerId: string): Promise<CreditSummary> {
+    const customers = await this.db
+      .select({
+        id: mdCustomer.id,
+        name: mdCustomer.name,
+        creditLimit: mdCustomer.creditLimit,
+      })
+      .from(mdCustomer)
+      .where(eq(mdCustomer.id, customerId));
+    if (customers.length === 0) throw new NotFoundException('客户不存在');
+    const arRows = await this.db
+      .select({
+        amount: erpAr.amount,
+        settledAmount: erpAr.settledAmount,
+        dueDate: erpAr.dueDate,
+        status: erpAr.status,
+      })
+      .from(erpAr)
+      .where(eq(erpAr.customerId, customerId));
+    let openArAmount = 0;
+    let overdueAmount = 0;
+    const today = new Date().toISOString().slice(0, 10);
+    for (const row of arRows) {
+      if (row.status === 'settled') continue;
+      const open = Number(row.amount) - Number(row.settledAmount ?? 0);
+      openArAmount += open;
+      if (row.dueDate !== null && row.dueDate < today) overdueAmount += open;
+    }
+    const limit = Number(customers[0].creditLimit ?? 0);
+    return {
+      customerId,
+      customerName: customers[0].name,
+      creditLimit: limit,
+      openArAmount,
+      overdueAmount,
+      exceedLimit: limit > 0 && openArAmount > limit,
+      hasOverdue: overdueAmount > 0,
+    };
+  }
+
+  async listSuppliers(keyword?: string): Promise<Supplier[]> {
+    const where =
+      keyword && keyword.trim() !== ''
+        ? or(
+            ilike(mdSupplier.name, `%${keyword}%`),
+            ilike(mdSupplier.code, `%${keyword}%`)
+          )
+        : undefined;
+    const rows = await this.db
+      .select()
+      .from(mdSupplier)
+      .where(where)
+      .orderBy(desc(mdSupplier.createdAt));
+    return rows.map((row) => ({
+      id: row.id,
+      code: row.code,
+      name: row.name,
+      type: row.type,
+      contactName: row.contactName,
+      contactPhone: row.contactPhone,
+      bankAccount: row.bankAccount,
+      rating: Number(row.rating ?? 0),
+      status: row.status ?? 'active',
+      remark: row.remark,
+      createdAt: row.createdAt.toISOString(),
+    }));
+  }
+
+  async createSupplier(dto: CreateSupplierDto): Promise<Supplier> {
+    const code = await generateBizCode(this.db, mdSupplier, mdSupplier.code, 'SUP');
+    const rows = await this.db
+      .insert(mdSupplier)
+      .values({
+        code,
+        name: dto.name,
+        type: dto.type,
+        contactName: dto.contactName,
+        contactPhone: dto.contactPhone,
+        bankAccount: dto.bankAccount,
+        rating: String(dto.rating ?? 0),
+        status: dto.status ?? 'active',
+        remark: dto.remark,
+      })
+      .returning();
+    const row = rows[0];
+    return {
+      id: row.id,
+      code: row.code,
+      name: row.name,
+      type: row.type,
+      contactName: row.contactName,
+      contactPhone: row.contactPhone,
+      bankAccount: row.bankAccount,
+      rating: Number(row.rating ?? 0),
+      status: row.status ?? 'active',
+      remark: row.remark,
+      createdAt: row.createdAt.toISOString(),
+    };
+  }
+
+  async updateSupplier(id: string, dto: UpdateSupplierDto): Promise<Supplier> {
+    const patch: Record<string, unknown> = { updatedAt: new Date() };
+    if (dto.name !== undefined) patch.name = dto.name;
+    if (dto.type !== undefined) patch.type = dto.type;
+    if (dto.contactName !== undefined) patch.contactName = dto.contactName;
+    if (dto.contactPhone !== undefined) patch.contactPhone = dto.contactPhone;
+    if (dto.bankAccount !== undefined) patch.bankAccount = dto.bankAccount;
+    if (dto.rating !== undefined) patch.rating = String(dto.rating);
+    if (dto.status !== undefined) patch.status = dto.status;
+    if (dto.remark !== undefined) patch.remark = dto.remark;
+    const rows = await this.db
+      .update(mdSupplier)
+      .set(patch)
+      .where(eq(mdSupplier.id, id))
+      .returning();
+    if (rows.length === 0) throw new NotFoundException('供应商不存在');
+    const row = rows[0];
+    return {
+      id: row.id,
+      code: row.code,
+      name: row.name,
+      type: row.type,
+      contactName: row.contactName,
+      contactPhone: row.contactPhone,
+      bankAccount: row.bankAccount,
+      rating: Number(row.rating ?? 0),
+      status: row.status ?? 'active',
+      remark: row.remark,
+      createdAt: row.createdAt.toISOString(),
+    };
+  }
+
+  async listEmployees(): Promise<Employee[]> {
+    const rows = await this.db
+      .select({
+        id: mdEmployee.id,
+        code: mdEmployee.code,
+        name: mdEmployee.name,
+        orgName: mdEmployee.orgName,
+        position: mdEmployee.position,
+        status: mdEmployee.status,
+        departmentId: mdEmployee.departmentId,
+        departmentName: hrDepartment.name,
+        positionId: mdEmployee.positionId,
+        roleName: hrPosition.roleName,
+        hireDate: mdEmployee.hireDate,
+        employmentType: mdEmployee.employmentType,
+        phone: mdEmployee.phone,
+        resignDate: mdEmployee.resignDate,
+        platformUserId: mdEmployee.platformUserId,
+        supplierId: mdEmployee.supplierId,
+        supplierName: mdSupplier.name,
+      })
+      .from(mdEmployee)
+      .leftJoin(hrDepartment, eq(hrDepartment.id, mdEmployee.departmentId))
+      .leftJoin(hrPosition, eq(hrPosition.id, mdEmployee.positionId))
+      .leftJoin(mdSupplier, eq(mdSupplier.id, mdEmployee.supplierId))
+      .orderBy(mdEmployee.code);
+    return rows.map((row) => ({
+      ...row,
+      status: row.status ?? 'active',
+      platformUserId: row.platformUserId ?? null,
+      supplierId: row.supplierId ?? null,
+      supplierName: row.supplierName ?? null,
+    }));
+  }
+
+}

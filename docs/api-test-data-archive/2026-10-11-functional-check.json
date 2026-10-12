@@ -1,0 +1,28 @@
+{
+  "archivedAt": "2026-10-11",
+  "reason": "全功能可用性与业务联动检查（functional-check-2026-10.md）产生的测试数据，验证完毕后清理",
+  "dataCreator": "验收助手 uid=1822672169768964（接口测试 auth 模式）",
+  "namingRule": "[API_TEST] 前缀",
+  "records": [
+    { "table": "erp_ar_writeoff", "count": 1, "ref": "ARR2026100001 ↔ RCV2026100001，核销 50000" },
+    { "table": "erp_ap_writeoff", "count": 1, "ref": "APB2026100001 ↔ PAY2026100002，核销 12000" },
+    { "table": "erp_receipt", "count": 1, "ref": "RCV2026100001 回款 50000，status=matched" },
+    { "table": "erp_payment", "count": 2, "ref": "PAY2026100001(rejected，空action误触发) + PAY2026100002(approved)" },
+    { "table": "erp_ar", "count": 1, "ref": "ARR2026100001，收入确认自动生成，status=settled" },
+    { "table": "erp_ap_bill", "count": 1, "ref": "APB2026100001，status=paid" },
+    { "table": "erp_project_revenue", "count": 1, "ref": "REV2026100001 进度确认 50000" },
+    { "table": "erp_project_cost", "count": 2, "ref": "CST2026100001 外包 12000 + CST2026100002 flex_labor 800" },
+    { "table": "erp_timesheet", "count": 1, "ref": "TS2026100001 工时 8h，confirmed" },
+    { "table": "erp_labor_rate", "count": 1, "ref": "[API_TEST]数据标注员 100/h" },
+    { "table": "erp_project", "count": 1, "ref": "PRJ2026100001，executing" },
+    { "table": "erp_contract", "count": 1, "ref": "CTR2026100001，商机转化生成，active" },
+    { "table": "crm_opportunity", "count": 1, "ref": "OPP2026100001，convert 后 won" },
+    { "table": "crm_lead", "count": 1, "ref": "LEAD2026100001" },
+    { "table": "md_customer", "count": 1, "ref": "CUS2026100001，creditLimit=200000" },
+    { "table": "md_supplier", "count": 1, "ref": "SUP2026100001" },
+    { "table": "md_employee", "count": 2, "ref": "EMP2026100001 兼职工 + EMP2026100002 platformUserId 绑定验证" },
+    { "table": "hr_training", "count": 1, "ref": "TRN2026100001，上轮验收残留数据顺带清理" }
+  ],
+  "auditNote": "comp_audit_log 中对应审计记录为合规日志，按设计保留不删除；本文件 + 审计日志共同构成留档证据。",
+  "deleteOrder": "ar_writeoff → ap_writeoff → receipt → payment → ar → ap → revenue → cost → timesheet → labor_rate → project → contract → opportunity → lead → customer → supplier → employee → training（单事务）"
+}

@@ -1,0 +1,82 @@
+import { APP_FILTER } from '@nestjs/core';
+import { Module } from '@nestjs/common';
+import { PlatformModule } from './platform';
+import { ActorAccessModule } from './common/auth/actor-access.module';
+
+import { AuthModule } from './modules/auth/auth.module';
+import { HealthModule } from './modules/health/health.module';
+import { FilesModule } from './modules/files/files.module';
+import { DirectoryModule } from './modules/directory/directory.module';
+import { GlobalExceptionFilter } from './common/filters/exception.filter';
+import { ViewModule } from './modules/view/view.module';
+import { MasterDataModule } from './modules/master-data/master-data.module';
+import { CrmModule } from './modules/crm/crm.module';
+import { ContractsModule } from './modules/contracts/contracts.module';
+import { ProjectsModule } from './modules/projects/projects.module';
+import { CostsModule } from './modules/costs/costs.module';
+import { RevenuesModule } from './modules/revenues/revenues.module';
+import { FinanceModule } from './modules/finance/finance.module';
+import { BiModule } from './modules/bi/bi.module';
+import { AuditModule } from './modules/audit/audit.module';
+import { HrModule } from './modules/hr/hr.module';
+import { FinBudgetModule } from './modules/fin-budget/fin-budget.module';
+import { FinExpenseModule } from './modules/fin-expense/fin-expense.module';
+import { PurModule } from './modules/pur/pur.module';
+import { AssetModule } from './modules/asset/asset.module';
+import { VoucherModule } from './modules/voucher/voucher.module';
+import { DataAssetModule } from './modules/data-asset/data-asset.module';
+import { NotificationsModule } from './modules/notifications/notifications.module';
+import { AttachmentModule } from './modules/attachment/attachment.module';
+import { FeishuSyncModule } from './modules/feishu-sync/feishu-sync.module';
+import { FeishuDriveModule } from './modules/feishu-drive/feishu-drive.module';
+import { AdminModule } from './modules/admin/admin.module';
+import { AutomationConfigModule } from './modules/admin/automation-config.module';
+import { SemanticModule } from './modules/semantic/semantic.module';
+
+@Module({
+  imports: [
+    // 平台 Module，提供平台能力
+    PlatformModule.forRoot(),
+    ActorAccessModule,
+    AuthModule,
+    HealthModule,
+    FilesModule,
+    DirectoryModule,
+    // ====== @route-section: business-modules START ======
+    MasterDataModule,
+    CrmModule,
+    ContractsModule,
+    ProjectsModule,
+    CostsModule,
+    RevenuesModule,
+    FinanceModule,
+    BiModule,
+    AuditModule,
+    HrModule,
+    FinBudgetModule,
+    FinExpenseModule,
+    PurModule,
+    AssetModule,
+    VoucherModule,
+    DataAssetModule,
+    NotificationsModule,
+    AttachmentModule,
+    FeishuSyncModule,
+    FeishuDriveModule,
+    AdminModule,
+    AutomationConfigModule,
+    SemanticModule,
+    // ====== @route-section: business-modules END ======
+
+    // ⚠️ @route-order: last
+    // ViewModule is the fallback route module, must be registered last.
+    ViewModule,
+  ],
+  providers: [
+    {
+      provide: APP_FILTER,
+      useClass: GlobalExceptionFilter,
+    },
+  ],
+})
+export class AppModule {}

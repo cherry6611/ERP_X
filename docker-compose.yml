@@ -1,0 +1,35 @@
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: erp
+      POSTGRES_PASSWORD: erp
+      POSTGRES_DB: erp
+    ports:
+      - "5432:5432"
+    volumes:
+      - erp-pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U erp"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+  app:
+    build: .
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://erp:erp@postgres:5432/erp
+      JWT_SECRET: change-me
+      SECRET_ENC_KEY: change-me-32-characters-minimum
+      SERVER_HOST: 0.0.0.0
+      SERVER_PORT: 3000
+    ports:
+      - "3000:3000"
+    volumes:
+      - erp-uploads:/app/data/uploads
+    command: sh -c "node scripts/db-migrate.mjs && node dist/server/main.js"
+volumes:
+  erp-pg:
+  erp-uploads:
