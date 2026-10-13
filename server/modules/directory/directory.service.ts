@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { Inject } from '@nestjs/common';
-import { ilike, or, sql } from 'drizzle-orm';
+import { and, eq, ilike, inArray, or, sql } from 'drizzle-orm';
 import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 import { hrDepartment, mdEmployee, sysDepartment, sysUser } from '@server/database/schema';
 import { DRIZZLE_DATABASE } from '@server/platform/tokens';
@@ -19,7 +19,11 @@ interface UserCard {
 export class DirectoryService {
   constructor(@Inject(DRIZZLE_DATABASE) private readonly db: PostgresJsDatabase) {}
 
-  async searchUsers(query: string, pageSize: number): Promise<UserCard[]> {
+  async searchUsers(
+    query: string,
+    pageSize: number,
+    includePii = false
+  ): Promise<UserCard[]> {
     const pattern = `%${query}%`;
     const accounts = await this.db
       .select()
@@ -32,9 +36,17 @@ export class DirectoryService {
       .where(ilike(mdEmployee.name, pattern))
       .limit(pageSize);
     const cards = [
-      ...accounts.map((row) => this.accountCard(row.id, row.displayName, row.email, row.feishuOpenId)),
+      ...accounts.map((row) =>
+        this.accountCard(row.id, row.displayName, row.email, row.feishuOpenId, includePii)
+      ),
       ...employees.map((row) =>
-        this.accountCard(String(row.platformUserId ?? row.id), row.name, null, null),
+        this.accountCard(
+          String(row.platformUserId ?? row.id),
+          row.name,
+          null,
+          null,
+          includePii
+        )
       ),
     ];
     const seen = new Set<string>();
@@ -45,31 +57,69 @@ export class DirectoryService {
     });
   }
 
-  async usersByIds(ids: string[]): Promise<Record<string, UserCard>> {
+  async usersByIds(
+    ids: string[],
+    includePii = false
+  ): Promise<Record<string, UserCard>> {
     const map: Record<string, UserCard> = {};
     if (ids.length === 0) return map;
-    const accounts = await this.db.select().from(sysUser);
-    for (const row of accounts) {
-      if (ids.includes(row.id) || (row.feishuOpenId && ids.includes(row.feishuOpenId))) {
-        const card = this.accountCard(row.id, row.displayName, row.email, row.feishuOpenId);
+    const uuidIds = ids.filter((id) => /^[0-9a-f-]{36}$/i.test(id));
+    if (uuidIds.length > 0) {
+      const accounts = await this.db
+        .select()
+        .from(sysUser)
+        .where(
+          or(inArray(sysUser.id, uuidIds), inArray(sysUser.feishuOpenId, ids))
+        );
+      for (const row of accounts) {
+        const card = this.accountCard(
+          row.id,
+          row.displayName,
+          row.email,
+          row.feishuOpenId,
+          includePii
+        );
         map[row.id] = card;
         if (row.feishuOpenId) map[row.feishuOpenId] = card;
       }
-    }
-    const employees = await this.db.select().from(mdEmployee);
-    for (const row of employees) {
-      const bound = String(row.platformUserId ?? '');
-      if (ids.includes(row.id) || (bound && ids.includes(bound))) {
-        const card = this.accountCard(bound || row.id, row.name, null, bound);
+      const employees = await this.db
+        .select()
+        .from(mdEmployee)
+        .where(inArray(mdEmployee.id, uuidIds));
+      for (const row of employees) {
+        const bound = row.feishuUnionId || String(row.platformUserId ?? '');
+        const card = this.accountCard(
+          bound || row.id,
+          row.name,
+          row.email,
+          row.feishuOpenId,
+          includePii
+        );
         map[row.id] = card;
         if (bound) map[bound] = card;
+      }
+    } else {
+      const accounts = await this.db
+        .select()
+        .from(sysUser)
+        .where(inArray(sysUser.feishuOpenId, ids));
+      for (const row of accounts) {
+        const card = this.accountCard(
+          row.id,
+          row.displayName,
+          row.email,
+          row.feishuOpenId,
+          includePii
+        );
+        map[row.id] = card;
+        if (row.feishuOpenId) map[row.feishuOpenId] = card;
       }
     }
     return map;
   }
 
   async profile(id: string) {
-    const map = await this.usersByIds([id]);
+    const map = await this.usersByIds([id], true);
     const card = map[id];
     return {
       useLarkCard: false as const,
@@ -93,13 +143,19 @@ export class DirectoryService {
     }));
   }
 
-  private accountCard(id: string, name: string, email: string | null, openId: string | null): UserCard {
+  private accountCard(
+    id: string,
+    name: string,
+    email: string | null,
+    openId: string | null,
+    includePii = false
+  ): UserCard {
     return {
       userID: id,
       larkUserID: openId ?? '',
       name: { zh_cn: name, en_us: name },
       userType: '_employee',
-      email,
+      email: includePii ? email : null,
     };
   }
 }

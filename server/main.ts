@@ -1,5 +1,14 @@
+// 本地开发：显式加载仓库根 .env（生产由容器/编排注入环境变量，此处加载为空操作）
+import 'dotenv/config';
+
 import { NestFactory } from '@nestjs/core';
-import { Logger, ValidationPipe } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConsoleLogger,
+  Logger,
+  ValidationPipe,
+} from '@nestjs/common';
+import { appendFileSync, mkdirSync } from 'fs';
 import { join } from 'path';
 import { __express as hbsExpressEngine } from 'hbs';
 import helmet from 'helmet';
@@ -9,11 +18,116 @@ import { json, urlencoded, static as expressStatic } from 'express';
 import type { NestExpressApplication } from '@nestjs/platform-express';
 import { AppModule } from './app.module';
 
+/** D7：LOG_DIR 已设置时，在控制台之外追加 JSON Lines 到文件 */
+class JsonFileLogger extends ConsoleLogger {
+  private readonly filePath: string;
+
+  constructor(logDir: string) {
+    super();
+    mkdirSync(logDir, { recursive: true });
+    this.filePath = join(logDir, 'nest.jsonl');
+  }
+
+  private append(level: string, message: unknown, context?: string): void {
+    try {
+      appendFileSync(
+        this.filePath,
+        `${JSON.stringify({
+          ts: new Date().toISOString(),
+          level,
+          context: context ?? this.context,
+          message,
+        })}\n`
+      );
+    } catch {
+      // 文件写入失败不影响主流程
+    }
+  }
+
+  override log(message: unknown, context?: string): void {
+    super.log(message, context);
+    this.append('log', message, context);
+  }
+
+  override error(message: unknown, stackOrContext?: string, context?: string): void {
+    super.error(message, stackOrContext, context);
+    this.append('error', { message, stack: stackOrContext }, context);
+  }
+
+  override warn(message: unknown, context?: string): void {
+    super.warn(message, context);
+    this.append('warn', message, context);
+  }
+
+  override debug(message: unknown, context?: string): void {
+    super.debug(message, context);
+    this.append('debug', message, context);
+  }
+
+  override verbose(message: unknown, context?: string): void {
+    super.verbose(message, context);
+    this.append('verbose', message, context);
+  }
+}
+
+/**
+ * 修复 P1-15：生产环境密钥强度/存在性此前完全不校验。
+ * JWT_SECRET 若为空或仍是样例值，任何人都能伪造管理员会话；
+ * SECRET_ENC_KEY 缺失会让飞书密钥写入直接失败（且失败点分散在业务里，排查成本高）。
+ * 这里在启动阶段一次性 fail-fast，避免"带病上线"。
+ */
+function assertProductionSecrets(logger: Logger): void {
+  const isProd = process.env.NODE_ENV === 'production';
+  const jwt = process.env.JWT_SECRET ?? '';
+  const enc = process.env.SECRET_ENC_KEY ?? '';
+  const weakJwt = new Set([
+    '',
+    'change-me',
+    'changeme',
+    'secret',
+    'your-secret',
+    'your_secret',
+    'dev-secret',
+  ]);
+  if (isProd) {
+    const problems: string[] = [];
+    if (jwt.length < 32 || weakJwt.has(jwt.toLowerCase())) {
+      problems.push('JWT_SECRET 缺失或强度不足（须 ≥32 字符且非样例值）');
+    }
+    if (enc.length < 16 || weakJwt.has(enc.toLowerCase())) {
+      problems.push('SECRET_ENC_KEY 缺失或强度不足（须 ≥16 字符且非样例值）');
+    }
+    if (problems.length > 0) {
+      logger.error(`生产环境密钥校验失败：${problems.join('；')}`);
+      throw new Error(`生产环境密钥校验失败：${problems.join('；')}`);
+    }
+    logger.log('生产环境密钥校验通过');
+    return;
+  }
+  if (jwt.length < 32) {
+    logger.warn('开发环境 JWT_SECRET 强度不足（<32 字符），上线前请更换');
+  }
+  if (enc.length === 0) {
+    logger.warn('开发环境未配置 SECRET_ENC_KEY，飞书密钥写入功能不可用');
+  }
+}
+
 async function bootstrap() {
+  const logDir = process.env.LOG_DIR?.trim();
   const app = await NestFactory.create<NestExpressApplication>(AppModule, {
     abortOnError: process.env.NODE_ENV !== 'development',
     bodyParser: false,
+    ...(logDir ? { logger: new JsonFileLogger(logDir) } : {}),
   });
+  // 修复 P1-1：部署在 Nginx / SLB / CDN 之后时，若不设 trust proxy，
+  // 所有请求的 req.ip 都是网关地址 —— 全局限速会把全体用户一起封掉，
+  // 登录限速也形同虚设。跳数由 TRUST_PROXY_HOPS 控制（默认 1 层）。
+  // A7：未显式关闭时默认信任 1 层反代（可用 TRUST_PROXY_HOPS=0 关闭）
+  const trustHopsRaw = process.env.TRUST_PROXY_HOPS;
+  if (trustHopsRaw !== '0' && trustHopsRaw !== 'false') {
+    const hops = trustHopsRaw ? Number(trustHopsRaw) : 1;
+    app.set('trust proxy', Number.isFinite(hops) && hops > 0 ? hops : 1);
+  }
   // 10MB 文件的 base64 约 14MB，限制略高于该值，避免把合法上传挡在门外
   app.use(json({ limit: '16mb' }));
   app.use(urlencoded({ extended: true, limit: '16mb' }));
@@ -39,15 +153,37 @@ async function bootstrap() {
       legacyHeaders: false,
     })
   );
+  // 修复 P1-9：ValidationPipe 默认只回 "Bad Request Exception"，
+  // 前端拿到后无法定位是哪个字段不合法（whitelist+forbidNonWhitelisted 下尤其致命：
+  // 多传一个字段就 400，却没有任何提示）。这里把校验错误翻成中文并按字段列出。
   app.useGlobalPipes(
     new ValidationPipe({
       whitelist: true,
       forbidNonWhitelisted: true,
       transform: true,
+      exceptionFactory: (errors) => {
+        const messages = errors.flatMap((err) => {
+          const constraints = err.constraints ?? {};
+          const fieldMessages = Object.values(constraints).map(String);
+          if (fieldMessages.length > 0) return fieldMessages.map((m) => `${err.property}: ${m}`);
+          const children = err.children ?? [];
+          return children.map((c) => `${err.property}.${c.property}: 参数不合法`);
+        });
+        return new BadRequestException({
+          code: 'BAD_REQUEST',
+          message: messages.length > 0 ? messages.join('; ') : '请求参数不合法',
+          fieldErrors: errors.map((err) => ({
+            field: err.property,
+            errors: Object.values(err.constraints ?? { unknown: '参数不合法' }).map(String),
+          })),
+          timestamp: Date.now(),
+        });
+      },
     })
   );
   app.use(expressStatic(join(process.cwd(), 'dist/client')));
   const logger = new Logger('Bootstrap');
+  assertProductionSecrets(logger);
   const host = process.env.SERVER_HOST || 'localhost';
   const port = Number(process.env.SERVER_PORT || '3000');
 
@@ -55,6 +191,25 @@ async function bootstrap() {
   app.setBaseViewsDir(join(process.cwd(), 'dist/client'));
   app.setViewEngine('html');
   app.engine('html', hbsExpressEngine);
+
+  // D1：优雅退出，给在途请求/事务收尾时间
+  app.enableShutdownHooks();
+  const shutdown = async (signal: string) => {
+    logger.warn(`收到 ${signal}，开始优雅退出…`);
+    try {
+      await app.close();
+      logger.log('服务已关闭');
+      process.exit(0);
+    } catch (error) {
+      logger.error(
+        '优雅退出失败',
+        error instanceof Error ? error.stack : String(error)
+      );
+      process.exit(1);
+    }
+  };
+  process.once('SIGTERM', () => void shutdown('SIGTERM'));
+  process.once('SIGINT', () => void shutdown('SIGINT'));
 
   await app.listen(port, host);
   logger.log(`Server running on ${host}:${port}`);

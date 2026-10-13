@@ -13,7 +13,7 @@ import { CanRole, NeedLogin } from '@server/platform';
 import type { Request } from 'express';
 import { IsIn, IsNotEmpty, IsNumber, IsOptional, IsString, IsUUID, Min } from 'class-validator';
 import { AttachmentService } from './attachment.service';
-import { ATTACHMENT_RESOURCE_TYPES } from '@shared/api.interface';
+import { ATTACHMENT_RESOURCE_TYPES, type AttachmentResourceType } from '@shared/api.interface';
 import type {
   Attachment,
   CreateAttachmentDto as ICreateAttachmentDto,
@@ -22,7 +22,7 @@ import type {
 export class ListAttachmentsQueryDto {
   @IsString()
   @IsIn([...ATTACHMENT_RESOURCE_TYPES])
-  resourceType!: 'fin_expense_claim' | 'erp_contract' | 'pur_request' | 'hr_leave_request' | 'fin_voucher' | 'fin_expense_apply' | 'pur_order' | 'ast_asset' | 'da_dataset' | 'da_grant' | 'erp_project' | 'crm_lead' | 'crm_opportunity' | 'admin_rent_contract' | 'admin_bill' | 'erp_invoice' | 'crm_quotation' | 'erp_project_cost' | 'erp_deliverable';
+  resourceType!: AttachmentResourceType;
 
   @IsUUID()
   resourceId!: string;
@@ -31,7 +31,7 @@ export class ListAttachmentsQueryDto {
 export class CreateAttachmentDto implements ICreateAttachmentDto {
   @IsString()
   @IsIn([...ATTACHMENT_RESOURCE_TYPES])
-  resourceType!: 'fin_expense_claim' | 'erp_contract' | 'pur_request' | 'hr_leave_request' | 'fin_voucher' | 'fin_expense_apply' | 'pur_order' | 'ast_asset' | 'da_dataset' | 'da_grant' | 'erp_project' | 'crm_lead' | 'crm_opportunity' | 'admin_rent_contract' | 'admin_bill' | 'erp_invoice' | 'crm_quotation' | 'erp_project_cost' | 'erp_deliverable';
+  resourceType!: AttachmentResourceType;
 
   @IsUUID()
   resourceId!: string;
@@ -86,13 +86,16 @@ export class AttachmentController {
     );
   }
 
-  @CanRole(['admin'])
   @Delete(':id')
   @NeedLogin()
   async remove(
     @Req() req: Request,
     @Param('id', ParseUUIDPipe) id: string,
   ): Promise<void> {
-    return this.attachmentService.remove(req.userContext.userId, id);
+    return this.attachmentService.remove(
+      req.userContext.userId,
+      id,
+      req.userContext.roles ?? []
+    );
   }
 }

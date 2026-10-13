@@ -7,11 +7,14 @@ import {
   type ListMembersResponse,
   type PostgresJsDatabase,
 } from '@server/platform';
-import { and, eq, sql } from 'drizzle-orm';
-import { compAttachment } from '@server/database/schema';
+import { and, desc, eq, isNull, sql } from 'drizzle-orm';
+import { compAttachment, sysInboxMessage } from '@server/database/schema';
 import type {
   ApprovalBizType,
   ApprovalNotificationResult,
+  InboxMessage,
+  ListInboxMessagesResult,
+  MarkInboxMessageReadResult,
   SendApprovalNotificationRequest,
 } from '@shared/api.interface';
 import { stripDisallowedUrls } from '@server/common/security/feishu-url';
@@ -61,6 +64,7 @@ const BIZ_ATTACHMENT_RESOURCE: Partial<Record<ApprovalBizType, string>> = {
   expense: 'fin_expense_claim',
   purchase: 'pur_request',
   leave: 'hr_leave_request',
+  payroll: 'hr_payroll',
   admin_bill: 'admin_bill',
   admin_rent_contract: 'admin_rent_contract',
   quotation: 'crm_quotation',
@@ -103,7 +107,8 @@ export class NotificationsService {
     }
 
     const adminIds: string[] = await this.listAdminUserIds();
-    if (adminIds.length === 0) {
+    const recipients = [...new Set([...adminIds, ...(bizInfo.submitterId ? [bizInfo.submitterId] : [])])];
+    if (recipients.length === 0) {
       this.logger.warn(
         `审批通知未发送（no_recipients）bizType=${dto.bizType} bizCode=${dto.bizCode}`
       );
@@ -130,7 +135,13 @@ export class NotificationsService {
             .join('；')}`
         : baseContent;
 
-    const result = await this.sendViaFeishuPlugin(adminIds, title, content, {
+    // B8：站内信与飞书通道并行写入（有收件人即落库，不依赖飞书是否发送成功）
+    await this.insertInboxMessages(recipients, title, content, {
+      bizType: dto.bizType,
+      bizCode: dto.bizCode,
+    });
+
+    const result = await this.sendViaFeishuPlugin(recipients, title, content, {
       scene: `审批通知 bizType=${dto.bizType} bizCode=${dto.bizCode}`,
     });
     await this.auditService.record({
@@ -141,6 +152,100 @@ export class NotificationsService {
       detail: `sent=${result.sent} receivers=${adminIds.length}`,
     });
     return result;
+  }
+
+  /** B8：列出当前用户站内信，可选仅未读 */
+  async listInboxMessages(
+    userId: string,
+    unreadOnly?: boolean
+  ): Promise<ListInboxMessagesResult> {
+    const conditions = [eq(sysInboxMessage.userId, userId)];
+    if (unreadOnly) {
+      conditions.push(isNull(sysInboxMessage.readAt));
+    }
+    const rows = await this.db
+      .select()
+      .from(sysInboxMessage)
+      .where(and(...conditions))
+      .orderBy(desc(sysInboxMessage.createdAt))
+      .limit(200);
+    return {
+      items: rows.map((row) => this.toInboxMessage(row)),
+    };
+  }
+
+  /** B8：将当前用户的一条站内信标为已读 */
+  async markInboxMessageRead(
+    userId: string,
+    id: string
+  ): Promise<MarkInboxMessageReadResult> {
+    const existing = await this.db
+      .select({ id: sysInboxMessage.id, readAt: sysInboxMessage.readAt })
+      .from(sysInboxMessage)
+      .where(and(eq(sysInboxMessage.id, id), eq(sysInboxMessage.userId, userId)))
+      .limit(1);
+    if (existing.length === 0) {
+      throw new NotFoundException('站内信不存在');
+    }
+    const readAt = existing[0].readAt ?? new Date();
+    if (!existing[0].readAt) {
+      await this.db
+        .update(sysInboxMessage)
+        .set({ readAt })
+        .where(
+          and(eq(sysInboxMessage.id, id), eq(sysInboxMessage.userId, userId))
+        );
+    }
+    return { ok: true, id, readAt: readAt.toISOString() };
+  }
+
+  private async insertInboxMessages(
+    userIds: string[],
+    title: string,
+    content: string,
+    biz: { bizType: string; bizCode: string }
+  ): Promise<void> {
+    if (userIds.length === 0) return;
+    try {
+      await this.db.insert(sysInboxMessage).values(
+        userIds.map((userId) => ({
+          userId,
+          title,
+          content,
+          bizType: biz.bizType,
+          bizCode: biz.bizCode,
+        }))
+      );
+    } catch (error: unknown) {
+      const stack: string =
+        error instanceof Error ? (error.stack ?? error.message) : String(error);
+      this.logger.error(
+        `站内信写入失败 bizType=${biz.bizType} bizCode=${biz.bizCode}`,
+        stack
+      );
+    }
+  }
+
+  private toInboxMessage(row: {
+    id: string;
+    userId: string;
+    title: string | null;
+    content: string | null;
+    bizType: string | null;
+    bizCode: string | null;
+    readAt: Date | null;
+    createdAt: Date;
+  }): InboxMessage {
+    return {
+      id: row.id,
+      userId: row.userId,
+      title: row.title,
+      content: row.content,
+      bizType: row.bizType,
+      bizCode: row.bizCode,
+      readAt: row.readAt ? row.readAt.toISOString() : null,
+      createdAt: row.createdAt.toISOString(),
+    };
   }
 
   /** 给 admin 角色全部成员发送系统通知（非审批类，如信用预警） */

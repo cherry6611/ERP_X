@@ -1,4 +1,13 @@
-import { Body, Controller, Post, Req } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Param,
+  Patch,
+  Post,
+  Query,
+  Req,
+} from '@nestjs/common';
 import { IsIn, IsNotEmpty, IsString } from 'class-validator';
 import { NeedLogin } from '@server/platform';
 import type { Request } from 'express';
@@ -7,6 +16,8 @@ import { consumeRate } from '@server/common/security/rate-limit';
 import { NotificationsService } from './notifications.service';
 import type {
   ApprovalNotificationResult,
+  ListInboxMessagesResult,
+  MarkInboxMessageReadResult,
   SendApprovalNotificationRequest,
 } from '@shared/api.interface';
 
@@ -21,6 +32,7 @@ export class SendApprovalNotificationDto
     'payroll',
     'admin_bill',
     'admin_rent_contract',
+    'quotation',
   ])
   bizType!:
     | 'expense'
@@ -28,7 +40,8 @@ export class SendApprovalNotificationDto
     | 'leave'
     | 'payroll'
     | 'admin_bill'
-    | 'admin_rent_contract';
+    | 'admin_rent_contract'
+    | 'quotation';
 
   @IsString()
   @IsNotEmpty()
@@ -48,6 +61,10 @@ export class SendApprovalNotificationDto
 export class NotificationsController {
   constructor(private readonly notificationsService: NotificationsService) {}
 
+  /**
+   * U-27 / SEC-A：不在此用 CanRole(admin)，否则提交人无法催办。
+   * 服务侧二次校验：仅单据提交人或 admin 可发；其余 403。
+   */
   @Post('approval')
   async sendApprovalNotification(
     @Req() req: Request,
@@ -59,5 +76,30 @@ export class NotificationsController {
       kind: 'user',
       userId: actor.userId,
     });
+  }
+
+  /** B8：当前用户站内信列表；query unreadOnly=1|true 时仅未读 */
+  @Get('inbox')
+  async listInbox(
+    @Req() req: Request,
+    @Query('unreadOnly') unreadOnly?: string
+  ): Promise<ListInboxMessagesResult> {
+    const actor = actorFromRequest(req);
+    const onlyUnread =
+      unreadOnly === '1' || unreadOnly === 'true' || unreadOnly === 'yes';
+    return this.notificationsService.listInboxMessages(
+      actor.userId,
+      onlyUnread
+    );
+  }
+
+  /** B8：将当前用户的一条站内信标为已读 */
+  @Patch('inbox/:id/read')
+  async markInboxRead(
+    @Req() req: Request,
+    @Param('id') id: string
+  ): Promise<MarkInboxMessageReadResult> {
+    const actor = actorFromRequest(req);
+    return this.notificationsService.markInboxMessageRead(actor.userId, id);
   }
 }

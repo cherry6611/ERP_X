@@ -9,8 +9,14 @@ describe('secret box', () => {
     expect(decryptSecret(stored, key)).toBe('app-secret-value');
   });
 
-  it('leaves legacy plaintext untouched', () => {
-    expect(decryptSecret('plain-secret', undefined)).toBe('plain-secret');
+  it('rejects legacy plaintext', () => {
+    expect(() => decryptSecret('plain-secret', key)).toThrow(/enc1/);
+  });
+
+  it('hashes a 32-byte key the same way as any other key', () => {
+    const longKey = '12345678901234567890123456789012';
+    const stored = encryptSecret('v', longKey);
+    expect(decryptSecret(stored, longKey)).toBe('v');
   });
 
   it('refuses to decrypt without a key', () => {

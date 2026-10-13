@@ -23,9 +23,11 @@ export function encryptSecret(plain: string, keyRaw: string): string {
   return `${PREFIX}${Buffer.concat([iv, tag, ciphertext]).toString('base64url')}`;
 }
 
-/** 无前缀视为历史明文，便于迁移；有前缀则必须能解密 */
+/** 只接受 enc1 密文。历史明文必须先清空再重新写入，避免密钥轮换后误用明文。 */
 export function decryptSecret(stored: string, keyRaw: string | undefined): string {
-  if (!stored.startsWith(PREFIX)) return stored;
+  if (!stored.startsWith(PREFIX)) {
+    throw new Error('应用密钥不是 enc1 密文，拒绝按明文使用');
+  }
   if (!keyRaw) {
     throw new Error('SECRET_ENC_KEY 未配置，无法解密应用密钥');
   }
@@ -51,7 +53,5 @@ export function secretKeyFromEnv(): string | undefined {
 }
 
 function deriveKey(keyRaw: string): Buffer {
-  const asUtf8: Buffer = Buffer.from(keyRaw, 'utf8');
-  if (asUtf8.length === 32) return asUtf8;
   return createHash('sha256').update(keyRaw, 'utf8').digest();
 }

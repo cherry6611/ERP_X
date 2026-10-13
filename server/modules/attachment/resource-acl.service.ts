@@ -36,6 +36,7 @@ const RESOURCE_TABLE: Record<AttachmentResourceType, string> = {
   admin_bill: 'erp_admin_bill',
   erp_invoice: 'erp_invoice',
   crm_quotation: 'crm_quotation',
+  hr_payroll: 'hr_payroll',
   erp_project_cost: 'erp_project_cost',
   erp_deliverable: 'erp_deliverable',
   erp_project_minutes: 'erp_project_minutes',
@@ -57,7 +58,7 @@ const FINANCE_RESOURCES = new Set<AttachmentResourceType>([
   'erp_project_cost',
 ]);
 
-const HR_RESOURCES = new Set<AttachmentResourceType>(['hr_leave_request']);
+const HR_RESOURCES = new Set<AttachmentResourceType>(['hr_leave_request', 'hr_payroll']);
 
 const ADMIN_RESOURCES = new Set<AttachmentResourceType>([
   'admin_rent_contract',

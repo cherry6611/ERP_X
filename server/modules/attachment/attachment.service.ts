@@ -127,7 +127,11 @@ export class AttachmentService {
     };
   }
 
-  async remove(userId: string, id: string): Promise<void> {
+  async remove(
+    userId: string,
+    id: string,
+    roles: string[] = []
+  ): Promise<void> {
     const found = await this.db
       .select({ id: compAttachment.id })
       .from(compAttachment)
@@ -135,17 +139,20 @@ export class AttachmentService {
     if (found.length === 0) {
       throw new NotFoundException('附件不存在');
     }
+    const isAdmin = roles.includes('admin');
     const deleted = await this.db
       .delete(compAttachment)
       .where(
-        and(
-          eq(compAttachment.id, id),
-          sql`(${compAttachment.createdBy}).user_id = ${userId}`,
-        ),
+        isAdmin
+          ? eq(compAttachment.id, id)
+          : and(
+              eq(compAttachment.id, id),
+              sql`(${compAttachment.createdBy}).user_id = ${userId}`
+            )
       )
       .returning({ id: compAttachment.id });
     if (deleted.length === 0) {
-      throw new ForbiddenException('仅上传人可删除附件');
+      throw new ForbiddenException('仅上传人或管理员可删除附件');
     }
   }
 }
