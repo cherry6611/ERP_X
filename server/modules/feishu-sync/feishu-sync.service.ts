@@ -22,6 +22,7 @@ import {
   mdEmployee,
 } from '@server/database/schema';
 import { generateBizCode } from '@server/common/utils/biz-code';
+import { nextRetryDelaySec } from './retry';
 import type {
   FeishuSyncDirection,
   FeishuSyncRecordItem,
@@ -438,8 +439,19 @@ export class FeishuSyncService {
         )
       );
     const successBizIds = new Set<string>();
+    const retryable = new Set<string>();
+    const now = Date.now();
     for (const row of mappings) {
-      if (row.bizId && row.status === 'success') successBizIds.add(row.bizId);
+      if (!row.bizId) continue;
+      if (row.status === 'success') successBizIds.add(row.bizId);
+      const due = !row.nextRetryAt || row.nextRetryAt.getTime() <= now;
+      // U-20：failed 到期可重放；pending 卡死（冲突插入后无人推进）也纳入重试
+      if (row.status === 'failed' && row.retryCount < 5 && due) {
+        retryable.add(row.bizId);
+      }
+      if (row.status === 'pending' && due) {
+        retryable.add(row.bizId);
+      }
     }
     const pendingCandidates: OutboundCandidate[] = candidates.filter(
       (c: OutboundCandidate) => !successBizIds.has(c.bizId)
@@ -468,7 +480,7 @@ export class FeishuSyncService {
       if (row.bizId) insertedIds.add(row.bizId);
     }
     const ready: OutboundCandidate[] = pendingCandidates.filter(
-      (c: OutboundCandidate) => insertedIds.has(c.bizId)
+      (c: OutboundCandidate) => insertedIds.has(c.bizId) || retryable.has(c.bizId)
     );
     const conflictSkipped: number = pendingCandidates.length - ready.length;
 
@@ -578,6 +590,21 @@ export class FeishuSyncService {
     return { hasMore: o.hasMore, pageToken, records };
   }
 
+  async resetFailed(bizType: 'cost' | 'contract'): Promise<{ reset: number }> {
+    const rows = await this.db
+      .update(compFeishuSyncRecord)
+      .set({ nextRetryAt: new Date(), updatedAt: new Date() })
+      .where(
+        and(
+          eq(compFeishuSyncRecord.direction, 'outbound'),
+          eq(compFeishuSyncRecord.bizType, bizType),
+          eq(compFeishuSyncRecord.status, 'failed')
+        )
+      )
+      .returning({ id: compFeishuSyncRecord.id });
+    return { reset: rows.length };
+  }
+
   /** 出向映射行回写：按 (direction, bizType, bizId) 定位 */
   private async markOutboundMapping(
     bizType: string,
@@ -590,6 +617,29 @@ export class FeishuSyncService {
       updatedAt: new Date(),
     };
     if (patch.baseRecordId !== undefined) set.baseRecordId = patch.baseRecordId;
+    if (patch.status === 'failed') {
+      const current = await this.db
+        .select({ retryCount: compFeishuSyncRecord.retryCount })
+        .from(compFeishuSyncRecord)
+        .where(
+          and(
+            eq(compFeishuSyncRecord.direction, 'outbound'),
+            eq(compFeishuSyncRecord.bizType, bizType),
+            eq(compFeishuSyncRecord.bizId, bizId)
+          )
+        )
+        .limit(1);
+      const next = (current[0]?.retryCount ?? 0) + 1;
+      const delay = nextRetryDelaySec(next - 1);
+      set.retryCount = next;
+      set.nextRetryAt = delay === null ? null : new Date(Date.now() + delay * 1000);
+      set.lastError = patch.errorMsg;
+    }
+    if (patch.status === 'success') {
+      set.retryCount = 0;
+      set.nextRetryAt = null;
+      set.lastError = null;
+    }
     await this.db
       .update(compFeishuSyncRecord)
       .set(set)

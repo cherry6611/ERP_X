@@ -6,12 +6,16 @@ import { sysRoleMember } from '@server/database/schema';
 import { RAW_DATABASE } from './tokens';
 import { requestDb } from './database';
 import { readCookie, readSession, SESSION_COOKIE } from './jwt';
+import { SessionStore } from './session-store';
 import { Inject } from '@nestjs/common';
 import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 
 @Injectable()
 export class SessionMiddleware implements NestMiddleware {
-  constructor(@Inject(RAW_DATABASE) private readonly raw: PostgresJsDatabase) {}
+  constructor(
+    @Inject(RAW_DATABASE) private readonly raw: PostgresJsDatabase,
+    private readonly sessions: SessionStore,
+  ) {}
 
   use(req: Request, res: Response, next: NextFunction): void {
     const header = req.headers.authorization;
@@ -24,9 +28,11 @@ export class SessionMiddleware implements NestMiddleware {
       userName: claims?.userName,
       roles: claims?.roles ?? [],
     };
-    const userId = claims?.userId ?? '';
     void this.raw.transaction(async (tx) => {
-      await tx.execute(sql`select set_config('app.user_id', ${userId}, true)`);
+      if (claims?.jti && await this.sessions.isRevoked(claims.jti)) {
+        req.userContext = { roles: [] };
+      }
+      await tx.execute(sql`select set_config('app.user_id', ${req.userContext?.userId ?? ''}, true)`);
       await new Promise<void>((resolve) => {
         res.once('finish', () => resolve());
         res.once('close', () => resolve());

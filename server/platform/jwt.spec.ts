@@ -6,6 +6,7 @@ describe('jwt', () => {
     const claims = readSession(token, 'secret');
     expect(claims?.userId).toBe('u1');
     expect(claims?.roles).toEqual(['admin']);
+    expect(claims?.jti).toEqual(expect.any(String));
   });
 
   it('rejects a tampered token', () => {

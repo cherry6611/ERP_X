@@ -30,6 +30,12 @@ export class FeishuSyncController {
     return this.feishuSyncService.syncTimesheetsFromBase();
   }
 
+  @CanRole(['admin'])
+  @Post('retry')
+  async retry(@Query('bizType') bizType?: string): Promise<{ reset: number }> {
+    return this.feishuSyncService.resetFailed(bizType === 'contract' ? 'contract' : 'cost');
+  }
+
   @Get('records')
   async listRecords(
     @Query('direction') direction?: string,

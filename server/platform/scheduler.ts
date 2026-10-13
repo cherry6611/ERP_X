@@ -35,6 +35,12 @@ export class JobScheduler implements OnModuleInit {
   ) {}
 
   onModuleInit(): void {
+    // 本地开发时 8 个定时任务会真实触发（如 feishu_contact_incremental 每 15 分钟一次），
+    // 在飞书配置未就绪的情况下会持续刷错误日志。用 ENABLE_SCHEDULER=false 可整体关闭。
+    if ((process.env.ENABLE_SCHEDULER ?? 'true').toLowerCase() === 'false') {
+      this.logger.warn('ENABLE_SCHEDULER=false，已跳过全部定时任务注册');
+      return;
+    }
     for (const wrapper of this.discovery.getProviders()) {
       const instance = wrapper.instance as object | null;
       if (!instance || typeof instance !== 'object') continue;

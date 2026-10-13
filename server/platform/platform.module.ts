@@ -7,6 +7,8 @@ import { openDatabase, type DatabaseHandle } from './database';
 import { LoginGuard, RolesGuard } from './guards';
 import { JobScheduler } from './scheduler';
 import { SessionMiddleware } from './session.middleware';
+import { SessionStore } from './session-store';
+import { AccountLifecycleService } from './account-lifecycle';
 import { DRIZZLE_DATABASE, PG_CLIENT, RAW_DATABASE } from './tokens';
 
 const DB_HANDLE = 'DB_HANDLE';
@@ -32,6 +34,8 @@ export class PlatformModule implements NestModule {
         { provide: RAW_DATABASE, inject: [DB_HANDLE], useFactory: (h: DatabaseHandle) => h.raw },
         { provide: PG_CLIENT, inject: [DB_HANDLE], useFactory: (h: DatabaseHandle) => h.client },
         SessionMiddleware,
+        SessionStore,
+        AccountLifecycleService,
         LoginGuard,
         RolesGuard,
         { provide: APP_GUARD, useClass: LoginGuard },
@@ -40,7 +44,7 @@ export class PlatformModule implements NestModule {
         CapabilityService,
         JobScheduler,
       ],
-      exports: [DRIZZLE_DATABASE, RAW_DATABASE, PG_CLIENT, AuthorizationSDK, CapabilityService],
+      exports: [DRIZZLE_DATABASE, RAW_DATABASE, PG_CLIENT, AuthorizationSDK, CapabilityService, SessionStore, AccountLifecycleService],
     };
   }
 

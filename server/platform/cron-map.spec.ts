@@ -1,14 +1,18 @@
 import { CRON_BY_TRIGGER } from './cron-map';
 
 describe('cron map', () => {
-  it('covers the six platform jobs', () => {
+  it('covers the scheduled jobs', () => {
     expect(Object.keys(CRON_BY_TRIGGER).sort()).toEqual([
       'admin_rent_expiry_remind',
       'ar_due_reminder_daily',
       'customer_credit_alert',
       'delivery_warning_weekly',
+      'feishu_contact_full',
+      'feishu_contact_incremental',
       'feishu_daily_sync',
       'project_drive_sync_daily',
+      'session_cleanup_daily',
+      'voucher_job_retry',
     ]);
   });
 
