@@ -11,6 +11,11 @@ import {
 import { CanRole, NeedLogin } from '@server/platform';
 import { IsIn, IsString } from 'class-validator';
 import { ContractsService } from './contracts.service';
+import {
+  ContractItemsService,
+  type ContractItemInput,
+  type ContractItemView,
+} from './contract-items.service';
 import type {
   BillableSummary,
   Calloff,
@@ -19,22 +24,27 @@ import type {
   ContractMilestone,
   ContractVersion,
   CreateCalloffDto,
-  CreateContractDto,
   CreateMilestoneDto,
   PagedResult,
-  UpdateContractDto,
 } from '@shared/api.interface';
+import {
+  CreateContractDto,
+  UpdateContractDto,
+} from './contracts.dto';
 
 export class ContractStatusActionDto {
   @IsString()
-  @IsIn(['submit', 'approve', 'reject', 'start', 'complete', 'close'])
-  action!: 'submit' | 'approve' | 'reject' | 'start' | 'complete' | 'close';
+  @IsIn(['submit', 'approve', 'reject', 'start', 'complete', 'close', 'terminate'])
+  action!: 'submit' | 'approve' | 'reject' | 'start' | 'complete' | 'close' | 'terminate';
 }
 
 @NeedLogin()
 @Controller('api/contracts')
 export class ContractsController {
-  constructor(private readonly contractsService: ContractsService) {}
+  constructor(
+    private readonly contractsService: ContractsService,
+    private readonly contractItems: ContractItemsService
+  ) {}
 
   @Get()
   async listContracts(
@@ -123,6 +133,51 @@ export class ContractsController {
     @Body() dto: { changeLog: string; newAmount?: number }
   ): Promise<ContractVersion> {
     return this.contractsService.createChange(id, dto);
+  }
+
+  @Get(':id/items')
+  async listItems(
+    @Param('id', ParseUUIDPipe) id: string
+  ): Promise<ContractItemView[]> {
+    return this.contractItems.list(id);
+  }
+
+  @CanRole(['admin'])
+  @Post(':id/items')
+  async createItem(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: ContractItemInput
+  ): Promise<ContractItemView> {
+    return this.contractItems.create(id, dto);
+  }
+
+  @CanRole(['admin'])
+  @Patch(':id/items/:itemId')
+  async updateItem(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('itemId', ParseUUIDPipe) itemId: string,
+    @Body() dto: ContractItemInput
+  ): Promise<ContractItemView> {
+    return this.contractItems.update(id, itemId, dto);
+  }
+
+  @CanRole(['admin'])
+  @Post(':id/items/:itemId/delete')
+  async deleteItem(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('itemId', ParseUUIDPipe) itemId: string
+  ): Promise<{ ok: true }> {
+    await this.contractItems.remove(id, itemId);
+    return { ok: true };
+  }
+
+  @CanRole(['admin'])
+  @Post(':id/items/import-quotation')
+  async importQuotation(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: { quotationId: string }
+  ): Promise<ContractItemView[]> {
+    return this.contractItems.importQuotation(id, dto.quotationId);
   }
 
   @CanRole(['admin'])

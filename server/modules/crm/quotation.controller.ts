@@ -114,7 +114,8 @@ export class QuotationController {
     private readonly quotationImportService: QuotationImportService
   ) {}
 
-  @CanRole(['admin'])
+  // 文档解析与新建属销售日常工作流的一部分，所有登录用户可用；
+  // 编辑/提交/审批/作废/转合同仍限管理员。
   @Post('parse-doc')
   async parseDoc(
     @Body() dto: ParseQuotationDocBodyDto
@@ -127,7 +128,6 @@ export class QuotationController {
     return this.quotationService.list(query);
   }
 
-  @CanRole(['admin'])
   @Post()
   async create(@Body() dto: CreateQuotationBodyDto): Promise<Quotation> {
     return this.quotationService.create(dto);

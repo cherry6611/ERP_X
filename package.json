@@ -124,7 +124,7 @@
     "supportBusinessUser": true,
     "supportScrollReveal": true
   },
-  "name": "fullstack-nestjs-template",
+  "name": "shengsheng-erp",
   "overrides": {
     "clsx": "^2.1.1",
     "dayjs": "^1.11.15",
@@ -136,21 +136,21 @@
   "private": true,
   "scripts": {
     "build": "node ./scripts/build.js",
-    "build:client": "NODE_ENV=production vite build --config vite.config.ts",
+    "build:client": "node ./scripts/build-client.js",
     "build:prod": "npm run build:server && npm run build:client",
-    "build:server": "NODE_ENV=production nest build",
+    "build:server": "node ./scripts/build-server.js",
     "check:contract": "node ./scripts/check-contract.mjs",
     "check:need-login": "node ./scripts/check-need-login.mjs",
     "db:generate": "tsx ./scripts/emit-baseline.ts",
     "db:migrate": "node ./scripts/db-migrate.mjs",
     "dev": "node ./scripts/dev.js",
-    "dev:client": "NODE_ENV=development vite --config vite.config.ts",
-    "dev:server": "NODE_ENV=development nest start --watch",
+    "dev:client": "node ./scripts/env-run.mjs development -- vite --config vite.config.ts",
+    "dev:server": "node ./scripts/env-run.mjs development -- nest start --watch",
     "eslint": "eslint . --quiet",
     "gen:openapi": "echo 'UNSUPPORTED, SKIP'",
     "lint": "node ./scripts/lint.js",
     "precommit": "node scripts/hooks/run-precommit.js",
-    "start": "NODE_ENV=production node dist/server/main.js",
+    "start": "node ./scripts/start.mjs",
     "stylelint": "stylelint client/src/**/*.css --quiet",
     "test": "jest --config jest.config.cjs",
     "test:cov": "jest --config jest.config.cjs --coverage",
@@ -158,5 +158,5 @@
     "type:check:client": "tsc --noEmit --project tsconfig.app.json",
     "type:check:server": "tsc --noEmit --project tsconfig.node.json"
   },
-  "version": "2.3.0"
+  "version": "2.4.0"
 }

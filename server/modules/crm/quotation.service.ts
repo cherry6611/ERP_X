@@ -14,9 +14,12 @@ import {
   crmQuotation,
   crmQuotationItem,
   erpContract,
+  erpContractItem,
   mdCustomer,
 } from '@server/database/schema';
 import { generateBizCode } from '@server/common/utils/biz-code';
+import { TaxResolverService } from '@server/modules/tax/tax-resolver.service';
+import { lineAmount, splitTax } from '@shared/tax';
 import { NotificationsService } from '@server/modules/notifications/notifications.service';
 import type {
   Contract,
@@ -45,7 +48,8 @@ export class QuotationService {
 
   constructor(
     @Inject(DRIZZLE_DATABASE) private readonly db: PostgresJsDatabase,
-    private readonly notificationsService: NotificationsService
+    private readonly notificationsService: NotificationsService,
+    private readonly taxResolver: TaxResolverService
   ) {}
 
   private lineAmount(item: {
@@ -377,14 +381,24 @@ export class QuotationService {
     if ((existing.status ?? 'draft') !== 'approved') {
       throw new BadRequestException('仅已生效的报价单可转合同');
     }
-    const draftName = `${existing.title}（合同草稿）`;
-    const duplicate = await this.db
-      .select({ id: erpContract.id })
-      .from(erpContract)
-      .where(eq(erpContract.name, draftName));
-    if (duplicate.length > 0) {
-      throw new BadRequestException('该报价已生成合同草稿，请勿重复转换');
+    if (existing.contractId) {
+      throw new BadRequestException('该报价已生成合同，请勿重复转换');
     }
+    if (existing.validUntil && existing.validUntil < new Date().toISOString().slice(0, 10)) {
+      throw new BadRequestException('报价已超过有效期，不能转合同');
+    }
+    const items = await this.db
+      .select()
+      .from(crmQuotationItem)
+      .where(eq(crmQuotationItem.quotationId, id))
+      .orderBy(crmQuotationItem.seq);
+    const resolved = await this.taxResolver.resolve({
+      explicit: existing.taxRate != null ? Number(existing.taxRate) : null,
+      customerId: existing.customerId,
+      side: 'output',
+    });
+    const amount = Number(existing.totalAmount ?? 0);
+    const split = splitTax(amount, resolved.rate);
     const code = await generateBizCode(
       this.db,
       erpContract,
@@ -396,14 +410,55 @@ export class QuotationService {
         .insert(erpContract)
         .values({
           code,
-          name: draftName,
+          name: existing.title,
           customerId: existing.customerId,
           billingModel: 'project',
-          amount: String(Number(existing.totalAmount ?? 0)),
-          taxRate: '6',
+          amount: String(amount),
+          taxRate: String(resolved.rate),
+          taxEntityId: resolved.taxEntityId,
+          netAmount: String(split.net),
+          taxAmount: String(split.tax),
+          rateSource: resolved.source,
           status: 'draft',
         })
         .returning({ id: erpContract.id });
+      let itemSum = 0;
+      if (items.length > 0) {
+        await tx.insert(erpContractItem).values(
+          items.map((item) => {
+            const line = lineAmount(
+              Number(item.quantity ?? 0),
+              Number(item.unitPrice ?? 0),
+              Number(item.discountPct ?? 0)
+            );
+            itemSum += line;
+            const lineSplit = splitTax(line, resolved.rate);
+            return {
+              contractId: inserted[0].id,
+              versionNo: 1,
+              isCurrent: 1,
+              seq: item.seq,
+              itemName: item.itemName,
+              unit: item.unit,
+              quantity: item.quantity,
+              unitPrice: item.unitPrice,
+              discountPct: item.discountPct,
+              taxRate: String(resolved.rate),
+              amount: String(line),
+              netAmount: String(lineSplit.net),
+              taxAmount: String(lineSplit.tax),
+              estUnitCost: item.estUnitCost,
+              sourceType: 'quotation',
+              sourceItemId: item.id,
+            };
+          })
+        );
+        if (Math.abs(itemSum - amount) > 0.01) {
+          throw new BadRequestException(
+            `报价明细合计 ${itemSum} 与报价总额 ${amount} 不一致，已回滚`
+          );
+        }
+      }
       await tx
         .update(crmQuotation)
         .set({

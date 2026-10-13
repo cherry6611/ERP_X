@@ -30,10 +30,19 @@ export class CrmController {
     return this.crmService.listLeads(status);
   }
 
-  @CanRole(['admin'])
+  // 线索/商机登记属销售日常工作，所有登录用户均可创建；
+  // 修改与赢单转合同涉及他人数据与合同生成，仍限管理员。
   @Post('leads')
   async createLead(@Body() dto: CreateLeadDto): Promise<Lead> {
     return this.crmService.createLead(dto);
+  }
+
+  @CanRole(['admin'])
+  @Post('leads/:id/convert')
+  async convertLead(
+    @Param('id', ParseUUIDPipe) id: string
+  ): Promise<Opportunity> {
+    return this.crmService.convertLead(id);
   }
 
   @CanRole(['admin'])
@@ -52,7 +61,6 @@ export class CrmController {
     return this.crmService.listOpportunities(stage);
   }
 
-  @CanRole(['admin'])
   @Post('opportunities')
   async createOpportunity(
     @Body() dto: CreateOpportunityDto

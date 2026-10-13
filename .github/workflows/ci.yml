@@ -21,3 +21,8 @@ jobs:
       - run: npm test
       - run: npm run build
       - run: npm audit --audit-level=high
+      # U-25：构建产物冒烟（无 DB 时仅校验 dist 存在；有 DATABASE_URL 可扩）
+      - name: smoke dist
+        run: |
+          test -f dist/server/main.js || test -f dist/main.js || ls dist
+          test -d dist/client

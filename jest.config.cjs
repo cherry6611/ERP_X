@@ -13,6 +13,8 @@ module.exports = {
   collectCoverageFrom: [
     'server/common/security/**/*.ts',
     'server/common/utils/biz-date.ts',
+    'server/common/tax/**/*.ts',
+    'server/modules/**/*.service.ts',
   ],
   coverageThreshold: {
     global: {
