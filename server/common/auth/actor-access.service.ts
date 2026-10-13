@@ -55,7 +55,8 @@ export class ActorAccessService {
     } catch (error: unknown) {
       const message: string =
         error instanceof Error ? error.message : String(error);
-      this.logger.warn(`读取角色成员失败 role=${roleBizId} ${message}`);
+      this.logger.error(`读取角色成员失败，拒绝放行 role=${roleBizId} ${message}`);
+      throw error;
     }
     this.cache.set(roleBizId, { ids, at: Date.now() });
     return ids;

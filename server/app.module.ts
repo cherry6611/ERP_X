@@ -10,6 +10,7 @@ import { DirectoryModule } from './modules/directory/directory.module';
 import { GlobalExceptionFilter } from './common/filters/exception.filter';
 import { ViewModule } from './modules/view/view.module';
 import { MasterDataModule } from './modules/master-data/master-data.module';
+import { TaxModule } from './modules/tax/tax.module';
 import { CrmModule } from './modules/crm/crm.module';
 import { ContractsModule } from './modules/contracts/contracts.module';
 import { ProjectsModule } from './modules/projects/projects.module';
@@ -29,6 +30,7 @@ import { NotificationsModule } from './modules/notifications/notifications.modul
 import { AttachmentModule } from './modules/attachment/attachment.module';
 import { FeishuSyncModule } from './modules/feishu-sync/feishu-sync.module';
 import { FeishuDriveModule } from './modules/feishu-drive/feishu-drive.module';
+import { FeishuCollabModule } from './modules/feishu-collab/feishu-collab.module';
 import { AdminModule } from './modules/admin/admin.module';
 import { AutomationConfigModule } from './modules/admin/automation-config.module';
 import { SemanticModule } from './modules/semantic/semantic.module';
@@ -44,6 +46,7 @@ import { SemanticModule } from './modules/semantic/semantic.module';
     DirectoryModule,
     // ====== @route-section: business-modules START ======
     MasterDataModule,
+    TaxModule,
     CrmModule,
     ContractsModule,
     ProjectsModule,
@@ -63,6 +66,7 @@ import { SemanticModule } from './modules/semantic/semantic.module';
     AttachmentModule,
     FeishuSyncModule,
     FeishuDriveModule,
+    FeishuCollabModule,
     AdminModule,
     AutomationConfigModule,
     SemanticModule,

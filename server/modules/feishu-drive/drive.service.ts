@@ -161,6 +161,31 @@ export class DriveService {
     };
   }
 
+  async listPermissionMembers(token: string, type: string): Promise<unknown> {
+    return this.client.request(
+      'GET',
+      `/open-apis/drive/v1/permissions/${token}/members`,
+      { query: { type } },
+    );
+  }
+
+  async writeDocumentText(documentId: string, text: string): Promise<void> {
+    await this.client.request(
+      'POST',
+      `/open-apis/docx/v1/documents/${documentId}/blocks/${documentId}/children`,
+      {
+        body: {
+          children: [
+            {
+              block_type: 2,
+              text: { elements: [{ text_run: { content: text.slice(0, 4000) } }] },
+            },
+          ],
+        },
+      },
+    );
+  }
+
   async uploadFile(
     folderToken: string,
     fileName: string,

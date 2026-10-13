@@ -169,6 +169,15 @@ export class DriveController {
   }
 
   @CanRole(['admin'])
+  @Get('files/:fileToken/members')
+  async listMembers(
+    @Param('fileToken') fileToken: string,
+    @Query('type') type: string,
+  ): Promise<unknown> {
+    return this.driveService.listPermissionMembers(fileToken, type || 'docx');
+  }
+
+  @CanRole(['admin'])
   @Get('config')
   async getConfig(): Promise<FeishuDriveConfigResponse> {
     return this.configService.getConfigForAdmin();
