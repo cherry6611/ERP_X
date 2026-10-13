@@ -5,6 +5,7 @@ import {
   Get,
   Param,
   ParseUUIDPipe,
+  Patch,
   Post,
   Query,
 } from '@nestjs/common';
@@ -19,6 +20,7 @@ import {
   IsString,
   IsUUID,
   Min,
+  ValidateIf,
 } from 'class-validator';
 import { PurService } from './pur.service';
 import type {
@@ -29,7 +31,10 @@ import type {
   PurChainSummary,
   PurOrderItem,
   PurRequestItem,
+  UpdatePurOrderDto as IUpdatePurOrderDto,
 } from '@shared/api.interface';
+
+const VAT_RATE_VALUES = [0, 1, 3, 6, 9, 13] as const;
 
 export class CreatePurRequestDto implements ICreatePurRequestDto {
   @IsString()
@@ -102,8 +107,25 @@ export class CreatePurOrderDto implements ICreatePurOrderDto {
   unitPrice!: number;
 
   @IsOptional()
+  @IsNumber()
+  @IsIn([...VAT_RATE_VALUES])
+  taxRate?: number;
+
+  @IsOptional()
   @IsDateString()
   orderDate?: string;
+
+  @IsOptional()
+  @IsString()
+  remark?: string;
+}
+
+export class UpdatePurOrderDto implements IUpdatePurOrderDto {
+  @IsOptional()
+  @ValidateIf((_, v) => v !== null)
+  @IsNumber()
+  @IsIn([...VAT_RATE_VALUES])
+  taxRate?: number | null;
 
   @IsOptional()
   @IsString()
@@ -178,6 +200,15 @@ export class PurController {
   @Post('orders')
   async createOrder(@Body() dto: CreatePurOrderDto): Promise<PurOrderItem> {
     return this.purService.createOrder(dto);
+  }
+
+  @CanRole(['admin'])
+  @Patch('orders/:id')
+  async updateOrder(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: UpdatePurOrderDto
+  ): Promise<PurOrderItem> {
+    return this.purService.updateOrder(id, dto);
   }
 
   @CanRole(['admin'])

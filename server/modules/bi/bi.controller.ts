@@ -58,6 +58,14 @@ export class BiController {
   }
 
   @FinanceRead()
+  @Get('tax-distribution')
+  async getTaxDistribution(): Promise<
+    { taxEntityId: string | null; taxEntityName: string; amount: number; taxAmount: number }[]
+  > {
+    return this.biService.getTaxDistribution();
+  }
+
+  @FinanceRead()
   @Get('monthly-trends')
   async getMonthlyTrends(): Promise<MonthlyTrend[]> {
     return this.biService.getMonthlyTrends();

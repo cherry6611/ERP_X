@@ -13,7 +13,7 @@ export interface PagedResult<T> {
 
 export type LeadStatus = 'new' | 'following' | 'converted' | 'lost';
 export type OpportunityStage = 'new' | 'following' | 'quoting' | 'negotiating' | 'won' | 'lost';
-export type ContractStatus = 'draft' | 'approving' | 'active' | 'performing' | 'completed' | 'closed';
+export type ContractStatus = 'draft' | 'approving' | 'active' | 'performing' | 'completed' | 'closed' | 'terminated';
 export type BillingModel = 'project' | 'quantity' | 'subscription' | 'framework';
 export type MilestoneStatus = 'pending' | 'reached';
 export type ProjectStatus = 'initiating' | 'executing' | 'delivering' | 'accepting' | 'closed';
@@ -31,9 +31,9 @@ export type TimesheetStatus = 'draft' | 'submitted' | 'confirmed';
 export type RevenueMethod = 'progress' | 'milestone' | 'quantity' | 'subscription';
 export type AdjustType = 'discount' | 'return' | 'other';
 export type ArStatus = 'open' | 'partial' | 'settled';
-export type ReceiptStatus = 'unmatched' | 'partial' | 'matched';
+export type ReceiptStatus = 'unmatched' | 'partial' | 'matched' | 'voided';
 export type ApStatus = 'pending' | 'approved' | 'partial' | 'paid';
-export type PaymentStatus = 'pending' | 'approved' | 'rejected' | 'paid';
+export type PaymentStatus = 'pending' | 'approved' | 'rejected' | 'paid' | 'voided';
 export type InvoiceType = 'vat_special' | 'vat_normal' | 'electronic';
 export type InvoiceStatus = 'issued' | 'voided';
 export type InvoiceDirection = 'sales' | 'purchase';
@@ -51,6 +51,8 @@ export interface Customer {
   termsDays: number;
   status: string;
   remark: string | null;
+  taxEntityId?: string | null;
+  defaultTaxRate?: number | null;
   createdAt: string;
 }
 
@@ -86,6 +88,8 @@ export interface Supplier {
   rating: number;
   status: string;
   remark: string | null;
+  taxEntityId?: string | null;
+  defaultTaxRate?: number | null;
   createdAt: string;
 }
 
@@ -118,6 +122,8 @@ export interface Lead {
   source: string | null;
   contactName: string | null;
   contactPhone: string | null;
+  customerId?: string | null;
+  convertedOpportunityId?: string | null;
   status: LeadStatus;
   owner: string | null;
   followNote: string | null;
@@ -249,6 +255,10 @@ export interface Contract {
   billingModel: BillingModel;
   amount: number;
   taxRate: number;
+  netAmount?: number;
+  taxAmount?: number;
+  taxEntityId?: string | null;
+  rateSource?: string | null;
   status: ContractStatus;
   signDate: string | null;
   startDate: string | null;
@@ -288,6 +298,8 @@ export interface Calloff {
   projectId: string | null;
   projectName: string | null;
   amount: number;
+  quantity?: number | null;
+  unitPrice?: number | null;
   orderDate: string | null;
   remark: string | null;
 }
@@ -409,6 +421,8 @@ export interface ChainContractSummary {
   billingModel: string | null;
   amount: number;
   taxRate: number;
+  /** 合同所属纳税主体，前端用于按纳税人类型过滤税率下拉 */
+  taxEntityId?: string | null;
   status: string | null;
   signDate: string | null;
   startDate: string | null;
@@ -739,6 +753,8 @@ export interface InvoiceItem {
   status: InvoiceStatus;
   remark: string | null;
   createdAt: string;
+  /** 软提示，如开票额超过已确认收入 */
+  warning?: string;
 }
 
 export interface AgingBucket {
@@ -873,6 +889,8 @@ export interface CreateCustomerDto {
   termsDays?: number;
   status?: string;
   remark?: string;
+  taxEntityId?: string | null;
+  defaultTaxRate?: number | null;
 }
 
 export interface UpdateCustomerDto {
@@ -884,6 +902,8 @@ export interface UpdateCustomerDto {
   termsDays?: number;
   status?: string;
   remark?: string;
+  taxEntityId?: string | null;
+  defaultTaxRate?: number | null;
 }
 
 export interface CreateContactDto {
@@ -904,6 +924,8 @@ export interface CreateSupplierDto {
   rating?: number;
   status?: string;
   remark?: string;
+  taxEntityId?: string | null;
+  defaultTaxRate?: number | null;
 }
 
 export interface UpdateSupplierDto {
@@ -915,10 +937,13 @@ export interface UpdateSupplierDto {
   rating?: number;
   status?: string;
   remark?: string;
+  taxEntityId?: string | null;
+  defaultTaxRate?: number | null;
 }
 
 export interface CreateLeadDto {
   customerName: string;
+  customerId?: string;
   source?: string;
   contactName?: string;
   contactPhone?: string;
@@ -929,6 +954,7 @@ export interface CreateLeadDto {
 
 export interface UpdateLeadDto {
   status?: LeadStatus;
+  customerId?: string;
   followNote?: string;
   nextDate?: string;
   remark?: string;
@@ -965,6 +991,7 @@ export interface CreateContractDto {
   billingModel: BillingModel;
   amount: number;
   taxRate?: number;
+  taxEntityId?: string;
   signDate?: string;
   startDate?: string;
   endDate?: string;
@@ -978,6 +1005,7 @@ export interface UpdateContractDto {
   name?: string;
   amount?: number;
   taxRate?: number;
+  taxEntityId?: string;
   owner?: string;
   paymentTerms?: string;
   startDate?: string;
@@ -985,10 +1013,12 @@ export interface UpdateContractDto {
   remark?: string;
 }
 
-export type ContractStatusAction = 'submit' | 'approve' | 'reject' | 'start' | 'complete' | 'close';
+export type ContractStatusAction = 'submit' | 'approve' | 'reject' | 'start' | 'complete' | 'close' | 'terminate';
 
 export interface CreateCalloffDto {
   amount: number;
+  quantity?: number;
+  unitPrice?: number;
   projectId?: string;
   orderDate?: string;
   remark?: string;
@@ -1129,6 +1159,10 @@ export interface CreateRevenueAdjustDto {
   revenueId: string;
   adjustType: AdjustType;
   amount: number;
+  reason?: string;
+}
+
+export interface ReverseRevenueDto {
   reason?: string;
 }
 
@@ -1796,6 +1830,8 @@ export interface PurOrderItem {
   quantity: number;
   unitPrice: number;
   amount: number;
+  /** 进项税率（%），法定档位 0/1/3/6/9/13；验收凭证优先用此值 */
+  taxRate?: number | null;
   orderDate: string | null;
   acceptedQuantity: number;
   acceptDate: string | null;
@@ -1835,7 +1871,13 @@ export interface CreatePurOrderDto {
   category: PurOrderCategory;
   quantity: number;
   unitPrice: number;
+  taxRate?: number;
   orderDate?: string;
+  remark?: string;
+}
+
+export interface UpdatePurOrderDto {
+  taxRate?: number | null;
   remark?: string;
 }
 
@@ -2123,6 +2165,28 @@ export interface ApprovalNotificationResult {
   reason?: 'no_recipients' | 'send_failed';
 }
 
+/** B8：站内信收件箱条目 */
+export interface InboxMessage {
+  id: string;
+  userId: string;
+  title: string | null;
+  content: string | null;
+  bizType: string | null;
+  bizCode: string | null;
+  readAt: string | null;
+  createdAt: string;
+}
+
+export interface ListInboxMessagesResult {
+  items: InboxMessage[];
+}
+
+export interface MarkInboxMessageReadResult {
+  ok: true;
+  id: string;
+  readAt: string;
+}
+
 /* ========== 逾期与预警（通知中心） ========== */
 
 export interface AlertItem {
@@ -2158,6 +2222,7 @@ export const ATTACHMENT_RESOURCE_TYPES = [
   'admin_bill',
   'erp_invoice',
   'crm_quotation',
+  'hr_payroll',
   'erp_project_cost',
   'erp_deliverable',
   'erp_project_minutes',
@@ -2690,4 +2755,49 @@ export interface FetchSyncRecordsParams {
   bizType?: string;
   page: number;
   pageSize: number;
+}
+
+/* ========== 纳税主体 / 合同明细 / BI 税分布 ========== */
+
+export interface TaxEntity {
+  id: string;
+  code: string;
+  name: string;
+  uscc: string | null;
+  taxpayerType: 'general' | 'small';
+  defaultOutputRate: number;
+  defaultInputRate: number;
+  invoiceTitle: string | null;
+  invoiceAddress: string | null;
+  invoicePhone: string | null;
+  invoiceBank: string | null;
+  invoiceAccount: string | null;
+  isDefault: boolean;
+  status: 'active' | 'inactive';
+  remark: string | null;
+}
+
+export interface ContractItem {
+  id: string;
+  contractId: string;
+  versionNo: number;
+  seq: number;
+  itemName: string;
+  unit: string;
+  quantity: number;
+  unitPrice: number;
+  discountPct: number;
+  taxRate: number;
+  amount: number;
+  netAmount: number;
+  taxAmount: number;
+  estUnitCost: number;
+  sourceType: string;
+}
+
+export interface TaxDistributionItem {
+  taxEntityId: string | null;
+  taxEntityName: string;
+  amount: number;
+  taxAmount: number;
 }

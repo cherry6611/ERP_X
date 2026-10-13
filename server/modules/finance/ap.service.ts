@@ -9,7 +9,7 @@ import {
   DRIZZLE_DATABASE,
   type PostgresJsDatabase,
 } from '@server/platform';
-import { and, desc, eq, sum } from 'drizzle-orm';
+import { and, desc, eq, inArray, sql, sum } from 'drizzle-orm';
 import {
   erpApBill,
   erpApWriteoff,
@@ -18,6 +18,8 @@ import {
   mdSupplier,
 } from '@server/database/schema';
 import { generateBizCode } from '@server/common/utils/biz-code';
+import { inputIssueLines } from '@server/common/tax/posting';
+import { TaxResolverService } from '@server/modules/tax/tax-resolver.service';
 import { VoucherHookService } from '@server/modules/voucher/voucher-hook.service';
 import type {
   ApItem,
@@ -35,7 +37,8 @@ export class ApService {
 
   constructor(
     @Inject(DRIZZLE_DATABASE) private readonly db: PostgresJsDatabase,
-    private readonly voucherHookService: VoucherHookService
+    private readonly voucherHookService: VoucherHookService,
+    private readonly taxResolver: TaxResolverService
   ) {}
 
   async listAps(supplierId?: string, status?: string): Promise<ApItem[]> {
@@ -72,6 +75,9 @@ export class ApService {
   }
 
   async createAp(dto: CreateApDto): Promise<ApItem> {
+    if (dto.amount <= 0) {
+      throw new BadRequestException('应付金额必须大于 0');
+    }
     const supplier = await this.db
       .select({ id: mdSupplier.id, name: mdSupplier.name })
       .from(mdSupplier)
@@ -99,6 +105,17 @@ export class ApService {
       })
       .returning();
     const row = rows[0];
+    const resolved = await this.taxResolver.resolve({
+      supplierId: dto.supplierId,
+      side: 'input',
+    });
+    await this.voucherHookService.generateVoucherDraft({
+      sourceType: 'ap',
+      sourceRef: `ap:${row.code}`,
+      voucherDate: new Date().toISOString().slice(0, 10),
+      summary: `应付登记 ${row.code}`,
+      lines: inputIssueLines(Number(row.amount ?? 0), resolved.rate),
+    });
     let projectName: string | null = null;
     if (row.projectId) {
       const project = await this.db
@@ -156,36 +173,58 @@ export class ApService {
 
   /** 付款登记（草稿），审批通过后才能核销 */
   async createPayment(dto: CreatePaymentDto): Promise<PaymentItem> {
-    const apRows = await this.db
-      .select()
-      .from(erpApBill)
-      .where(eq(erpApBill.id, dto.apId));
-    if (apRows.length === 0) throw new NotFoundException('应付记录不存在');
-    const ap = apRows[0];
-    const remaining = Number(ap.amount) - Number(ap.paidAmount ?? 0);
-    if (dto.amount > remaining) {
-      throw new BadRequestException(`付款金额超过应付未付余额 ${remaining}`);
-    }
     const code = await generateBizCode(
       this.db,
       erpPayment,
       erpPayment.code,
       'PAY'
     );
-    const rows = await this.db
-      .insert(erpPayment)
-      .values({
-        code,
-        apId: dto.apId,
-        supplierId: ap.supplierId,
-        amount: String(dto.amount),
-        payDate: dto.payDate,
-        method: dto.method ?? 'bank',
-        status: 'pending',
-        remark: dto.remark,
-      })
-      .returning();
+    const rows = await this.db.transaction(async (tx) => {
+      const apRows = await tx
+        .select()
+        .from(erpApBill)
+        .where(eq(erpApBill.id, dto.apId))
+        .for('update');
+      if (apRows.length === 0) throw new NotFoundException('应付记录不存在');
+      const ap = apRows[0];
+      const reservedRows = await tx
+        .select({
+          total: sql<string>`coalesce(sum(${erpPayment.amount}), 0)`,
+        })
+        .from(erpPayment)
+        .where(
+          and(
+            eq(erpPayment.apId, dto.apId),
+            inArray(erpPayment.status, ['pending', 'approved', 'paid'])
+          )
+        );
+      const reserved = Number(reservedRows[0]?.total ?? 0);
+      // 占用口径：pending/approved/paid 付款单合计（paidAmount 与 paid 状态同源，不再重复扣）
+      const remaining = Number(ap.amount) - reserved;
+      if (dto.amount > remaining + 0.001) {
+        throw new BadRequestException(
+          `付款金额超过应付可付余额 ${remaining}（已占用 ${reserved}）`
+        );
+      }
+      return tx
+        .insert(erpPayment)
+        .values({
+          code,
+          apId: dto.apId,
+          supplierId: ap.supplierId,
+          amount: String(dto.amount),
+          payDate: dto.payDate,
+          method: dto.method ?? 'bank',
+          status: 'pending',
+          remark: dto.remark,
+        })
+        .returning();
+    });
     const row = rows[0];
+    const ap = await this.db
+      .select({ code: erpApBill.code })
+      .from(erpApBill)
+      .where(eq(erpApBill.id, row.apId ?? ''));
     const supplier = await this.db
       .select({ name: mdSupplier.name })
       .from(mdSupplier)
@@ -194,7 +233,7 @@ export class ApService {
       id: row.id,
       code: row.code,
       apId: row.apId ?? '',
-      apCode: ap.code,
+      apCode: ap[0]?.code ?? null,
       supplierId: row.supplierId ?? '',
       supplierName: supplier[0]?.name ?? '',
       amount: Number(row.amount ?? 0),
@@ -207,30 +246,67 @@ export class ApService {
     };
   }
 
-  /** 付款审批：approve 置为已批准，reject 驳回 */
+  /** 付款审批：approve 置为已批准，reject 驳回；事务内 CAS + 再校验可付余额 */
   async approvePayment(
     id: string,
     action: 'approve' | 'reject',
     approver: string
   ): Promise<PaymentItem> {
-    const rows0 = await this.db
-      .select()
-      .from(erpPayment)
-      .where(eq(erpPayment.id, id));
-    if (rows0.length === 0) throw new NotFoundException('付款记录不存在');
-    if ((rows0[0].status ?? 'pending') !== 'pending') {
-      throw new BadRequestException('该付款已审批');
-    }
-    const rows = await this.db
-      .update(erpPayment)
-      .set({
-        status: action === 'approve' ? 'approved' : 'rejected',
-        approver,
-        updatedAt: new Date(),
-      })
-      .where(eq(erpPayment.id, id))
-      .returning();
-    const row = rows[0];
+    const row = await this.db.transaction(async (tx) => {
+      const locked = await tx
+        .select()
+        .from(erpPayment)
+        .where(eq(erpPayment.id, id))
+        .for('update');
+      if (locked.length === 0) throw new NotFoundException('付款记录不存在');
+      if ((locked[0].status ?? '') !== 'pending') {
+        throw new BadRequestException('该付款已审批');
+      }
+      if (action === 'approve' && locked[0].apId) {
+        const apRows = await tx
+          .select()
+          .from(erpApBill)
+          .where(eq(erpApBill.id, locked[0].apId))
+          .for('update');
+        if (apRows.length === 0) throw new NotFoundException('应付记录不存在');
+        const reservedRows = await tx
+          .select({
+            total: sql<string>`coalesce(sum(${erpPayment.amount}), 0)`,
+          })
+          .from(erpPayment)
+          .where(
+            and(
+              eq(erpPayment.apId, locked[0].apId),
+              inArray(erpPayment.status, [
+                'pending',
+                'approved',
+                'paid',
+              ]),
+              sql`${erpPayment.id} <> ${id}`
+            )
+          );
+        const reserved = Number(reservedRows[0]?.total ?? 0);
+        const remaining = Number(apRows[0].amount) - reserved;
+        if (Number(locked[0].amount ?? 0) > remaining + 0.001) {
+          throw new BadRequestException(
+            `审批失败：付款超过应付可付余额 ${remaining}`
+          );
+        }
+      }
+      const updated = await tx
+        .update(erpPayment)
+        .set({
+          status: action === 'approve' ? 'approved' : 'rejected',
+          approver,
+          updatedAt: new Date(),
+        })
+        .where(and(eq(erpPayment.id, id), eq(erpPayment.status, 'pending')))
+        .returning();
+      if (updated.length === 0) {
+        throw new BadRequestException('该付款已审批');
+      }
+      return updated[0];
+    });
 
     /* 付款审批通过 → 生成凭证草稿：借 应付账款(2202) / 贷 银行存款(1001) */
     if (action === 'approve') {
@@ -271,6 +347,79 @@ export class ApService {
       payDate: row.payDate,
       method: row.method ?? 'bank',
       status: (row.status ?? 'pending') as PaymentStatus,
+      approver: row.approver,
+      remark: row.remark,
+      createdAt: row.createdAt.toISOString(),
+    };
+  }
+
+  /** 作废未核销付款。已审批付款同时冲回银存凭证。 */
+  async voidPayment(id: string): Promise<PaymentItem> {
+    // 修复 P0-4：部分核销后付款单仍是 approved（只有全额核销才置 paid），
+    // 直接作废会释放额度占用却留下 erp_ap_writeoff 记录与 ap.paidAmount，
+    // 于是可以再建一张付款单 → 重复付款、账实不符。
+    const usedRows = await this.db
+      .select({
+        total: sql<string>`coalesce(sum(${erpApWriteoff.amount}), 0)`,
+      })
+      .from(erpApWriteoff)
+      .where(eq(erpApWriteoff.paymentId, id));
+    if (Number(usedRows[0]?.total ?? 0) > 0) {
+      throw new BadRequestException(
+        '该付款单已有核销记录，不可作废；请先冲销对应的核销记录'
+      );
+    }
+    const rows = await this.db
+      .update(erpPayment)
+      .set({ status: 'voided', updatedAt: new Date() })
+      .where(
+        and(eq(erpPayment.id, id), eq(erpPayment.status, 'approved'))
+      )
+      .returning();
+    const pending =
+      rows.length > 0
+        ? rows
+        : await this.db
+            .update(erpPayment)
+            .set({ status: 'voided', updatedAt: new Date() })
+            .where(and(eq(erpPayment.id, id), eq(erpPayment.status, 'pending')))
+            .returning();
+    if (pending.length === 0) {
+      throw new BadRequestException('只有待审批或已审批且未付款的记录可以作废');
+    }
+    const row = pending[0];
+    if (rows.length > 0) {
+      const payAmount = Number(row.amount ?? 0);
+      await this.voucherHookService.generateVoucherDraft({
+        sourceType: 'payment',
+        sourceRef: `payment-void:${row.code}`,
+        voucherDate: new Date().toISOString().slice(0, 10),
+        summary: `付款作废 ${row.code}`,
+        lines: [
+          { accountCode: '1001', debit: payAmount },
+          { accountCode: '2202', credit: payAmount },
+        ],
+      });
+    }
+    const ap = await this.db
+      .select({ code: erpApBill.code })
+      .from(erpApBill)
+      .where(eq(erpApBill.id, row.apId ?? ''));
+    const supplier = await this.db
+      .select({ name: mdSupplier.name })
+      .from(mdSupplier)
+      .where(eq(mdSupplier.id, row.supplierId ?? ''));
+    return {
+      id: row.id,
+      code: row.code,
+      apId: row.apId ?? '',
+      apCode: ap[0]?.code ?? null,
+      supplierId: row.supplierId ?? '',
+      supplierName: supplier[0]?.name ?? '',
+      amount: Number(row.amount ?? 0),
+      payDate: row.payDate,
+      method: row.method ?? 'bank',
+      status: 'voided' as PaymentStatus,
       approver: row.approver,
       remark: row.remark,
       createdAt: row.createdAt.toISOString(),

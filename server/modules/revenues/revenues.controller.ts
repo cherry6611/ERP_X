@@ -2,6 +2,8 @@ import {
   Body,
   Controller,
   Get,
+  Param,
+  ParseUUIDPipe,
   Post,
   Query,
 } from '@nestjs/common';
@@ -9,11 +11,12 @@ import { CanRole, NeedLogin } from '@server/platform';
 import { RevenuesService } from './revenues.service';
 import type {
   CreateRevenueAdjustDto,
-  CreateRevenueDto,
+  ReverseRevenueDto,
   RevenueAdjust,
   RevenueItem,
   UnbilledItem,
 } from '@shared/api.interface';
+import { CreateRevenueDto } from './revenues.dto';
 
 @NeedLogin()
 @Controller('api/revenues')
@@ -50,5 +53,14 @@ export class RevenuesController {
     @Body() dto: CreateRevenueAdjustDto
   ): Promise<RevenueAdjust> {
     return this.revenuesService.createAdjust(dto);
+  }
+
+  @CanRole(['admin', 'finance_viewer'])
+  @Post(':id/reverse')
+  async reverseRevenue(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: ReverseRevenueDto
+  ): Promise<RevenueItem> {
+    return this.revenuesService.reverseRevenue(id, dto?.reason);
   }
 }

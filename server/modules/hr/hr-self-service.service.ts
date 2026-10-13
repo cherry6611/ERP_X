@@ -6,6 +6,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import {
+  AccountLifecycleService,
   DRIZZLE_DATABASE,
   type PostgresJsDatabase,
 } from '@server/platform';
@@ -108,7 +109,8 @@ export class HrSelfServiceService {
   constructor(
     @Inject(DRIZZLE_DATABASE) private readonly db: PostgresJsDatabase,
     private readonly hrCoreService: HrCoreService,
-    private readonly actorAccess: ActorAccessService
+    private readonly actorAccess: ActorAccessService,
+    private readonly accounts: AccountLifecycleService,
   ) {}
 
   private toAmendment(row: AmendmentRow): AttendanceAmendment {
@@ -572,12 +574,15 @@ export class HrSelfServiceService {
     dto: { resignDate: string; remark?: string }
   ): Promise<OffboardResult> {
     const employees = await this.db
-      .select({ id: mdEmployee.id, status: mdEmployee.status })
+      .select({ id: mdEmployee.id, status: mdEmployee.status, hireDate: mdEmployee.hireDate })
       .from(mdEmployee)
       .where(eq(mdEmployee.id, id));
     if (employees.length === 0) throw new NotFoundException('员工不存在');
     if (employees[0].status === 'resigned') {
       throw new BadRequestException('员工已离职，无需重复办理');
+    }
+    if (employees[0].hireDate && dto.resignDate < employees[0].hireDate) {
+      throw new BadRequestException('离职日期不能早于入职日期');
     }
     const patch: Record<string, unknown> = {
       status: 'resigned',
@@ -591,6 +596,7 @@ export class HrSelfServiceService {
       .where(eq(mdEmployee.id, id))
       .returning({ id: mdEmployee.id });
     if (updated.length === 0) throw new NotFoundException('员工不存在');
+    await this.accounts.disableEmployeeAccount(id);
     const employee = await this.getEmployeeById(id);
 
     const cutoff: string = toIsoDate(

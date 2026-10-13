@@ -3,6 +3,7 @@ import {
   ConflictException,
   Inject,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import {
@@ -18,6 +19,9 @@ import {
   mdSupplier,
 } from '@server/database/schema';
 import { generateBizCode } from '@server/common/utils/biz-code';
+import { inputIssueLines } from '@server/common/tax/posting';
+import { TaxResolverService } from '@server/modules/tax/tax-resolver.service';
+import { VoucherHookService } from '@server/modules/voucher/voucher-hook.service';
 import type {
   GenerateVendorSettlementDto,
   GenerateVendorSettlementResult,
@@ -62,8 +66,12 @@ function roundAmount(value: number): number {
 
 @Injectable()
 export class VendorSettlementService {
+  private readonly logger = new Logger(VendorSettlementService.name);
+
   constructor(
-    @Inject(DRIZZLE_DATABASE) private readonly db: PostgresJsDatabase
+    @Inject(DRIZZLE_DATABASE) private readonly db: PostgresJsDatabase,
+    private readonly voucherHookService: VoucherHookService,
+    private readonly taxResolver: TaxResolverService
   ) {}
 
   async preview(
@@ -168,10 +176,37 @@ export class VendorSettlementService {
       }
       return rows[0];
     });
+
+    // A3：外协结算补进项凭证
+    const amount = Number(inserted.amount ?? 0);
+    try {
+      const resolved = await this.taxResolver.resolve({
+        supplierId: dto.supplierId,
+        side: 'input',
+      });
+      await this.voucherHookService.generateVoucherDraft({
+        sourceType: 'ap',
+        sourceRef: `ap:${inserted.code}`,
+        voucherDate: dto.dueDate ?? new Date().toISOString().slice(0, 10),
+        summary: `外协结算 ${dto.period} ${inserted.code}`,
+        lines: inputIssueLines(amount, resolved.rate),
+      });
+    } catch (error) {
+      this.logger.error(
+        `外协结算凭证失败 ap:${inserted.code}`,
+        error instanceof Error ? error.stack : String(error)
+      );
+      await this.voucherHookService.recordCompensation(
+        'ap',
+        `ap:${inserted.code}`,
+        error instanceof Error ? error.message : String(error)
+      );
+    }
+
     return {
       apId: inserted.id,
       code: inserted.code,
-      amount: Number(inserted.amount ?? 0),
+      amount,
     };
   }
 

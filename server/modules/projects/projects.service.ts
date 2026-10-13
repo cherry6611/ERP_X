@@ -42,6 +42,10 @@ import {
   mdSupplier,
 } from '@server/database/schema';
 import { generateBizCode } from '@server/common/utils/biz-code';
+import { outputIssueLines } from '@server/common/tax/posting';
+import { splitTax } from '@shared/tax';
+import { VoucherHookService } from '@server/modules/voucher/voucher-hook.service';
+import { TaxResolverService } from '@server/modules/tax/tax-resolver.service';
 import { toProject } from './projects.transform';
 import { ProjectAclService } from './project-acl.service';
 import type { RequestActor } from '@server/common/auth/actor';
@@ -72,7 +76,9 @@ export class ProjectsService {
 
   constructor(
     @Inject(DRIZZLE_DATABASE) private readonly db: PostgresJsDatabase,
-    private readonly projectAcl: ProjectAclService
+    private readonly projectAcl: ProjectAclService,
+    private readonly voucherHook: VoucherHookService,
+    private readonly taxResolver: TaxResolverService
   ) {}
 
 
@@ -117,9 +123,16 @@ export class ProjectsService {
       .from(erpProject)
       .where(eq(erpProject.id, projectId));
     if (projects.length === 0) throw new NotFoundException('项目不存在');
+    // T2：核算毛利按不含税净收入（关联合同税率拆税）
     const revenueRows = await this.db
-      .select({ total: sum(erpProjectRevenue.amount) })
+      .select({
+        total: sql<string>`coalesce(sum(
+          coalesce(${erpProjectRevenue.amount}, 0) * 100.0
+          / (100.0 + coalesce(${erpContract.taxRate}, 6))
+        ), 0)`,
+      })
       .from(erpProjectRevenue)
+      .leftJoin(erpContract, eq(erpProjectRevenue.contractId, erpContract.id))
       .where(
         and(
           eq(erpProjectRevenue.projectId, projectId),
@@ -127,12 +140,18 @@ export class ProjectsService {
         )
       );
     const adjustRows = await this.db
-      .select({ total: sum(erpRevenueAdjust.amount) })
+      .select({
+        total: sql<string>`coalesce(sum(
+          coalesce(${erpRevenueAdjust.amount}, 0) * 100.0
+          / (100.0 + coalesce(${erpContract.taxRate}, 6))
+        ), 0)`,
+      })
       .from(erpRevenueAdjust)
       .innerJoin(
         erpProjectRevenue,
         eq(erpRevenueAdjust.revenueId, erpProjectRevenue.id)
       )
+      .leftJoin(erpContract, eq(erpProjectRevenue.contractId, erpContract.id))
       .where(
         and(
           eq(erpProjectRevenue.projectId, projectId),
@@ -265,6 +284,9 @@ export class ProjectsService {
           billingModel: c.billingModel,
           amount: Number(c.amount ?? 0),
           taxRate: Number(c.taxRate ?? 0),
+          // 前端开票表单要按「合同所属纳税主体」过滤税率下拉，必须与后端
+          // invoice.service.ts 用的 taxEntityId 同源，否则下拉与校验口径不一致 → 400
+          taxEntityId: c.taxEntityId ?? null,
           status: c.status,
           signDate: c.signDate,
           startDate: c.startDate,
@@ -553,6 +575,12 @@ export class ProjectsService {
       })
       .returning();
     const row = rows[0];
+
+    // 修复 P0-3：本项目详情页的「确认收入」曾是一条绕过 RevenuesService 的旁路，
+    // 不生成凭证、不生成应收，但 BI/未开票台账都会把它算成已确认收入 → 三口径不一致。
+    // 方案 A 规定「收入确认是唯一收入入口」，此处补齐凭证与应收，且与
+    // RevenuesService 使用同源 sourceRef 前缀，命中 uq_fin_voucher_source 幂等。
+    await this.postRevenueVoucherAndAr(row, dto.period);
     return {
       id: row.id,
       code: row.code,
@@ -566,9 +594,127 @@ export class ProjectsService {
     };
   }
 
+  /**
+   * 修复 P0-3：项目详情页「确认收入」的业财打通。
+   * 收入确认必须同时产生：①应收（含税）②凭证（借1122／贷6001／贷222101）。
+   * 任一步失败只记录补偿，不回滚已确认的收入（与 RevenuesService 行为一致），
+   * 避免出现「BI 有收入、总账无凭证、无应收可收」的三口径分裂。
+   */
+  private async postRevenueVoucherAndAr(
+    row: typeof erpProjectRevenue.$inferSelect,
+    period: string
+  ): Promise<void> {
+    const amount = Number(row.amount ?? 0);
+    if (amount <= 0) return;
+
+    let rate = 6;
+    const contractRows = row.contractId
+      ? await this.db
+          .select({
+            taxRate: erpContract.taxRate,
+            customerId: erpContract.customerId,
+            taxEntityId: erpContract.taxEntityId,
+          })
+          .from(erpContract)
+          .where(eq(erpContract.id, row.contractId))
+      : [];
+    const contract = contractRows[0];
+    try {
+      // 修复 P1-11：税率改走 TaxResolverService，与开票口径一致（不再硬编码 6）
+      const resolved = await this.taxResolver.resolve({
+        upstream: contract?.taxRate != null ? Number(contract.taxRate) : null,
+        customerId: contract?.customerId ?? undefined,
+        taxEntityId: contract?.taxEntityId ?? undefined,
+        side: 'output',
+      });
+      rate = resolved.rate;
+    } catch (error) {
+      this.logger.warn(
+        `项目收入税率解析失败，按 6% 兜底：${row.code} ${
+          error instanceof Error ? error.message : String(error)
+        }`
+      );
+    }
+
+    const periodMatch = /^(\d{4})-(\d{2})$/u.exec(period);
+    const voucherDate = periodMatch
+      ? `${period}-01`
+      : new Date().toISOString().slice(0, 10);
+
+    if (row.contractId) {
+      try {
+        const arCode = await generateBizCode(
+          this.db,
+          erpAr,
+          erpAr.code,
+          'AR'
+        );
+        await this.db.insert(erpAr).values({
+          code: arCode,
+          contractId: row.contractId,
+          projectId: row.projectId ?? undefined,
+          customerId: contract?.customerId ?? undefined,
+          amount: String(amount),
+          settledAmount: '0',
+          status: 'open',
+          source: 'revenue',
+          remark: `项目收入确认 ${row.code}`,
+        });
+      } catch (error) {
+        this.logger.error(
+          `项目收入确认生成应收失败：${row.code}`,
+          error instanceof Error ? error.stack : String(error)
+        );
+        try {
+          await this.voucherHook.recordCompensation(
+            'revenue-ar',
+            `revenue-ar:${row.code}`,
+            '项目收入确认生成应收失败'
+          );
+        } catch {
+          /* 补偿登记失败不阻断主流程 */
+        }
+      }
+    }
+
+    try {
+      await this.voucherHook.generateVoucherDraft({
+        sourceType: 'revenue',
+        sourceRef: `revenue:${row.code}`,
+        voucherDate,
+        summary: `收入确认 ${row.code}`,
+        lines: outputIssueLines(amount, rate),
+      });
+    } catch (error) {
+      this.logger.error(
+        `项目收入确认凭证生成失败：${row.code}`,
+        error instanceof Error ? error.stack : String(error)
+      );
+      try {
+        await this.voucherHook.recordCompensation(
+          'revenue-voucher',
+          `revenue:${row.code}`,
+          '项目收入确认凭证生成失败'
+        );
+      } catch {
+        /* 补偿登记失败不阻断主流程 */
+      }
+    }
+
+    // 供日志排查：net/tax 由 splitTax 得出，确认拆分口径与开票一致
+    const split = splitTax(amount, rate);
+    this.logger.log(
+      `收入确认 ${row.code} 含税 ${amount} 税率 ${rate}% → 不含税 ${split.net} / 税额 ${split.tax}`
+    );
+  }
+
   async createProject(dto: CreateProjectDto): Promise<ProjectDetail> {
     const contracts = await this.db
-      .select({ id: erpContract.id, status: erpContract.status })
+      .select({
+        id: erpContract.id,
+        status: erpContract.status,
+        netAmount: erpContract.netAmount,
+      })
       .from(erpContract)
       .where(eq(erpContract.id, dto.contractId));
     if (contracts.length === 0) throw new NotFoundException('合同不存在');
@@ -592,7 +738,7 @@ export class ProjectsService {
         contractId: dto.contractId,
         pm: dto.pm,
         deptName: dto.deptName,
-        budget: String(dto.budget ?? 0),
+        budget: String(dto.budget ?? Number(contracts[0].netAmount ?? 0)),
         estimatedTotalCost: String(dto.estimatedTotalCost ?? 0),
         startDate: dto.startDate,
         endDate: dto.endDate,

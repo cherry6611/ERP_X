@@ -2,6 +2,7 @@ import {
   BadRequestException,
   Inject,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import {
@@ -21,6 +22,10 @@ import {
   purRequest,
 } from '@server/database/schema';
 import { generateBizCode } from '@server/common/utils/biz-code';
+import { inputIssueLines } from '@server/common/tax/posting';
+import { TaxResolverService } from '@server/modules/tax/tax-resolver.service';
+import { VoucherHookService } from '@server/modules/voucher/voucher-hook.service';
+import { isVatRate } from '@shared/tax';
 import type {
   AcceptPurOrderDto,
   CreatePurOrderDto,
@@ -32,6 +37,7 @@ import type {
   PurRequestAction,
   PurRequestItem,
   PurRequestStatus,
+  UpdatePurOrderDto,
 } from '@shared/api.interface';
 
 interface PurRequestRow {
@@ -69,6 +75,7 @@ interface PurOrderRow {
   quantity: number | null;
   unitPrice: string | null;
   amount: string | null;
+  taxRate: string | null;
   orderDate: string | null;
   acceptedQuantity: number | null;
   acceptDate: string | null;
@@ -82,8 +89,12 @@ const MAX_PAGE_SIZE = 100;
 
 @Injectable()
 export class PurService {
+  private readonly logger = new Logger(PurService.name);
+
   constructor(
-    @Inject(DRIZZLE_DATABASE) private readonly db: PostgresJsDatabase
+    @Inject(DRIZZLE_DATABASE) private readonly db: PostgresJsDatabase,
+    private readonly voucherHookService: VoucherHookService,
+    private readonly taxResolver: TaxResolverService
   ) {}
 
   private toRequestItem(row: PurRequestRow): PurRequestItem {
@@ -124,6 +135,7 @@ export class PurService {
       quantity: row.quantity ?? 0,
       unitPrice: Number(row.unitPrice ?? 0),
       amount: Number(row.amount ?? 0),
+      taxRate: row.taxRate != null ? Number(row.taxRate) : null,
       orderDate: row.orderDate,
       acceptedQuantity: row.acceptedQuantity ?? 0,
       acceptDate: row.acceptDate,
@@ -314,6 +326,7 @@ export class PurService {
         quantity: purOrder.quantity,
         unitPrice: purOrder.unitPrice,
         amount: purOrder.amount,
+        taxRate: purOrder.taxRate,
         orderDate: purOrder.orderDate,
         acceptedQuantity: purOrder.acceptedQuantity,
         acceptDate: purOrder.acceptDate,
@@ -355,6 +368,11 @@ export class PurService {
     }
 
     const amount = dto.quantity * dto.unitPrice;
+    if (dto.taxRate != null && !isVatRate(dto.taxRate)) {
+      throw new BadRequestException(
+        `非法税率 ${dto.taxRate}，允许值为 0/1/3/6/9/13`
+      );
+    }
 
     if (dto.contractId) {
       const contractRows = await this.db
@@ -400,6 +418,7 @@ export class PurService {
         quantity: dto.quantity,
         unitPrice: String(dto.unitPrice),
         amount: String(amount),
+        taxRate: dto.taxRate != null ? String(dto.taxRate) : null,
         orderDate: dto.orderDate,
         status: 'pending',
         remark: dto.remark,
@@ -408,47 +427,92 @@ export class PurService {
     return this.getOrderById(inserted[0].id);
   }
 
-  async acceptOrder(id: string, dto: AcceptPurOrderDto): Promise<PurOrderItem> {
-    const rows = await this.db.select().from(purOrder).where(eq(purOrder.id, id));
+  async updateOrder(id: string, dto: UpdatePurOrderDto): Promise<PurOrderItem> {
+    const rows = await this.db
+      .select({ id: purOrder.id, status: purOrder.status })
+      .from(purOrder)
+      .where(eq(purOrder.id, id));
     if (rows.length === 0) throw new NotFoundException('采购订单不存在');
-    const order = rows[0];
-    if ((order.status ?? 'pending') !== 'pending') {
-      throw new BadRequestException('仅待验收状态的订单可验收');
+    if ((rows[0].status ?? 'pending') !== 'pending') {
+      throw new BadRequestException('仅待验收状态的订单可修改');
     }
-    const quantity = order.quantity ?? 0;
-    const accepted = order.acceptedQuantity ?? 0;
-    const remaining = quantity - accepted;
-    if (dto.quantity > remaining) {
+    if (dto.taxRate != null && !isVatRate(dto.taxRate)) {
       throw new BadRequestException(
-        `验收数量超出订单余量：订单数量 ${quantity}，已验收 ${accepted}，` +
-          `本次可验收上限 ${remaining}，实际提交 ${dto.quantity}`
+        `非法税率 ${dto.taxRate}，允许值为 0/1/3/6/9/13`
       );
     }
+    const patch: {
+      taxRate?: string | null;
+      remark?: string;
+      updatedAt: Date;
+    } = { updatedAt: new Date() };
+    if (dto.taxRate !== undefined) {
+      patch.taxRate = dto.taxRate != null ? String(dto.taxRate) : null;
+    }
+    if (dto.remark !== undefined) {
+      patch.remark = dto.remark;
+    }
+    await this.db.update(purOrder).set(patch).where(eq(purOrder.id, id));
+    return this.getOrderById(id);
+  }
 
-    const acceptDate = dto.acceptDate ?? new Date().toISOString().slice(0, 10);
-    const period = acceptDate.slice(0, 7);
-    const unitPrice = Number(order.unitPrice ?? 0);
-    const amount = dto.quantity * unitPrice;
-    const supplierId = order.supplierId ?? '';
-    const projectId = order.projectId;
-    const category = order.category ?? 'service';
-
+  async acceptOrder(id: string, dto: AcceptPurOrderDto): Promise<PurOrderItem> {
+    if (dto.quantity <= 0) {
+      throw new BadRequestException('验收数量必须大于 0');
+    }
     const apCode = await generateBizCode(this.db, erpApBill, erpApBill.code, 'APB');
-    const pcCode =
-      category === 'service' && projectId
-        ? await generateBizCode(
-            this.db,
-            erpProjectCost,
-            erpProjectCost.code,
-            'PC'
-          )
-        : null;
-    const astCode =
-      category === 'equipment'
-        ? await generateBizCode(this.db, astAsset, astAsset.code, 'AST')
-        : null;
+    let voucherAmount = 0;
+    let voucherSupplierId = '';
+    let voucherTaxRate: number | null = null;
+    let acceptDate = new Date().toISOString().slice(0, 10);
+    let orderCode = '';
 
     await this.db.transaction(async (tx) => {
+      // T12：事务内 FOR UPDATE，防并发重复验收
+      const locked = await tx
+        .select()
+        .from(purOrder)
+        .where(eq(purOrder.id, id))
+        .for('update');
+      if (locked.length === 0) throw new NotFoundException('采购订单不存在');
+      const order = locked[0];
+      if ((order.status ?? 'pending') !== 'pending') {
+        throw new BadRequestException('仅待验收状态的订单可验收');
+      }
+      const quantity = order.quantity ?? 0;
+      const accepted = order.acceptedQuantity ?? 0;
+      const remaining = quantity - accepted;
+      if (dto.quantity > remaining) {
+        throw new BadRequestException(
+          `验收数量超出订单余量：订单数量 ${quantity}，已验收 ${accepted}，` +
+            `本次可验收上限 ${remaining}，实际提交 ${dto.quantity}`
+        );
+      }
+
+      acceptDate = dto.acceptDate ?? new Date().toISOString().slice(0, 10);
+      const period = acceptDate.slice(0, 7);
+      const unitPrice = Number(order.unitPrice ?? 0);
+      const amount = dto.quantity * unitPrice;
+      const supplierId = order.supplierId ?? '';
+      const projectId = order.projectId;
+      const category = order.category ?? 'service';
+      voucherAmount = amount;
+      voucherSupplierId = supplierId;
+      voucherTaxRate =
+        order.taxRate != null && Number.isFinite(Number(order.taxRate))
+          ? Number(order.taxRate)
+          : null;
+      orderCode = order.code;
+
+      const pcCode =
+        category === 'service' && projectId
+          ? await generateBizCode(tx, erpProjectCost, erpProjectCost.code, 'PC')
+          : null;
+      const astCode =
+        category === 'equipment'
+          ? await generateBizCode(tx, astAsset, astAsset.code, 'AST')
+          : null;
+
       const updated = await tx
         .update(purOrder)
         .set({
@@ -469,6 +533,7 @@ export class PurService {
         paidAmount: '0',
         status: 'pending',
         source: 'purchase',
+        sourceRef: `po-accept:${order.code}:${apCode}`,
         remark: `采购订单${order.code}`,
       });
 
@@ -480,7 +545,7 @@ export class PurService {
           amount: String(amount),
           period,
           occurredDate: acceptDate,
-          sourceRef: `po:${order.code}`,
+          sourceRef: `po:${order.code}:${apCode}`,
           supplierId,
           remark: `采购订单${order.code}验收生成`,
         });
@@ -504,6 +569,35 @@ export class PurService {
         });
       }
     });
+
+    // A3：采购验收补进项凭证（单价按含税口径）
+    if (voucherAmount > 0) {
+      try {
+        // U-02：优先订单 taxRate 作为 TaxResolver upstream
+        const resolved = await this.taxResolver.resolve({
+          upstream: voucherTaxRate,
+          supplierId: voucherSupplierId || undefined,
+          side: 'input',
+        });
+        await this.voucherHookService.generateVoucherDraft({
+          sourceType: 'ap',
+          sourceRef: `ap:${apCode}`,
+          voucherDate: acceptDate,
+          summary: `采购验收 ${orderCode}`,
+          lines: inputIssueLines(voucherAmount, resolved.rate),
+        });
+      } catch (error) {
+        this.logger.error(
+          `采购验收凭证失败 ap:${apCode}`,
+          error instanceof Error ? error.stack : String(error)
+        );
+        await this.voucherHookService.recordCompensation(
+          'ap',
+          `ap:${apCode}`,
+          error instanceof Error ? error.message : String(error)
+        );
+      }
+    }
 
     return this.getOrderById(id);
   }
@@ -551,6 +645,7 @@ export class PurService {
         quantity: purOrder.quantity,
         unitPrice: purOrder.unitPrice,
         amount: purOrder.amount,
+        taxRate: purOrder.taxRate,
         orderDate: purOrder.orderDate,
         acceptedQuantity: purOrder.acceptedQuantity,
         acceptDate: purOrder.acceptDate,

@@ -9,7 +9,7 @@ import {
   DRIZZLE_DATABASE,
   type PostgresJsDatabase,
 } from '@server/platform';
-import { and, desc, eq, sum } from 'drizzle-orm';
+import { and, desc, eq, inArray, sum } from 'drizzle-orm';
 import {
   erpAr,
   erpArWriteoff,
@@ -19,7 +19,9 @@ import {
   mdCustomer,
 } from '@server/database/schema';
 import { generateBizCode } from '@server/common/utils/biz-code';
+import { outputIssueLines } from '@server/common/tax/posting';
 import { VoucherHookService } from '@server/modules/voucher/voucher-hook.service';
+import { arSettleStatus, receiptMatchStatus } from './ar-match';
 import type {
   AgingBucket,
   ArItem,
@@ -100,6 +102,9 @@ export class ArService {
 
   /** 应收登记：默认账期取客户档案的账期天数 */
   async createAr(dto: CreateArDto): Promise<ArItem> {
+    if (dto.amount <= 0) {
+      throw new BadRequestException('应收金额必须大于 0');
+    }
     const contract = await this.db
       .select()
       .from(erpContract)
@@ -118,6 +123,7 @@ export class ArService {
       d.setDate(d.getDate() + terms);
       dueDate = d.toISOString().slice(0, 10);
     }
+    const source = dto.source ?? 'manual';
     const rows = await this.db
       .insert(erpAr)
       .values({
@@ -129,16 +135,77 @@ export class ArService {
         settledAmount: '0',
         dueDate,
         status: 'open',
-        source: dto.source ?? 'manual',
+        source,
         remark: dto.remark,
         ownerUserId: dto.ownerUserId ?? null,
       })
       .returning();
+    /** T1：手工应收借1122/贷6001/贷222101（账单即确认）；source=revenue 不出凭证 */
+    if (source === 'manual') {
+      const taxRate = Number(contract[0].taxRate ?? 6);
+      await this.voucherHookService.generateVoucherDraft({
+        sourceType: 'ar',
+        sourceRef: `ar:${code}`,
+        voucherDate: new Date().toISOString().slice(0, 10),
+        summary: `手工应收登记 ${code}`,
+        lines: outputIssueLines(dto.amount, taxRate),
+      });
+    }
     return this.buildArItem({
       ar: rows[0],
       contractName: contract[0].name,
       customerName: customer[0].name,
       projectName: null,
+    });
+  }
+
+  /** 收入调整：冲减未结清应收（优先同合同 open 行），避免生成负数 AR（M-05） */
+  async applyCredit(
+    contractId: string,
+    amount: number,
+    remark: string
+  ): Promise<void> {
+    const credit = Math.abs(amount);
+    if (credit <= 0) return;
+    await this.db.transaction(async (tx) => {
+      // 修复 P1-13：原只匹配 status='open'，漏掉 'partial'。
+      // 已被部分回款的应收（partial）仍有未结清余额，收入折让/退回冲减时
+      // 这部分被跳过 → 直接抛「调整金额超过未结清应收」，冲减做不下去。
+      const openRows = await tx
+        .select()
+        .from(erpAr)
+        .where(
+          and(
+            eq(erpAr.contractId, contractId),
+            inArray(erpAr.status, ['open', 'partial'])
+          )
+        )
+        .for('update');
+      let left = credit;
+      for (const row of openRows) {
+        if (left <= 0.001) break;
+        const open =
+          Number(row.amount ?? 0) - Number(row.settledAmount ?? 0);
+        if (open <= 0.001) continue;
+        const apply = Math.min(open, left);
+        const newSettled = Number(row.settledAmount ?? 0) + apply;
+        const fullySettled = newSettled + 0.001 >= Number(row.amount ?? 0);
+        await tx
+          .update(erpAr)
+          .set({
+            settledAmount: String(newSettled),
+            status: fullySettled ? 'settled' : 'partial',
+            remark: [row.remark, remark].filter(Boolean).join('；'),
+            updatedAt: new Date(),
+          })
+          .where(eq(erpAr.id, row.id));
+        left -= apply;
+      }
+      if (left > 0.01) {
+        throw new BadRequestException(
+          `调整金额超过未结清应收，剩余无法冲减 ${left}`
+        );
+      }
     });
   }
 
@@ -165,6 +232,9 @@ export class ArService {
   }
 
   async createReceipt(dto: CreateReceiptDto): Promise<ReceiptItem> {
+    if (dto.amount <= 0) {
+      throw new BadRequestException('回款金额必须大于 0');
+    }
     const customer = await this.db
       .select({ id: mdCustomer.id, name: mdCustomer.name })
       .from(mdCustomer)
@@ -224,6 +294,47 @@ export class ArService {
     };
   }
 
+  /** 作废未核销回款，并冲回银存凭证。 */
+  async voidReceipt(id: string): Promise<ReceiptItem> {
+    const rows = await this.db
+      .update(erpReceipt)
+      .set({ status: 'voided', updatedAt: new Date() })
+      .where(and(eq(erpReceipt.id, id), eq(erpReceipt.status, 'unmatched')))
+      .returning();
+    if (rows.length === 0) {
+      throw new BadRequestException('只有未核销的回款可以作废');
+    }
+    const row = rows[0];
+    const amount = Number(row.amount ?? 0);
+    await this.voucherHookService.generateVoucherDraft({
+      sourceType: 'receipt',
+      sourceRef: `receipt-void:${row.code}`,
+      voucherDate: new Date().toISOString().slice(0, 10),
+      summary: `回款作废 ${row.code}`,
+      lines: [
+        { accountCode: '1122', debit: amount },
+        { accountCode: '1001', credit: amount },
+      ],
+    });
+    const customer = await this.db
+      .select({ name: mdCustomer.name })
+      .from(mdCustomer)
+      .where(eq(mdCustomer.id, row.customerId ?? ''));
+    return {
+      id: row.id,
+      code: row.code,
+      customerId: row.customerId ?? '',
+      customerName: customer[0]?.name ?? '',
+      amount,
+      receiptDate: row.receiptDate,
+      method: row.method ?? 'bank',
+      source: row.source,
+      status: 'voided',
+      remark: row.remark,
+      createdAt: row.createdAt.toISOString(),
+    };
+  }
+
   /** 应收核销（支持部分核销）：一笔回款可拆分核销多笔应收。事务内锁行校验，防并发超核销 */
   async writeoff(dto: ArWriteoffDto): Promise<ArItem> {
     if (dto.amount <= 0) {
@@ -272,7 +383,7 @@ export class ArService {
         .update(erpAr)
         .set({
           settledAmount: String(newSettled),
-          status: newSettled >= Number(ar.amount) ? 'settled' : 'partial',
+          status: arSettleStatus(newSettled, Number(ar.amount)),
           updatedAt: new Date(),
         })
         .where(eq(erpAr.id, dto.arId));
@@ -280,8 +391,7 @@ export class ArService {
       await tx
         .update(erpReceipt)
         .set({
-          status:
-            newUsed >= Number(receipt.amount) ? 'matched' : 'partial',
+          status: receiptMatchStatus(newUsed, Number(receipt.amount)),
           updatedAt: new Date(),
         })
         .where(eq(erpReceipt.id, dto.receiptId));

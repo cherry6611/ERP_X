@@ -302,6 +302,15 @@ export class HrCoreController {
     return this.hrCoreService.updateEmployee(id, dto);
   }
 
+  @CanRole(['admin'])
+  @Patch('employees/:id/status')
+  async setEmployeeStatus(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() body: { status: 'active' | 'inactive' }
+  ): Promise<Employee> {
+    return this.hrCoreService.setEmployeeStatus(id, body.status);
+  }
+
   @Get('attendance')
   async listAttendance(
     @Query('month') month: string,

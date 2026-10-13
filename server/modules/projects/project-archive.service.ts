@@ -16,6 +16,7 @@ import {
   erpProject,
 } from '@server/database/schema';
 import { FEISHU_TENANT_DOMAIN } from '@server/modules/feishu-drive/feishu-client.service';
+import { isAllowedFeishuUrl } from '@server/common/security/feishu-url';
 import { DriveService } from '@server/modules/feishu-drive/drive.service';
 import { WikiService } from '@server/modules/feishu-drive/wiki.service';
 import type {
@@ -164,6 +165,10 @@ export class ProjectArchiveService {
       const created: DriveCreatedItem = await this.driveService.createDocument(
         folderToken,
         archiveTitle,
+      );
+      await this.driveService.writeDocumentText(
+        created.token,
+        `${archiveTitle}\n项目 ${projectName} 的归档说明由 ERP 写入。`,
       );
       try {
         const wikiResult = await this.wikiService.syncToWiki(created.token, 'docx');
@@ -334,9 +339,36 @@ export class ProjectArchiveService {
   ): Promise<DriveSyncDetail> {
     let buffer: Buffer;
     try {
-      const resp = await fetch(attachment.fileUrl);
+      // 修复 P0-2（SSRF）：写入侧只校验过一次（resource-acl.service），
+      // 这里是从库里读出来再下载，历史数据/旁路写入可能已污染 fileUrl；
+      // 且 fetch 默认跟随 30x，白名单域名可通过 302 跳到内网地址被绕过。
+      if (!isAllowedFeishuUrl(attachment.fileUrl)) {
+        const remark: string = '附件链接域名不在白名单';
+        await this.insertFileRecord(
+          projectId,
+          attachment.id,
+          folderToken,
+          null,
+          attachment.fileName,
+          'failed',
+          remark,
+        );
+        return { fileName: attachment.fileName, status: 'failed', remark };
+      }
+      const resp = await fetch(attachment.fileUrl, {
+        redirect: 'manual',
+        signal: AbortSignal.timeout(15_000),
+      });
+      if (resp.status >= 300 && resp.status < 400) {
+        throw new Error('禁止跟随重定向');
+      }
       if (!resp.ok) {
         throw new Error(`HTTP ${String(resp.status)}`);
+      }
+      // 下载前先按 Content-Length 卡一次，避免大 body 打爆内存
+      const declared = Number(resp.headers.get('content-length') ?? 0);
+      if (declared > MAX_UPLOAD_BYTES) {
+        throw new Error('超过 10MB 限制');
       }
       buffer = Buffer.from(await resp.arrayBuffer());
     } catch (error: unknown) {

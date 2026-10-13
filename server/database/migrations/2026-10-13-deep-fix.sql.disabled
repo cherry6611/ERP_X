@@ -1,0 +1,96 @@
+-- 深度检查报告 B1/B2/B3 配套迁移。
+-- M-07：成本预提标记；历史一律按实际（避免误红冲）。
+-- M-06：将与 revenue 重复的销项 invoice 凭证置为 voided（保留审计）。
+-- 补齐合同明细序号唯一索引、税率 CHECK、迁移前清洗。
+
+-- ---- 结构：成本预提字段 ----
+ALTER TABLE erp_project_cost
+  ADD COLUMN IF NOT EXISTS is_accrual smallint NOT NULL DEFAULT 0;
+ALTER TABLE erp_project_cost
+  ADD COLUMN IF NOT EXISTS offset_of uuid;
+
+CREATE INDEX IF NOT EXISTS idx_erp_project_cost_accrual
+  ON erp_project_cost (period, project_id, is_accrual);
+
+UPDATE erp_project_cost SET is_accrual = 0 WHERE is_accrual IS NULL;
+
+-- ---- 清洗越界税率后再加约束 ----
+UPDATE erp_contract
+SET tax_rate = 6
+WHERE tax_rate IS NOT NULL AND tax_rate NOT IN (0, 1, 3, 6, 9, 13);
+
+UPDATE erp_invoice
+SET tax_rate = 6
+WHERE tax_rate IS NOT NULL AND tax_rate NOT IN (0, 1, 3, 6, 9, 13);
+
+UPDATE erp_contract_item
+SET tax_rate = 6
+WHERE tax_rate IS NOT NULL AND tax_rate NOT IN (0, 1, 3, 6, 9, 13);
+
+UPDATE md_customer
+SET default_tax_rate = 6
+WHERE default_tax_rate IS NOT NULL AND default_tax_rate NOT IN (0, 1, 3, 6, 9, 13);
+
+UPDATE md_supplier
+SET default_tax_rate = 6
+WHERE default_tax_rate IS NOT NULL AND default_tax_rate NOT IN (0, 1, 3, 6, 9, 13);
+
+UPDATE crm_opportunity
+SET tax_rate = 6
+WHERE tax_rate IS NOT NULL AND tax_rate NOT IN (0, 1, 3, 6, 9, 13);
+
+UPDATE crm_quotation
+SET tax_rate = 6
+WHERE tax_rate IS NOT NULL AND tax_rate NOT IN (0, 1, 3, 6, 9, 13);
+
+DO $$ BEGIN
+  ALTER TABLE erp_contract_item
+    ADD CONSTRAINT chk_contract_item_tax_rate CHECK (tax_rate IN (0, 1, 3, 6, 9, 13));
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+
+DO $$ BEGIN
+  ALTER TABLE md_customer
+    ADD CONSTRAINT chk_customer_default_tax_rate
+    CHECK (default_tax_rate IS NULL OR default_tax_rate IN (0, 1, 3, 6, 9, 13));
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+
+DO $$ BEGIN
+  ALTER TABLE md_supplier
+    ADD CONSTRAINT chk_supplier_default_tax_rate
+    CHECK (default_tax_rate IS NULL OR default_tax_rate IN (0, 1, 3, 6, 9, 13));
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+
+DO $$ BEGIN
+  ALTER TABLE crm_opportunity
+    ADD CONSTRAINT chk_opp_tax_rate
+    CHECK (tax_rate IS NULL OR tax_rate IN (0, 1, 3, 6, 9, 13));
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+
+DO $$ BEGIN
+  ALTER TABLE crm_quotation
+    ADD CONSTRAINT chk_quotation_tax_rate
+    CHECK (tax_rate IS NULL OR tax_rate IN (0, 1, 3, 6, 9, 13));
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_contract_item_seq
+  ON erp_contract_item (contract_id, version_no, seq)
+  WHERE is_current = 1;
+
+-- ---- M-06：作废与收入确认重复的销项开票凭证 ----
+UPDATE fin_voucher v
+SET status = 'voided',
+    remark = COALESCE(v.remark, '') || ' [M-06 方案A清理：收入确认为准]'
+WHERE v.source_type = 'invoice'
+  AND v.source_ref LIKE 'invoice:%'
+  AND v.status <> 'voided'
+  AND EXISTS (
+    SELECT 1 FROM fin_voucher r
+    WHERE r.source_type = 'revenue'
+      AND r.source_ref LIKE 'revenue:%'
+      AND r.status <> 'voided'
+  );

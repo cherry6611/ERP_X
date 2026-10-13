@@ -36,9 +36,11 @@ export class FinanceService {
       openArAmount += open;
       if ((row.dueDate ?? '') < today) overdueArAmount += open;
     }
+    // T6：回款合计排除作废
     const receiptRows = await this.db
       .select({ total: sum(erpReceipt.amount) })
-      .from(erpReceipt);
+      .from(erpReceipt)
+      .where(ne(erpReceipt.status, 'voided'));
     const apRows = await this.db
       .select({
         amount: erpApBill.amount,
@@ -51,10 +53,16 @@ export class FinanceService {
     for (const row of apRows) {
       openApAmount += Number(row.amount) - Number(row.paidAmount ?? 0);
     }
+    // T6：发票合计仅销项已开票
     const invoiceRows = await this.db
       .select({ total: sum(erpInvoice.amount) })
       .from(erpInvoice)
-      .where(and(eq(erpInvoice.status, 'issued')));
+      .where(
+        and(
+          eq(erpInvoice.status, 'issued'),
+          eq(erpInvoice.direction, 'sales')
+        )
+      );
     const apPaidRows = await this.db
       .select({ total: sum(erpApBill.paidAmount) })
       .from(erpApBill);

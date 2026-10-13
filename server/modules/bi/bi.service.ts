@@ -33,8 +33,10 @@ import {
   erpProject,
   erpProjectCost,
   erpProjectMilestone,
+  erpInvoice,
   erpProjectRevenue,
   erpRevenueAdjust,
+  mdTaxEntity,
   erpTimesheet,
   hrDepartment,
   hrPayroll,
@@ -81,17 +83,30 @@ export class BiService {
         activeCount: sql<number>`count(*) filter (where ${erpContract.status} in ('active', 'performing'))::int`,
       })
       .from(erpContract);
+    // T2：毛利按不含税净收入 = amount * 100/(100+tax_rate)，税率取关联合同
     const revenueRows = await this.db
       .select({
-        total: sql<number>`coalesce(sum(${erpProjectRevenue.amount}), 0)::float8`,
+        total: sql<number>`coalesce(sum(
+          coalesce(${erpProjectRevenue.amount}, 0) * 100.0
+          / (100.0 + coalesce(${erpContract.taxRate}, 6))
+        ), 0)::float8`,
       })
       .from(erpProjectRevenue)
+      .leftJoin(erpContract, eq(erpProjectRevenue.contractId, erpContract.id))
       .where(eq(erpProjectRevenue.status, 'recognized'));
     const adjustRows = await this.db
       .select({
-        total: sql<number>`coalesce(sum(${erpRevenueAdjust.amount}), 0)::float8`,
+        total: sql<number>`coalesce(sum(
+          coalesce(${erpRevenueAdjust.amount}, 0) * 100.0
+          / (100.0 + coalesce(${erpContract.taxRate}, 6))
+        ), 0)::float8`,
       })
       .from(erpRevenueAdjust)
+      .innerJoin(
+        erpProjectRevenue,
+        eq(erpRevenueAdjust.revenueId, erpProjectRevenue.id)
+      )
+      .leftJoin(erpContract, eq(erpProjectRevenue.contractId, erpContract.id))
       .where(eq(erpRevenueAdjust.status, 'applied'));
     const costRows = await this.db
       .select({
@@ -116,12 +131,24 @@ export class BiService {
       .select({ total: sql<number>`count(*)::int` })
       .from(erpProject)
       .where(inArray(erpProject.status, ACTIVE_PROJECT_STATUSES));
+    // 修复 P1-10：工资分摊在 hr-pay 里同时写入 erp_cost_allocation 与 erp_project_cost，
+    // 而 totalCost 已经 SUM(erp_project_cost) 扣过一次；这里若再计入 periodExpense
+    // 就是第二次扣减 → 营业利润被低估整整一个工资总额。
+    // 与 fixedAllocRows 一致：只统计「没有对应项目成本行」的分摊。
     const payrollAllocRows = await this.db
       .select({
         total: sql<number>`coalesce(sum(${erpCostAllocation.amount}), 0)::float8`,
       })
       .from(erpCostAllocation)
-      .where(like(erpCostAllocation.sourceRef, 'payroll:%'));
+      .where(
+        and(
+          like(erpCostAllocation.sourceRef, 'payroll:%'),
+          sql`NOT EXISTS (
+            SELECT 1 FROM erp_project_cost c
+            WHERE c.source_ref = ${erpCostAllocation.sourceRef}
+          )`
+        )
+      );
     const assetAllocRows = await this.db
       .select({
         total: sql<number>`coalesce(sum(${erpCostAllocation.amount}), 0)::float8`,
@@ -182,24 +209,33 @@ export class BiService {
         pm: erpProject.pm,
       })
       .from(erpProject);
+    // T2：项目毛利用合同税率拆出净收入
     const revenueRows = await this.db
       .select({
         projectId: erpProjectRevenue.projectId,
-        total: sql<number>`coalesce(sum(${erpProjectRevenue.amount}), 0)::float8`,
+        total: sql<number>`coalesce(sum(
+          coalesce(${erpProjectRevenue.amount}, 0) * 100.0
+          / (100.0 + coalesce(${erpContract.taxRate}, 6))
+        ), 0)::float8`,
       })
       .from(erpProjectRevenue)
+      .leftJoin(erpContract, eq(erpProjectRevenue.contractId, erpContract.id))
       .where(eq(erpProjectRevenue.status, 'recognized'))
       .groupBy(erpProjectRevenue.projectId);
     const adjustRows = await this.db
       .select({
         projectId: erpProjectRevenue.projectId,
-        total: sql<number>`coalesce(sum(${erpRevenueAdjust.amount}), 0)::float8`,
+        total: sql<number>`coalesce(sum(
+          coalesce(${erpRevenueAdjust.amount}, 0) * 100.0
+          / (100.0 + coalesce(${erpContract.taxRate}, 6))
+        ), 0)::float8`,
       })
       .from(erpRevenueAdjust)
       .innerJoin(
         erpProjectRevenue,
         eq(erpRevenueAdjust.revenueId, erpProjectRevenue.id)
       )
+      .leftJoin(erpContract, eq(erpProjectRevenue.contractId, erpContract.id))
       .where(eq(erpRevenueAdjust.status, 'applied'))
       .groupBy(erpProjectRevenue.projectId);
     const costRows = await this.db
@@ -215,12 +251,14 @@ export class BiService {
         total: sql<number>`coalesce(sum(${erpCostAllocation.amount}), 0)::float8`,
       })
       .from(erpCostAllocation)
-      .where(
-        or(
-          like(erpCostAllocation.sourceRef, 'payroll:%'),
-          like(erpCostAllocation.sourceRef, 'asset:%')
+      .where(sql`
+        NOT EXISTS (
+          SELECT 1 FROM erp_project_cost c
+          WHERE c.source_ref = erp_cost_allocation.source_ref
+            AND c.project_id = erp_cost_allocation.target_project_id
+            AND c.source_ref IS NOT NULL
         )
-      )
+      `)
       .groupBy(erpCostAllocation.targetProjectId);
     const revenueMap = new Map<string, number>();
     for (const row of revenueRows) {
@@ -926,5 +964,28 @@ export class BiService {
       return a.days - b.days;
     });
     return { items };
+  }
+
+  /** 按纳税主体汇总已开票价税合计。 */
+  async getTaxDistribution(): Promise<
+    { taxEntityId: string | null; taxEntityName: string; amount: number; taxAmount: number }[]
+  > {
+    const rows = await this.db
+      .select({
+        taxEntityId: erpInvoice.taxEntityId,
+        taxEntityName: mdTaxEntity.name,
+        amount: sql<number>`coalesce(sum(${erpInvoice.amount}), 0)::float8`,
+        taxAmount: sql<number>`coalesce(sum(${erpInvoice.taxAmount}), 0)::float8`,
+      })
+      .from(erpInvoice)
+      .leftJoin(mdTaxEntity, eq(erpInvoice.taxEntityId, mdTaxEntity.id))
+      .where(eq(erpInvoice.status, 'issued'))
+      .groupBy(erpInvoice.taxEntityId, mdTaxEntity.name);
+    return rows.map((row) => ({
+      taxEntityId: row.taxEntityId,
+      taxEntityName: row.taxEntityName ?? '未指定主体',
+      amount: Number(row.amount ?? 0),
+      taxAmount: Number(row.taxAmount ?? 0),
+    }));
   }
 }

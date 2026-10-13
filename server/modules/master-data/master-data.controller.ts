@@ -13,7 +13,6 @@ import { CanRole, NeedLogin } from '@server/platform';
 import { MasterDataService } from './master-data.service';
 import type {
   CreateContactDto,
-  CreateCustomerDto,
   CreateSupplierDto,
   Customer,
   CustomerContact,
@@ -24,6 +23,7 @@ import type {
   UpdateCustomerDto,
   UpdateSupplierDto,
 } from '@shared/api.interface';
+import { CreateCustomerDto } from './master-data.dto';
 
 @NeedLogin()
 @Controller('api/master-data')
@@ -60,6 +60,15 @@ export class MasterDataController {
     @Body() dto: UpdateCustomerDto
   ): Promise<Customer> {
     return this.masterDataService.updateCustomer(id, dto);
+  }
+
+  @CanRole(['admin'])
+  @Patch('customers/:id/status')
+  async setCustomerStatus(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() body: { status: 'active' | 'inactive' }
+  ): Promise<Customer> {
+    return this.masterDataService.setCustomerStatus(id, body.status);
   }
 
   @Get('customers/:id/contacts')
@@ -118,6 +127,15 @@ export class MasterDataController {
     @Body() dto: UpdateSupplierDto
   ): Promise<Supplier> {
     return this.masterDataService.updateSupplier(id, dto);
+  }
+
+  @CanRole(['admin'])
+  @Patch('suppliers/:id/status')
+  async setSupplierStatus(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() body: { status: 'active' | 'inactive' }
+  ): Promise<Supplier> {
+    return this.masterDataService.setSupplierStatus(id, body.status);
   }
 
   @Get('employees')

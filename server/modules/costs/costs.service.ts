@@ -9,7 +9,7 @@ import {
   DRIZZLE_DATABASE,
   type PostgresJsDatabase,
 } from '@server/platform';
-import { and, asc, desc, eq, lte, sql, type SQL } from 'drizzle-orm';
+import { and, asc, desc, eq, lte, or, sql, type SQL } from 'drizzle-orm';
 import {
   erpContract,
   erpCostAllocation,
@@ -23,9 +23,15 @@ import {
   mdSupplier,
 } from '@server/database/schema';
 import { generateBizCode } from '@server/common/utils/biz-code';
+import { VoucherHookService } from '@server/modules/voucher/voucher-hook.service';
+import { costConfirmLines } from '@server/common/tax/posting';
 import { todayInShanghai } from '@server/common/utils/biz-date';
 import { ActorAccessService } from '@server/common/auth/actor-access.service';
 import type { RequestActor } from '@server/common/auth/actor';
+import {
+  buildRedflushSourceRef,
+  isRedflushSourceRef,
+} from './redflush-ref';
 import type {
   CostAllocation,
   CostDimension,
@@ -73,7 +79,8 @@ function currentPeriod(): string {
 export class CostsService {
   constructor(
     @Inject(DRIZZLE_DATABASE) private readonly db: PostgresJsDatabase,
-    private readonly actorAccess: ActorAccessService
+    private readonly actorAccess: ActorAccessService,
+    private readonly voucherHookService: VoucherHookService
   ) {}
 
   async listCosts(
@@ -220,6 +227,9 @@ export class CostsService {
   }
 
   async createCost(dto: CreateCostDto): Promise<CostItem> {
+    if (dto.amount <= 0) {
+      throw new BadRequestException('成本金额必须大于 0');
+    }
     const project = await this.db
       .select({
         id: erpProject.id,
@@ -262,10 +272,20 @@ export class CostsService {
         supplierId: dto.supplierId,
         departmentId,
         contractId: project[0].contractId ?? null,
+        isAccrual: 0,
         remark: dto.remark,
       })
       .returning();
     const row = rows[0];
+    if (dto.amount !== 0) {
+      await this.voucherHookService.generateVoucherDraft({
+        sourceType: 'cost',
+        sourceRef: `cost:${code}`,
+        voucherDate: occurredDate,
+        summary: `成本确认 ${code}`,
+        lines: costConfirmLines(dto.amount),
+      });
+    }
     let supplierName: string | null = null;
     if (row.supplierId) {
       const supplier = await this.db
@@ -353,7 +373,7 @@ export class CostsService {
       })
       .from(mdEmployee)
       .leftJoin(hrPosition, eq(hrPosition.id, mdEmployee.positionId))
-      .where(eq(mdEmployee.platformUserId, userId));
+      .where(or(eq(mdEmployee.feishuUnionId, userId), eq(mdEmployee.platformUserId, userId)));
     if (employees.length === 0) {
       throw new BadRequestException('当前账号未绑定员工，无法登记工时');
     }
@@ -429,6 +449,7 @@ export class CostsService {
     if (action === 'reject' && current !== 'submitted') {
       throw new BadRequestException('仅已提交状态可驳回');
     }
+    let postedCost: { code: string; amount: number; date: string } | null = null;
     if (action === 'submit') {
       await this.db
         .update(erpTimesheet)
@@ -515,8 +536,19 @@ export class CostsService {
           departmentId,
           supplierId: employeeRows[0]?.supplierId ?? null,
           contractId: projectRows[0]?.contractId ?? null,
-          remark: `工时折算：${sheet.employeeName} ${sheet.hours}h × 费率 ${rate}`,
+          isAccrual: 1,
+          remark: `工时折算（预提）：${sheet.employeeName} ${sheet.hours}h × 费率 ${rate}`,
         });
+        postedCost = { code: costCode, amount, date: workDate };
+      });
+    }
+    if (postedCost && postedCost.amount > 0) {
+      await this.voucherHookService.generateVoucherDraft({
+        sourceType: 'cost',
+        sourceRef: `cost:${postedCost.code}`,
+        voucherDate: postedCost.date,
+        summary: `成本确认 ${postedCost.code}`,
+        lines: costConfirmLines(postedCost.amount),
       });
     }
     const updated = await this.db
@@ -595,7 +627,7 @@ export class CostsService {
     const me = await this.db
       .select({ name: mdEmployee.name })
       .from(mdEmployee)
-      .where(eq(mdEmployee.platformUserId, actor.userId))
+      .where(or(eq(mdEmployee.feishuUnionId, actor.userId), eq(mdEmployee.platformUserId, actor.userId)))
       .limit(1);
     const myName: string = me[0]?.name ?? actor.userName;
     if (pm.length === 0 || (pm !== myName && pm !== actor.userName)) {
@@ -637,6 +669,9 @@ export class CostsService {
 
   /** 公共成本分摊：生成分摊记录并落到目标项目成本 */
   async createAllocation(dto: CreateAllocationDto): Promise<CostAllocation> {
+    if (dto.amount <= 0) {
+      throw new BadRequestException('分摊金额必须大于 0');
+    }
     const project = await this.db
       .select({
         id: erpProject.id,
@@ -695,21 +730,116 @@ export class CostsService {
         sourceRef: `allocation:${code}`,
         departmentId,
         contractId: project[0].contractId ?? null,
+        isAccrual: 0,
         remark: `公共成本分摊：${dto.sourceDesc}`,
       });
-      return rows[0];
+      return { allocation: rows[0], costCode };
     });
+    if (dto.amount !== 0) {
+      await this.voucherHookService.generateVoucherDraft({
+        sourceType: 'cost',
+        sourceRef: `cost:${row.costCode}`,
+        voucherDate: todayInShanghai(),
+        summary: `公共成本分摊 ${row.allocation.code}`,
+        lines: costConfirmLines(dto.amount),
+      });
+    }
     return {
-      id: row.id,
-      code: row.code,
-      sourceDesc: row.sourceDesc ?? '',
-      costType: (row.costType ?? 'compute') as CostType,
-      amount: Number(row.amount ?? 0),
-      targetProjectId: row.targetProjectId ?? '',
+      id: row.allocation.id,
+      code: row.allocation.code,
+      sourceDesc: row.allocation.sourceDesc ?? '',
+      costType: (row.allocation.costType ?? 'compute') as CostType,
+      amount: Number(row.allocation.amount ?? 0),
+      targetProjectId: row.allocation.targetProjectId ?? '',
       targetProjectName: project[0].name,
-      period: row.period ?? '',
-      sourceRef: row.sourceRef ?? '',
-      remark: row.remark,
+      period: row.allocation.period ?? '',
+      sourceRef: row.allocation.sourceRef ?? '',
+      remark: row.allocation.remark,
     };
+  }
+
+  /** 成本红冲：写入一笔负数成本，并生成相反分录。 */
+  async redFlush(id: string): Promise<CostItem> {
+    const existing = await this.db
+      .select()
+      .from(erpProjectCost)
+      .where(eq(erpProjectCost.id, id));
+    if (existing.length === 0) throw new NotFoundException('成本记录不存在');
+    const source = existing[0];
+    if (isRedflushSourceRef(source.sourceRef)) {
+      throw new BadRequestException('红冲记录不能再次红冲');
+    }
+    // 修复 P1-14：红冲此前不幂等 —— 前端连点两次（或重试）就会生成两笔负数成本
+    // 与两张凭证，项目成本被重复冲减、总账直接对不上。
+    // sourceRef 形如 `redflush:<原成本单号>`，先查一次即可挡住重复提交。
+    const redflushRef = buildRedflushSourceRef(source.code);
+    const duplicated = await this.db
+      .select({ id: erpProjectCost.id })
+      .from(erpProjectCost)
+      .where(eq(erpProjectCost.sourceRef, redflushRef))
+      .limit(1);
+    if (duplicated.length > 0) {
+      throw new BadRequestException(`成本 ${source.code} 已红冲，请勿重复操作`);
+    }
+    const code = await generateBizCode(
+      this.db,
+      erpProjectCost,
+      erpProjectCost.code,
+      'CST'
+    );
+    const amount = -Number(source.amount ?? 0);
+    let inserted: { id: string }[];
+    try {
+      inserted = await this.db
+        .insert(erpProjectCost)
+        .values({
+          code,
+          projectId: source.projectId,
+          costType: source.costType,
+          amount: String(amount),
+          period: source.period,
+          occurredDate: new Date().toISOString().slice(0, 10),
+          sourceRef: redflushRef,
+          supplierId: source.supplierId,
+          departmentId: source.departmentId,
+          contractId: source.contractId,
+          remark: `红冲 ${source.code}`,
+        })
+        .returning({ id: erpProjectCost.id });
+    } catch (error) {
+      if (this.extractPostgresErrorCode(error) === '23505') {
+        throw new BadRequestException(
+          `成本 ${source.code} 已红冲，请勿重复操作`
+        );
+      }
+      throw error;
+    }
+    if (amount !== 0) {
+      await this.voucherHookService.generateVoucherDraft({
+        sourceType: 'cost',
+        sourceRef: `cost-void:${code}`,
+        voucherDate: new Date().toISOString().slice(0, 10),
+        summary: `成本红冲 ${code}`,
+        lines: [
+          { accountCode: '2202', debit: Math.abs(amount) },
+          { accountCode: '6401', credit: Math.abs(amount) },
+        ],
+      });
+    }
+    const items = await this.listCosts();
+    const found = items.find((item) => item.id === inserted[0].id);
+    if (!found) throw new NotFoundException('红冲记录写入后未能读回');
+    return found;
+  }
+
+  private extractPostgresErrorCode(error: unknown): string | undefined {
+    let current: unknown = error;
+    for (let depth = 0; depth < 4 && current; depth += 1) {
+      if (typeof current !== 'object') break;
+      const { code, cause } = current as { code?: unknown; cause?: unknown };
+      if (typeof code === 'string') return code;
+      current = cause;
+    }
+    return undefined;
   }
 }

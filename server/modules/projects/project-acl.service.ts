@@ -98,7 +98,7 @@ export class ProjectAclService {
       })
       .from(mdEmployee)
       .leftJoin(hrDepartment, eq(mdEmployee.departmentId, hrDepartment.id))
-      .where(eq(mdEmployee.platformUserId, userId))
+      .where(or(eq(mdEmployee.feishuUnionId, userId), eq(mdEmployee.platformUserId, userId)))
       .limit(1);
     const row = rows[0];
     if (!row) return null;

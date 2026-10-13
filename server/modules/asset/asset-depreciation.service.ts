@@ -269,14 +269,16 @@ export class AssetDepreciationService {
       totalAmount = round2(totalAmount + amount);
     }
 
-    /* 折旧计提批量完成后 → 生成凭证草稿：借 主营业务成本(6401) / 贷 累计折旧(1602) */
+    /* A2：sourceRef 带批次，避免同月二次计提被唯一索引静默吞掉 */
     if (totalAmount > 0) {
+      const batchId = `${Date.now().toString(36)}`;
+      const sourceRef = `depreciation:${period}:${batchId}`;
       try {
         await this.voucherHookService.generateVoucherDraft({
           sourceType: 'depreciation',
-          sourceRef: `depreciation:${period}`,
+          sourceRef,
           voucherDate: periodEndDate(period),
-          summary: `折旧计提 ${period}`,
+          summary: `折旧计提 ${period}（${assetCount} 项）`,
           lines: [
             { accountCode: '6401', debit: totalAmount },
             { accountCode: '1602', credit: totalAmount },
@@ -284,8 +286,13 @@ export class AssetDepreciationService {
         });
       } catch (error) {
         this.logger.error(
-          `折旧凭证草稿生成失败：depreciation:${period}`,
+          `折旧凭证草稿生成失败：${sourceRef}`,
           error instanceof Error ? error.stack : String(error)
+        );
+        await this.voucherHookService.recordCompensation(
+          'depreciation',
+          sourceRef,
+          error instanceof Error ? error.message : String(error)
         );
       }
     }

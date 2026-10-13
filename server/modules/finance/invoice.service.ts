@@ -15,11 +15,17 @@ import {
   erpContract,
   erpInvoice,
   erpProject,
+  erpProjectRevenue,
   mdCustomer,
   mdSupplier,
+  mdTaxEntity,
 } from '@server/database/schema';
 import { generateBizCode } from '@server/common/utils/biz-code';
 import { VoucherHookService } from '@server/modules/voucher/voucher-hook.service';
+import { TaxEntityService } from '@server/modules/tax/tax-entity.service';
+import { TaxResolverService } from '@server/modules/tax/tax-resolver.service';
+import { splitTax } from '@shared/tax';
+import { inputIssueLines, inputVoidLines } from '@server/common/tax/posting';
 import type {
   CreateInvoiceDto,
   InvoiceDirection,
@@ -37,6 +43,7 @@ interface InvoiceLockRow {
   status: string | null;
   contract_id: string | null;
   amount: string | null;
+  tax_rate: string | null;
   code: string | null;
   invoice_no: string | null;
   direction: string | null;
@@ -48,7 +55,9 @@ export class InvoiceService {
 
   constructor(
     @Inject(DRIZZLE_DATABASE) private readonly db: PostgresJsDatabase,
-    private readonly voucherHookService: VoucherHookService
+    private readonly voucherHookService: VoucherHookService,
+    private readonly taxEntities: TaxEntityService,
+    private readonly taxResolver: TaxResolverService
   ) {}
 
   async listInvoices(
@@ -159,6 +168,7 @@ export class InvoiceService {
   private async createSalesInvoice(
     dto: CreateInvoiceDto
   ): Promise<InvoiceItem> {
+    await this.taxEntities.assertReadyForPosting();
     if (!dto.contractId || !UUID_PATTERN.test(dto.contractId)) {
       throw new BadRequestException('contractId 格式不合法');
     }
@@ -189,13 +199,49 @@ export class InvoiceService {
       const invoiced = Number(invoicedRows[0]?.total ?? 0);
       const contractAmount = Number(contract.amount ?? 0);
       const billable = contractAmount - invoiced;
-      if (dto.amount > billable) {
+      if (dto.amount > billable + 0.001) {
         throw new BadRequestException(
           `开票金额超过合同可开金额，当前可开 ${billable}`
         );
       }
-      const taxRate = dto.taxRate ?? Number(contract.taxRate ?? 6);
-      const taxAmount = Math.round(dto.amount * (taxRate / 100) * 100) / 100;
+      if (dto.arId) {
+        const arRows = await tx
+          .select()
+          .from(erpAr)
+          .where(eq(erpAr.id, dto.arId))
+          .for('update');
+        if (arRows.length === 0) throw new NotFoundException('应收记录不存在');
+        const open =
+          Number(arRows[0].amount ?? 0) - Number(arRows[0].settledAmount ?? 0);
+        if (dto.amount > open + 0.001) {
+          throw new BadRequestException(
+            `开票金额超过未核销应收余额 ${open}`
+          );
+        }
+      }
+      const resolved = await this.taxResolver.resolve({
+        explicit: dto.taxRate,
+        upstream: Number(contract.taxRate ?? NaN),
+        customerId: contract.customerId,
+        taxEntityId: contract.taxEntityId,
+        side: 'output',
+      });
+      const taxRate = resolved.rate;
+      const split = splitTax(dto.amount, taxRate);
+      const seller = resolved.taxEntityId
+        ? await tx
+            .select()
+            .from(mdTaxEntity)
+            .where(eq(mdTaxEntity.id, resolved.taxEntityId))
+            .limit(1)
+        : [];
+      const buyer = contract.customerId
+        ? await tx
+            .select()
+            .from(mdCustomer)
+            .where(eq(mdCustomer.id, contract.customerId))
+            .limit(1)
+        : [];
       return tx
         .insert(erpInvoice)
         .values({
@@ -209,7 +255,14 @@ export class InvoiceService {
           arId: dto.arId,
           amount: String(dto.amount),
           taxRate: String(taxRate),
-          taxAmount: String(taxAmount),
+          taxAmount: String(split.tax),
+          netAmount: String(split.net),
+          taxEntityId: resolved.taxEntityId,
+          buyerName: buyer[0]?.invoiceTitle || buyer[0]?.name || null,
+          buyerUscc:
+            buyer[0]?.uscc && buyer[0].uscc.length <= 20 ? buyer[0].uscc : null,
+          sellerName: seller[0]?.invoiceTitle || seller[0]?.name || null,
+          sellerUscc: seller[0]?.uscc ?? null,
           invoiceDate: dto.invoiceDate ?? new Date().toISOString().slice(0, 10),
           status: 'issued',
           remark: dto.remark,
@@ -217,26 +270,31 @@ export class InvoiceService {
         .returning();
     });
     const row = rows[0];
-
-    /* 发票 issued → 生成凭证草稿：借 应收账款(1122) / 贷 主营业务收入(6001) */
-    const invoiceAmount = Number(row.amount ?? 0);
-    const voucherStatus = await this.voucherHookService.generateVoucherDraft({
-      sourceType: 'invoice',
-      sourceRef: `invoice:${row.invoiceNo ?? row.code}`,
-      voucherDate: row.invoiceDate ?? new Date().toISOString().slice(0, 10),
-      summary: `开票确认 ${row.invoiceNo ?? row.code}`,
-      lines: [
-        { accountCode: '1122', debit: invoiceAmount },
-        { accountCode: '6001', credit: invoiceAmount },
-      ],
-    });
-    if (voucherStatus !== 'created') {
-      this.logger.error(
-        `发票凭证 voucherStatus=${voucherStatus} invoice:${row.invoiceNo ?? row.code}`
+    // 方案 A：收入确认为准，销项开票只登记台账，不再生成收入/税凭证
+    const item = await this.getInvoiceItem(row.id);
+    const recognizedRows = await this.db
+      .select({
+        total: sql<string>`coalesce(sum(${erpProjectRevenue.amount}), 0)`,
+      })
+      .from(erpProjectRevenue)
+      .where(eq(erpProjectRevenue.contractId, dto.contractId!));
+    const recognized = Number(recognizedRows[0]?.total ?? 0);
+    const invoicedAfter = await this.db
+      .select({
+        total: sql<string>`coalesce(sum(${erpInvoice.amount}), 0)`,
+      })
+      .from(erpInvoice)
+      .where(
+        and(
+          eq(erpInvoice.contractId, dto.contractId!),
+          eq(erpInvoice.status, 'issued')
+        )
       );
+    const invoicedTotal = Number(invoicedAfter[0]?.total ?? 0);
+    if (invoicedTotal > recognized + 0.01) {
+      item.warning = `开票额（累计 ${invoicedTotal}）超过已确认收入 ${recognized}`;
     }
-
-    return this.getInvoiceItem(row.id);
+    return item;
   }
 
   /** 进项发票登记：不关联合同/客户，可关联供应商 */
@@ -250,8 +308,14 @@ export class InvoiceService {
         .where(eq(mdSupplier.id, dto.supplierId));
       if (supplier.length === 0) throw new NotFoundException('供应商不存在');
     }
-    const taxRate = dto.taxRate ?? 6;
-    const taxAmount = Math.round(dto.amount * (taxRate / 100) * 100) / 100;
+    await this.taxEntities.assertReadyForPosting();
+    const resolved = await this.taxResolver.resolve({
+      explicit: dto.taxRate,
+      supplierId: dto.supplierId,
+      side: 'input',
+    });
+    const taxRate = resolved.rate;
+    const split = splitTax(dto.amount, taxRate);
     const code = await generateBizCode(
       this.db,
       erpInvoice,
@@ -269,20 +333,30 @@ export class InvoiceService {
         supplierId: dto.supplierId,
         amount: String(dto.amount),
         taxRate: String(taxRate),
-        taxAmount: String(taxAmount),
+        taxAmount: String(split.tax),
+        netAmount: String(split.net),
+        taxEntityId: resolved.taxEntityId,
         invoiceDate: dto.invoiceDate ?? new Date().toISOString().slice(0, 10),
         status: 'issued',
         remark: dto.remark,
       })
       .returning();
-    return this.getInvoiceItem(rows[0].id);
+    const row = rows[0];
+    await this.voucherHookService.generateVoucherDraft({
+      sourceType: 'invoice',
+      sourceRef: `invoice:${row.invoiceNo ?? row.code}`,
+      voucherDate: row.invoiceDate ?? new Date().toISOString().slice(0, 10),
+      summary: `进项发票 ${row.invoiceNo ?? row.code}`,
+      lines: inputIssueLines(Number(row.amount ?? 0), taxRate),
+    });
+    return this.getInvoiceItem(row.id);
   }
 
   /** 作废发票：锁发票与合同行，作废后对销项生成反向凭证草稿 */
   async voidInvoice(id: string, userId: string): Promise<InvoiceItem> {
     const locked = await this.db.transaction(async (tx) => {
       const rows: unknown = await tx.execute(sql`
-        SELECT id, status, contract_id, amount, code, invoice_no, direction
+        SELECT id, status, contract_id, amount, tax_rate, code, invoice_no, direction
         FROM erp_invoice
         WHERE id = ${id}
         FOR UPDATE
@@ -311,22 +385,21 @@ export class InvoiceService {
       return invoice;
     });
 
-    if ((locked.direction ?? 'sales') === 'sales') {
+    // 方案 A：销项作废只改状态；进项仍冲回凭证
+    if ((locked.direction ?? 'sales') !== 'sales') {
       const amount = Number(locked.amount ?? 0);
+      const rate = Number(locked.tax_rate ?? 0);
       const ref = locked.invoice_no ?? locked.code ?? id;
       const voucherStatus = await this.voucherHookService.generateVoucherDraft({
         sourceType: 'invoice',
         sourceRef: `invoice-void:${ref}`,
         voucherDate: new Date().toISOString().slice(0, 10),
-        summary: `发票作废冲销 ${ref}`,
-        lines: [
-          { accountCode: '6001', debit: amount },
-          { accountCode: '1122', credit: amount },
-        ],
+        summary: `进项发票作废冲销 ${ref}`,
+        lines: inputVoidLines(amount, rate),
       });
       if (voucherStatus !== 'created') {
         this.logger.error(
-          `发票作废反向凭证 voucherStatus=${voucherStatus} invoice-void:${ref}`
+          `进项作废凭证 voucherStatus=${voucherStatus} invoice-void:${ref}`
         );
       }
     }

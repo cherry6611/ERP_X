@@ -26,12 +26,8 @@ import type {
   ApWriteoffDto,
   ArItem,
   ArWriteoffDto,
-  CreateApDto,
-  CreateArDto,
   CreateInvoiceDto,
-  CreatePaymentDto,
   CashFlowForecast,
-  CreateReceiptDto,
   FinanceSummary,
   GenerateVendorSettlementDto,
   GenerateVendorSettlementResult,
@@ -41,6 +37,12 @@ import type {
   UpdateInvoiceDto,
   VendorSettlementPreview,
 } from '@shared/api.interface';
+import {
+  CreateApDto,
+  CreateArDto,
+  CreatePaymentDto,
+  CreateReceiptDto,
+} from './finance.dto';
 
 export class ApprovePaymentDto {
   @IsString()
@@ -106,6 +108,14 @@ export class FinanceController {
   }
 
   @CanRole(['admin'])
+  @Post('receipts/:id/void')
+  async voidReceipt(
+    @Param('id', ParseUUIDPipe) id: string
+  ): Promise<ReceiptItem> {
+    return this.arService.voidReceipt(id);
+  }
+
+  @CanRole(['admin'])
   @Post('ar-writeoffs')
   async arWriteoff(@Body() dto: ArWriteoffDto): Promise<ArItem> {
     return this.arService.writeoff(dto);
@@ -164,6 +174,14 @@ export class FinanceController {
   @Post('payments')
   async createPayment(@Body() dto: CreatePaymentDto): Promise<PaymentItem> {
     return this.apService.createPayment(dto);
+  }
+
+  @CanRole(['admin'])
+  @Post('payments/:id/void')
+  async voidPayment(
+    @Param('id', ParseUUIDPipe) id: string
+  ): Promise<PaymentItem> {
+    return this.apService.voidPayment(id);
   }
 
   @CanRole(['admin'])

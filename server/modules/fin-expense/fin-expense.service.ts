@@ -370,6 +370,9 @@ export class FinExpenseService {
   }
 
   async createApply(dto: CreateExpenseApplyDto): Promise<ExpenseApplyItem> {
+    if (!(dto.amount > 0)) {
+      throw new BadRequestException('费用申请金额必须大于 0');
+    }
     const period = docPeriodOf(dto.expectDate);
     const doc: DocDims = {
       departmentId: dto.departmentId ?? null,
@@ -573,6 +576,9 @@ export class FinExpenseService {
     dto: CreateExpenseClaimDto,
     applicant: string
   ): Promise<ExpenseClaimItem> {
+    if (!(dto.amount > 0)) {
+      throw new BadRequestException('报销金额必须大于 0');
+    }
     if (dto.applyId) {
       const applyRows: Array<{
         status: string | null;
@@ -727,22 +733,27 @@ export class FinExpenseService {
       }
     });
 
-    /* 报销审批通过 → 生成凭证草稿：借 管理费用(6602) / 贷 银行存款(1001) */
+    /* A1：挂应付，贷 2202；付款审批再借 2202 / 贷 1001，避免银行重复出账 */
     try {
       await this.voucherHookService.generateVoucherDraft({
         sourceType: 'expense',
         sourceRef: `expense:${claim.code}`,
         voucherDate: expenseDate,
-        summary: `报销付款 ${claim.code}`,
+        summary: `报销挂账 ${claim.code}`,
         lines: [
           { accountCode: '6602', debit: amount },
-          { accountCode: '1001', credit: amount },
+          { accountCode: '2202', credit: amount },
         ],
       });
     } catch (error) {
       this.logger.error(
         `报销凭证草稿生成失败：expense:${claim.code}`,
         error instanceof Error ? error.stack : String(error)
+      );
+      await this.voucherHookService.recordCompensation(
+        'expense',
+        `expense:${claim.code}`,
+        error instanceof Error ? error.message : String(error)
       );
     }
 

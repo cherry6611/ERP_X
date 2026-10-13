@@ -1,7 +1,7 @@
 /* eslint-disable */
 /** 业务表结构。系统字段默认值依赖会话变量 app.user_id。 */
 import { sql } from 'drizzle-orm';
-import { bigint, boolean, date, index, integer, jsonb, numeric, pgTable, text, uniqueIndex, uuid, varchar, customType } from "drizzle-orm/pg-core"
+import { check, bigint, boolean, date, index, integer, jsonb, numeric, pgTable, text, uniqueIndex, uuid, varchar, customType } from "drizzle-orm/pg-core"
 
 export const customTimestamptz = customType<{
   data: Date;
@@ -169,6 +169,7 @@ export const crmQuotation = pgTable("crm_quotation", {
   status: varchar("status", { length: 20 }).notNull().default('draft'),
   discountPct: numeric("discount_pct").notNull().default('0'),
   totalAmount: numeric("total_amount").notNull().default('0'),
+  taxRate: numeric("tax_rate"),
   estimatedCost: numeric("estimated_cost").notNull().default('0'),
   remark: text("remark"),
   contractId: uuid("contract_id"),
@@ -186,12 +187,16 @@ export const crmQuotation = pgTable("crm_quotation", {
   uniqueIndex("crm_quotation_code_key").on(table.code),
   index("idx_crm_quotation_opportunity").on(table.opportunityId),
   index("idx_crm_quotation_customer").on(table.customerId),
+  check("chk_quotation_tax_rate", sql`${table.taxRate} IS NULL OR ${table.taxRate} IN (0, 1, 3, 6, 9, 13)`),
 ]);
 
 export const compFeishuDriveConfig = pgTable("comp_feishu_drive_config", {
   id: uuid("id").primaryKey().defaultRandom(),
   appId: varchar("app_id", { length: 255 }).notNull(),
   appSecret: varchar("app_secret", { length: 512 }).notNull(),
+  appSecretPrev: varchar("app_secret_prev", { length: 512 }),
+  secretKeyVersion: integer("secret_key_version").notNull().default(1),
+  secretPrevVersion: integer("secret_prev_version"),
   secretRotatedAt: customTimestamptz("secret_rotated_at", { precision: 3 }),
   secretRotatedBy: varchar("secret_rotated_by", { length: 64 }),
   rootFolderToken: varchar("root_folder_token", { length: 255 }).notNull(),
@@ -390,6 +395,9 @@ export const compFeishuSyncRecord = pgTable("comp_feishu_sync_record", {
   baseRecordId: varchar("base_record_id", { length: 64 }).unique(),
   status: varchar("status", { length: 20 }).notNull().default('pending'),
   errorMsg: text("error_msg"),
+  retryCount: integer("retry_count").notNull().default(0),
+  nextRetryAt: customTimestamptz("next_retry_at", { precision: 3 }),
+  lastError: text("last_error"),
   // System field: Creation time (auto-filled, do not modify)
   createdAt: customTimestamptz("_created_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
   // System field: Creator (auto-filled, do not modify)
@@ -577,6 +585,7 @@ export const purOrder = pgTable("pur_order", {
   quantity: integer("quantity").default(1),
   unitPrice: numeric("unit_price").default('0'),
   amount: numeric("amount").default('0'),
+  taxRate: numeric("tax_rate"),
   orderDate: date("order_date"),
   acceptedQuantity: integer("accepted_quantity").default(0),
   acceptDate: date("accept_date"),
@@ -598,6 +607,7 @@ export const purOrder = pgTable("pur_order", {
   index("idx_pur_order_supplier").on(table.supplierId),
   index("idx_pur_order_contract").on(table.contractId),
   index("idx_pur_order_project").on(table.projectId),
+  check("chk_pur_order_tax_rate", sql`${table.taxRate} IS NULL OR ${table.taxRate} IN (0, 1, 3, 6, 9, 13)`),
 ]);
 
 export const purRequest = pgTable("pur_request", {
@@ -675,6 +685,12 @@ export const finVoucher = pgTable("fin_voucher", {
   uniqueIndex("fin_voucher_code_key").on(table.code),
   index("idx_fin_voucher_period").on(table.period),
   index("idx_fin_voucher_status").on(table.status),
+  // 修复 P1-12：凭证幂等的唯一索引只在 SQL 迁移里建了、schema.ts 未声明，
+  // 一旦有人执行 drizzle-kit push/generate，该索引会被当作"多余对象"DROP 掉，
+  // 同一笔业务就会被重复出凭证（业财对账直接崩）。此处补齐声明。
+  uniqueIndex("uq_fin_voucher_source")
+    .on(table.sourceType, table.sourceRef)
+    .where(sql`${table.sourceType} IS NOT NULL AND ${table.sourceRef} IS NOT NULL`),
 ]);
 
 export const finAccount = pgTable("fin_account", {
@@ -1071,6 +1087,13 @@ export const erpInvoice = pgTable("erp_invoice", {
   amount: numeric("amount").default('0'),
   taxRate: numeric("tax_rate").default('6'),
   taxAmount: numeric("tax_amount").default('0'),
+  taxEntityId: uuid("tax_entity_id"),
+  netAmount: numeric("net_amount"),
+  oldAmount: numeric("old_amount"),
+  buyerName: varchar("buyer_name", { length: 200 }),
+  buyerUscc: varchar("buyer_uscc", { length: 20 }),
+  sellerName: varchar("seller_name", { length: 200 }),
+  sellerUscc: varchar("seller_uscc", { length: 20 }),
   invoiceDate: date("invoice_date"),
   status: varchar("status", { length: 20 }).default('issued'),
   remark: text("remark"),
@@ -1091,6 +1114,8 @@ export const erpInvoice = pgTable("erp_invoice", {
   uniqueIndex("uq_erp_invoice_code").on(table.code),
   index("idx_erp_invoice_contract").on(table.contractId),
   index("idx_erp_invoice_project").on(table.projectId),
+  // T8：发票税率法定档位（与迁移 chk_invoice_tax_rate 一致）
+  check("chk_invoice_tax_rate", sql`${table.taxRate} IS NULL OR ${table.taxRate} IN (0, 1, 3, 6, 9, 13)`),
 ]);
 
 export const erpApWriteoff = pgTable("erp_ap_writeoff", {
@@ -1376,6 +1401,8 @@ export const erpProjectCost = pgTable("erp_project_cost", {
   remark: text("remark"),
   departmentId: uuid("department_id"),
   contractId: uuid("contract_id"),
+  isAccrual: integer("is_accrual").notNull().default(0),
+  offsetOf: uuid("offset_of"),
   // System field: Creation time (auto-filled, do not modify)
   createdAt: customTimestamptz("_created_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
   // System field: Creator (auto-filled, do not modify)
@@ -1392,6 +1419,13 @@ export const erpProjectCost = pgTable("erp_project_cost", {
   index("idx_erp_project_cost_period").on(table.period),
   index("idx_erp_project_cost_department").on(table.departmentId),
   index("idx_erp_project_cost_contract").on(table.contractId),
+  // 预提/红冲按 (period, project, is_accrual) 扫描，工资审批红冲走的就是这个索引
+  index("idx_erp_project_cost_accrual").on(table.period, table.projectId, table.isAccrual),
+  // T11：同一 source_ref 不可重复落成本（防红冲连点）
+  // T11：仅红冲行强制唯一，避免误伤合法复用 source_ref 的业务行
+  uniqueIndex("uq_erp_project_cost_redflush_source_ref")
+    .on(table.sourceRef)
+    .where(sql`${table.sourceRef} LIKE 'redflush:%'`),
 ]);
 
 export const erpProjectChange = pgTable("erp_project_change", {
@@ -1431,6 +1465,7 @@ export const erpProjectMilestone = pgTable("erp_project_milestone", {
   baselineDate: date("baseline_date"),
   forecastDate: date("forecast_date"),
   weightPct: numeric("weight_pct").notNull().default('0'),
+  contractMilestoneId: uuid("contract_milestone_id"),
   // System field: Creation time (auto-filled, do not modify)
   createdAt: customTimestamptz("_created_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
   // System field: Creator (auto-filled, do not modify)
@@ -1477,6 +1512,10 @@ export const erpProject = pgTable("erp_project", {
 }, (table) => [
   uniqueIndex("uq_erp_project_code").on(table.code),
   index("idx_erp_project_contract").on(table.contractId),
+  // 一份合同只能立项一次（SQL 迁移已建，此处补声明防被 push 删除）
+  uniqueIndex("uq_erp_project_one_contract")
+    .on(table.contractId)
+    .where(sql`${table.contractId} IS NOT NULL`),
   index("idx_project_embedding").using("hnsw", table.embedding),
 ]);
 
@@ -1487,6 +1526,9 @@ export const erpCalloff = pgTable("erp_calloff", {
   seq: integer("seq").default(1),
   projectId: uuid("project_id"),
   amount: numeric("amount").default('0'),
+  quantity: numeric("quantity"),
+  unitPrice: numeric("unit_price"),
+  status: varchar("status", { length: 20 }).default('ordered'),
   orderDate: date("order_date"),
   remark: text("remark"),
   // System field: Creation time (auto-filled, do not modify)
@@ -1556,6 +1598,10 @@ export const erpContract = pgTable("erp_contract", {
   billingModel: varchar("billing_model", { length: 20 }).default('project'),
   amount: numeric("amount").default('0'),
   taxRate: numeric("tax_rate").default('6'),
+  taxEntityId: uuid("tax_entity_id"),
+  netAmount: numeric("net_amount"),
+  taxAmount: numeric("tax_amount"),
+  rateSource: varchar("rate_source", { length: 20 }),
   status: varchar("status", { length: 20 }).default('draft'),
   signDate: date("sign_date"),
   startDate: date("start_date"),
@@ -1578,6 +1624,37 @@ export const erpContract = pgTable("erp_contract", {
   uniqueIndex("uq_erp_contract_code").on(table.code),
   index("idx_erp_contract_customer").on(table.customerId),
   index("idx_contract_embedding").using("hnsw", table.embedding),
+  // T8：合同税率法定档位（与迁移 chk_contract_tax_rate 一致）
+  check("chk_contract_tax_rate", sql`${table.taxRate} IS NULL OR ${table.taxRate} IN (0, 1, 3, 6, 9, 13)`),
+]);
+
+export const erpContractItem = pgTable("erp_contract_item", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  contractId: uuid("contract_id").notNull(),
+  versionNo: integer("version_no").notNull().default(1),
+  isCurrent: integer("is_current").notNull().default(1),
+  seq: integer("seq").notNull().default(1),
+  itemName: varchar("item_name", { length: 200 }).notNull(),
+  unit: varchar("unit", { length: 20 }).notNull().default('项'),
+  quantity: numeric("quantity").notNull().default('1'),
+  unitPrice: numeric("unit_price").notNull().default('0'),
+  discountPct: numeric("discount_pct").notNull().default('0'),
+  taxRate: numeric("tax_rate").notNull().default('6'),
+  amount: numeric("amount").notNull().default('0'),
+  netAmount: numeric("net_amount").notNull().default('0'),
+  taxAmount: numeric("tax_amount").notNull().default('0'),
+  estUnitCost: numeric("est_unit_cost").notNull().default('0'),
+  sourceType: varchar("source_type", { length: 20 }).notNull().default('manual'),
+  sourceItemId: uuid("source_item_id"),
+  createdAt: customTimestamptz("_created_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
+  updatedAt: customTimestamptz("_updated_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
+}, (table) => [
+  index("idx_erp_contract_item_contract").on(table.contractId, table.isCurrent),
+  // 同一版本内明细序号不可重复（导入报价时 seq 可能重复，迁移里已先重排）
+  uniqueIndex("uq_contract_item_seq")
+    .on(table.contractId, table.versionNo, table.seq)
+    .where(sql`${table.isCurrent} = 1`),
+  check("chk_contract_item_tax_rate", sql`${table.taxRate} IN (0, 1, 3, 6, 9, 13)`),
 ]);
 
 export const crmContact = pgTable("crm_contact", {
@@ -1613,6 +1690,8 @@ export const crmOpportunity = pgTable("crm_opportunity", {
   winRate: integer("win_rate").default(0),
   owner: varchar("owner", { length: 50 }),
   expectedDate: date("expected_date"),
+  taxRate: numeric("tax_rate"),
+  contractId: uuid("contract_id"),
   remark: text("remark"),
   // System field: Creation time (auto-filled, do not modify)
   createdAt: customTimestamptz("_created_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
@@ -1627,6 +1706,11 @@ export const crmOpportunity = pgTable("crm_opportunity", {
 }, (table) => [
   uniqueIndex("uq_crm_opportunity_code").on(table.code),
   index("idx_crm_opportunity_customer").on(table.customerId),
+  // 一个商机只能转出一份合同（SQL 迁移已建，此处补声明防被 push 删除）
+  uniqueIndex("uq_crm_opp_contract")
+    .on(table.contractId)
+    .where(sql`${table.contractId} IS NOT NULL`),
+  check("chk_opp_tax_rate", sql`${table.taxRate} IS NULL OR ${table.taxRate} IN (0, 1, 3, 6, 9, 13)`),
 ]);
 
 export const crmLead = pgTable("crm_lead", {
@@ -1640,6 +1724,8 @@ export const crmLead = pgTable("crm_lead", {
   owner: varchar("owner", { length: 50 }),
   followNote: text("follow_note"),
   nextDate: date("next_date"),
+  customerId: uuid("customer_id"),
+  convertedOpportunityId: uuid("converted_opportunity_id"),
   remark: text("remark"),
   // System field: Creation time (auto-filled, do not modify)
   createdAt: customTimestamptz("_created_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
@@ -1668,6 +1754,13 @@ export const mdEmployee = pgTable("md_employee", {
   employmentType: varchar("employment_type", { length: 20 }).default('full_time'),
   phone: varchar("phone", { length: 30 }),
   resignDate: date("resign_date"),
+  email: varchar("email", { length: 200 }),
+  remark: text("remark"),
+  feishuUnionId: varchar("feishu_union_id", { length: 64 }),
+  feishuOpenId: varchar("feishu_open_id", { length: 64 }),
+  feishuDepartmentId: varchar("feishu_department_id", { length: 64 }),
+  avatarUrl: varchar("avatar_url", { length: 500 }),
+  syncedAt: customTimestamptz("synced_at", { precision: 3 }),
   platformUserId: userProfile("platform_user_id"),
   supplierId: uuid("supplier_id"),
   // System field: Creation time (auto-filled, do not modify)
@@ -1698,6 +1791,8 @@ export const mdSupplier = pgTable("md_supplier", {
   rating: numeric("rating").default('0'),
   status: varchar("status", { length: 20 }).default('active'),
   remark: text("remark"),
+  taxEntityId: uuid("tax_entity_id"),
+  defaultTaxRate: numeric("default_tax_rate"),
   // System field: Creation time (auto-filled, do not modify)
   createdAt: customTimestamptz("_created_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
   // System field: Creator (auto-filled, do not modify)
@@ -1710,6 +1805,7 @@ export const mdSupplier = pgTable("md_supplier", {
     WHEN (current_setting('app.user_id'::text, true) = ''::text) THEN NULL`),
 }, (table) => [
   uniqueIndex("uq_md_supplier_code").on(table.code),
+  check("chk_supplier_default_tax_rate", sql`${table.defaultTaxRate} IS NULL OR ${table.defaultTaxRate} IN (0, 1, 3, 6, 9, 13)`),
 ]);
 
 export const mdCustomer = pgTable("md_customer", {
@@ -1723,6 +1819,13 @@ export const mdCustomer = pgTable("md_customer", {
   termsDays: integer("terms_days").default(30),
   status: varchar("status", { length: 20 }).default('active'),
   remark: text("remark"),
+  taxEntityId: uuid("tax_entity_id"),
+  defaultTaxRate: numeric("default_tax_rate"),
+  invoiceTitle: varchar("invoice_title", { length: 200 }),
+  invoiceAddress: varchar("invoice_address", { length: 300 }),
+  invoicePhone: varchar("invoice_phone", { length: 40 }),
+  invoiceBank: varchar("invoice_bank", { length: 200 }),
+  invoiceAccount: varchar("invoice_account", { length: 64 }),
   // System field: Creation time (auto-filled, do not modify)
   createdAt: customTimestamptz("_created_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
   // System field: Creator (auto-filled, do not modify)
@@ -1735,6 +1838,36 @@ export const mdCustomer = pgTable("md_customer", {
     WHEN (current_setting('app.user_id'::text, true) = ''::text) THEN NULL`),
 }, (table) => [
   uniqueIndex("uq_md_customer_code").on(table.code),
+  // 允许为空（空=继承纳税主体默认税率），非空必须是法定税率
+  check("chk_customer_default_tax_rate", sql`${table.defaultTaxRate} IS NULL OR ${table.defaultTaxRate} IN (0, 1, 3, 6, 9, 13)`),
+]);
+
+export const mdTaxEntity = pgTable("md_tax_entity", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  code: varchar("code", { length: 20 }).notNull(),
+  name: varchar("name", { length: 200 }).notNull(),
+  uscc: varchar("uscc", { length: 20 }),
+  taxpayerType: varchar("taxpayer_type", { length: 20 }).notNull(),
+  defaultOutputRate: numeric("default_output_rate").notNull(),
+  defaultInputRate: numeric("default_input_rate").notNull(),
+  invoiceTitle: varchar("invoice_title", { length: 200 }),
+  invoiceAddress: varchar("invoice_address", { length: 300 }),
+  invoicePhone: varchar("invoice_phone", { length: 40 }),
+  invoiceBank: varchar("invoice_bank", { length: 200 }),
+  invoiceAccount: varchar("invoice_account", { length: 64 }),
+  isDefault: integer("is_default").notNull().default(0),
+  status: varchar("status", { length: 20 }).notNull().default('active'),
+  remark: text("remark"),
+  createdAt: customTimestamptz("_created_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
+  updatedAt: customTimestamptz("_updated_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
+}, (table) => [
+  uniqueIndex("uq_md_tax_entity_code").on(table.code),
+  uniqueIndex("uq_md_tax_entity_name").on(table.name),
+  // 全局有且仅有一个默认纳税主体（部分唯一索引，SQL 迁移已建）
+  uniqueIndex("uq_md_tax_entity_default")
+    .on(table.isDefault)
+    .where(sql`${table.isDefault} = 1`),
+  check("chk_tax_entity_type", sql`${table.taxpayerType} IN ('general', 'small')`),
 ]);
 
 // table aliases
@@ -1800,6 +1933,8 @@ export const hrRecruitReqTable = hrRecruitReq;
 export const hrTrainingTable = hrTraining;
 export const hrTrainingRecordTable = hrTrainingRecord;
 export const mdCustomerTable = mdCustomer;
+export const mdTaxEntityTable = mdTaxEntity;
+export const erpContractItemTable = erpContractItem;
 export const mdEmployeeTable = mdEmployee;
 export const mdSupplierTable = mdSupplier;
 export const purOrderTable = purOrder;
@@ -1811,10 +1946,19 @@ export const sysUser = pgTable("sys_user", {
   passwordHash: varchar("password_hash", { length: 255 }),
   displayName: varchar("display_name", { length: 100 }).notNull(),
   feishuOpenId: varchar("feishu_open_id", { length: 64 }).unique(),
+  feishuUnionId: varchar("feishu_union_id", { length: 64 }),
   email: varchar("email", { length: 200 }),
+  mobile: varchar("mobile", { length: 30 }),
+  avatarUrl: varchar("avatar_url", { length: 500 }),
   departmentName: varchar("department_name", { length: 100 }),
+  departmentId: uuid("department_id"),
+  employeeId: uuid("employee_id"),
+  authType: varchar("auth_type", { length: 20 }).notNull().default('local'),
   status: varchar("status", { length: 20 }).notNull().default('active'),
+  lastLoginAt: customTimestamptz("last_login_at", { precision: 3 }),
+  syncedAt: customTimestamptz("synced_at", { precision: 3 }),
   createdAt: customTimestamptz("_created_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
+  updatedAt: customTimestamptz("_updated_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
 });
 
 export const sysRole = pgTable("sys_role", {
@@ -1833,6 +1977,63 @@ export const sysRoleMember = pgTable("sys_role_member", {
 export const sysDepartment = pgTable("sys_department", {
   id: uuid("id").primaryKey().defaultRandom(),
   name: varchar("name", { length: 100 }).notNull(),
+  parentId: uuid("parent_id"),
+  code: varchar("code", { length: 64 }),
+  feishuDepartmentId: varchar("feishu_department_id", { length: 64 }),
+  feishuParentId: varchar("feishu_parent_id", { length: 64 }),
+  leaderUserId: uuid("leader_user_id"),
+  sortOrder: integer("sort_order").notNull().default(0),
+  status: varchar("status", { length: 20 }).notNull().default('active'),
+  syncedAt: customTimestamptz("synced_at", { precision: 3 }),
+});
+
+export const sysLoginSession = pgTable("sys_login_session", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  userId: uuid("user_id").notNull(),
+  jti: varchar("jti", { length: 64 }).notNull().unique(),
+  refreshTokenEnc: text("refresh_token_enc"),
+  expiresAt: customTimestamptz("expires_at", { precision: 3 }).notNull(),
+  revokedAt: customTimestamptz("revoked_at", { precision: 3 }),
+  createdAt: customTimestamptz("_created_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
+});
+
+export const sysFeishuSyncState = pgTable("sys_feishu_sync_state", {
+  id: varchar("id", { length: 64 }).primaryKey(),
+  cursor: varchar("cursor", { length: 200 }),
+  fullSyncedAt: customTimestamptz("full_synced_at", { precision: 3 }),
+  incrementalSyncedAt: customTimestamptz("incremental_synced_at", { precision: 3 }),
+});
+
+export const sysFeishuSyncConflict = pgTable("sys_feishu_sync_conflict", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  unionId: varchar("union_id", { length: 64 }),
+  reason: varchar("reason", { length: 40 }).notNull(),
+  payload: text("payload"),
+  status: varchar("status", { length: 20 }).notNull().default('open'),
+  createdAt: customTimestamptz("_created_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
+});
+
+export const sysFeishuEvent = pgTable("sys_feishu_event", {
+  eventId: varchar("event_id", { length: 128 }).primaryKey(),
+  eventType: varchar("event_type", { length: 80 }),
+  createdAt: customTimestamptz("_created_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
+});
+
+export const compFeishuBitableConfig = pgTable("comp_feishu_bitable_config", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  bizType: varchar("biz_type", { length: 40 }).notNull().unique(),
+  appToken: varchar("app_token", { length: 128 }).notNull(),
+  tableId: varchar("table_id", { length: 128 }).notNull(),
+  enabled: integer("enabled").notNull().default(1),
+});
+
+export const compFeishuApproval = pgTable("comp_feishu_approval", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  bizType: varchar("biz_type", { length: 40 }).notNull(),
+  bizCode: varchar("biz_code", { length: 64 }).notNull(),
+  instanceCode: varchar("instance_code", { length: 128 }),
+  status: varchar("status", { length: 20 }).notNull().default('pending'),
+  createdAt: customTimestamptz("_created_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
 });
 
 export const compStoredFile = pgTable("comp_stored_file", {
@@ -1841,6 +2042,8 @@ export const compStoredFile = pgTable("comp_stored_file", {
   mime: varchar("mime", { length: 120 }),
   size: integer("size").notNull(),
   storagePath: varchar("storage_path", { length: 500 }).notNull(),
+  /** A4：上传人，下载时做归属校验 */
+  ownerUserId: varchar("owner_user_id", { length: 64 }),
   createdAt: customTimestamptz("_created_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
 });
 
@@ -1862,5 +2065,20 @@ export const compVoucherJob = pgTable("comp_voucher_job", {
   updatedAt: customTimestamptz("updated_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
 }, (table) => [
   uniqueIndex("uq_comp_voucher_job_source").on(table.sourceType, table.sourceRef),
+]);
+
+/** B8：站内信收件箱（与飞书审批通知并行，不替代飞书通道） */
+export const sysInboxMessage = pgTable("sys_inbox_message", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  userId: varchar("user_id", { length: 64 }).notNull(),
+  title: varchar("title", { length: 200 }),
+  content: text("content"),
+  bizType: varchar("biz_type", { length: 40 }),
+  bizCode: varchar("biz_code", { length: 64 }),
+  readAt: customTimestamptz("read_at", { precision: 3 }),
+  createdAt: customTimestamptz("created_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
+}, (table) => [
+  index("idx_sys_inbox_message_user").on(table.userId),
+  index("idx_sys_inbox_message_user_unread").on(table.userId, table.readAt),
 ]);
 

@@ -3,7 +3,7 @@ import {
   DRIZZLE_DATABASE,
   type PostgresJsDatabase,
 } from '@server/platform';
-import { eq, inArray, sql } from 'drizzle-orm';
+import { and, eq, inArray, sql } from 'drizzle-orm';
 import { finAccount, finPeriodClose, finVoucher, finVoucherLine } from '@server/database/schema';
 import { generateBizCode } from '@server/common/utils/biz-code';
 
@@ -15,14 +15,7 @@ export interface VoucherHookLine {
 }
 
 export interface VoucherDraftParams {
-  sourceType:
-    | 'receipt'
-    | 'payment'
-    | 'expense'
-    | 'payroll'
-    | 'depreciation'
-    | 'invoice'
-    | 'manual';
+  sourceType: string;
   sourceRef: string;
   voucherDate: string;
   summary: string;
@@ -102,6 +95,18 @@ export class VoucherHookService {
         return 'failed';
       }
 
+      const existing = await this.db
+        .select({ id: finVoucher.id })
+        .from(finVoucher)
+        .where(
+          and(
+            eq(finVoucher.sourceType, params.sourceType),
+            eq(finVoucher.sourceRef, params.sourceRef)
+          )
+        )
+        .limit(1);
+      if (existing.length > 0) return 'created';
+
       const code = await generateBizCode(
         this.db,
         finVoucher,
@@ -136,9 +141,91 @@ export class VoucherHookService {
     } catch (error) {
       const message: string =
         error instanceof Error ? error.message : String(error);
+      if (message.includes('23505') || message.includes('uq_fin_voucher_source')) {
+        return 'created';
+      }
       await this.markFailed(params, message);
       return 'failed';
     }
+  }
+
+  /** 主业务已成功、后续凭证或应收失败时写入补偿队列。 */
+  async recordCompensation(
+    sourceType: string,
+    sourceRef: string,
+    reason: string
+  ): Promise<void> {
+    await this.markFailed(
+      {
+        sourceType,
+        sourceRef,
+        voucherDate: new Date().toISOString().slice(0, 10),
+        summary: reason,
+        lines: [],
+      },
+      reason
+    );
+  }
+
+  /**
+   * B1：消费失败队列。跳过空 lines（无法重放的补偿记录标 dead）。
+   * 最多重试 8 次。
+   */
+  async retryPendingJobs(limit = 20): Promise<{ retried: number; dead: number }> {
+    const rows = await this.db.execute(sql`
+      SELECT id, source_type, source_ref, payload, attempts
+      FROM comp_voucher_job
+      WHERE status = 'failed'
+        AND (next_retry_at IS NULL OR next_retry_at <= CURRENT_TIMESTAMP)
+        AND attempts < 8
+      ORDER BY next_retry_at NULLS FIRST
+      LIMIT ${limit}
+      FOR UPDATE SKIP LOCKED
+    `);
+    const list = Array.isArray(rows)
+      ? (rows as unknown as {
+          id: string;
+          source_type: string;
+          source_ref: string;
+          payload: string | null;
+          attempts: number;
+        }[])
+      : (((rows as { rows?: {
+          id: string;
+          source_type: string;
+          source_ref: string;
+          payload: string | null;
+          attempts: number;
+        }[] }).rows) ?? []);
+
+    let retried = 0;
+    let dead = 0;
+    for (const job of list) {
+      let params: VoucherDraftParams | null = null;
+      try {
+        params = job.payload
+          ? (JSON.parse(job.payload) as VoucherDraftParams)
+          : null;
+      } catch {
+        params = null;
+      }
+      if (!params?.lines?.length) {
+        await this.db.execute(sql`
+          UPDATE comp_voucher_job
+          SET status = 'dead',
+              last_error = coalesce(last_error, '') || ' [无有效分录，无法重试]',
+              updated_at = CURRENT_TIMESTAMP
+          WHERE id = ${job.id}
+        `);
+        dead += 1;
+        continue;
+      }
+      const result = await this.generateVoucherDraft(params);
+      if (result === 'created') {
+        retried += 1;
+      }
+    }
+    return { retried, dead };
   }
 
   /** 将失败记入重试队列。表不存在时只打日志。 */

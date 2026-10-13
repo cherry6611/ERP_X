@@ -1,5 +1,5 @@
 import { Inject, Logger } from '@nestjs/common';
-import { and, eq, isNotNull, lte } from 'drizzle-orm';
+import { and, eq, inArray, isNotNull, lte } from 'drizzle-orm';
 import {
   Automation,
   BindTrigger,
@@ -59,7 +59,7 @@ export class ArReminderAutomationTasksService {
       .leftJoin(mdCustomer, eq(erpAr.customerId, mdCustomer.id))
       .where(
         and(
-          eq(erpAr.status, 'open'),
+          inArray(erpAr.status, ['open', 'partial']),
           isNotNull(erpAr.dueDate),
           lte(erpAr.dueDate, horizon)
         )

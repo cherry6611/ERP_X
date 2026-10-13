@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Inject,
   Injectable,
   NotFoundException,
@@ -43,6 +44,8 @@ interface CustomerRow {
   termsDays: number | null;
   status: string | null;
   remark: string | null;
+  taxEntityId?: string | null;
+  defaultTaxRate?: string | null;
   createdAt: Date;
 }
 
@@ -64,6 +67,9 @@ export class MasterDataService {
       termsDays: row.termsDays ?? 30,
       status: row.status ?? 'active',
       remark: row.remark,
+      taxEntityId: row.taxEntityId ?? null,
+      defaultTaxRate:
+        row.defaultTaxRate != null ? Number(row.defaultTaxRate) : null,
       createdAt: row.createdAt.toISOString(),
     };
   }
@@ -96,6 +102,8 @@ export class MasterDataService {
         termsDays: mdCustomer.termsDays,
         status: mdCustomer.status,
         remark: mdCustomer.remark,
+        taxEntityId: mdCustomer.taxEntityId,
+        defaultTaxRate: mdCustomer.defaultTaxRate,
         createdAt: mdCustomer.createdAt,
       })
       .from(mdCustomer)
@@ -125,6 +133,9 @@ export class MasterDataService {
         termsDays: dto.termsDays ?? 30,
         status: dto.status ?? 'active',
         remark: dto.remark,
+        taxEntityId: dto.taxEntityId ?? null,
+        defaultTaxRate:
+          dto.defaultTaxRate != null ? String(dto.defaultTaxRate) : null,
       })
       .returning();
     return this.toCustomer(rows[0]);
@@ -140,6 +151,11 @@ export class MasterDataService {
     if (dto.termsDays !== undefined) patch.termsDays = dto.termsDays;
     if (dto.status !== undefined) patch.status = dto.status;
     if (dto.remark !== undefined) patch.remark = dto.remark;
+    if (dto.taxEntityId !== undefined) patch.taxEntityId = dto.taxEntityId;
+    if (dto.defaultTaxRate !== undefined) {
+      patch.defaultTaxRate =
+        dto.defaultTaxRate == null ? null : String(dto.defaultTaxRate);
+    }
     const rows: CustomerRow[] = await this.db
       .update(mdCustomer)
       .set(patch)
@@ -147,6 +163,17 @@ export class MasterDataService {
       .returning();
     if (rows.length === 0) throw new NotFoundException('客户不存在');
     return this.toCustomer(rows[0]);
+  }
+
+  /** 启用/停用客户主数据（admin） */
+  async setCustomerStatus(
+    id: string,
+    status: 'active' | 'inactive'
+  ): Promise<Customer> {
+    if (status !== 'active' && status !== 'inactive') {
+      throw new BadRequestException('客户状态仅支持 active / inactive');
+    }
+    return this.updateCustomer(id, { status });
   }
 
   async listContacts(customerId: string): Promise<CustomerContact[]> {
@@ -304,19 +331,7 @@ export class MasterDataService {
       .from(mdSupplier)
       .where(where)
       .orderBy(desc(mdSupplier.createdAt));
-    return rows.map((row) => ({
-      id: row.id,
-      code: row.code,
-      name: row.name,
-      type: row.type,
-      contactName: row.contactName,
-      contactPhone: row.contactPhone,
-      bankAccount: row.bankAccount,
-      rating: Number(row.rating ?? 0),
-      status: row.status ?? 'active',
-      remark: row.remark,
-      createdAt: row.createdAt.toISOString(),
-    }));
+    return rows.map((row) => this.mapSupplier(row));
   }
 
   async createSupplier(dto: CreateSupplierDto): Promise<Supplier> {
@@ -333,22 +348,12 @@ export class MasterDataService {
         rating: String(dto.rating ?? 0),
         status: dto.status ?? 'active',
         remark: dto.remark,
+        taxEntityId: dto.taxEntityId ?? null,
+        defaultTaxRate:
+          dto.defaultTaxRate != null ? String(dto.defaultTaxRate) : null,
       })
       .returning();
-    const row = rows[0];
-    return {
-      id: row.id,
-      code: row.code,
-      name: row.name,
-      type: row.type,
-      contactName: row.contactName,
-      contactPhone: row.contactPhone,
-      bankAccount: row.bankAccount,
-      rating: Number(row.rating ?? 0),
-      status: row.status ?? 'active',
-      remark: row.remark,
-      createdAt: row.createdAt.toISOString(),
-    };
+    return this.mapSupplier(rows[0]);
   }
 
   async updateSupplier(id: string, dto: UpdateSupplierDto): Promise<Supplier> {
@@ -361,13 +366,32 @@ export class MasterDataService {
     if (dto.rating !== undefined) patch.rating = String(dto.rating);
     if (dto.status !== undefined) patch.status = dto.status;
     if (dto.remark !== undefined) patch.remark = dto.remark;
+    if (dto.taxEntityId !== undefined) patch.taxEntityId = dto.taxEntityId;
+    if (dto.defaultTaxRate !== undefined) {
+      patch.defaultTaxRate =
+        dto.defaultTaxRate == null ? null : String(dto.defaultTaxRate);
+    }
     const rows = await this.db
       .update(mdSupplier)
       .set(patch)
       .where(eq(mdSupplier.id, id))
       .returning();
     if (rows.length === 0) throw new NotFoundException('供应商不存在');
-    const row = rows[0];
+    return this.mapSupplier(rows[0]);
+  }
+
+  /** 启用/停用供应商主数据（admin） */
+  async setSupplierStatus(
+    id: string,
+    status: 'active' | 'inactive'
+  ): Promise<Supplier> {
+    if (status !== 'active' && status !== 'inactive') {
+      throw new BadRequestException('供应商状态仅支持 active / inactive');
+    }
+    return this.updateSupplier(id, { status });
+  }
+
+  private mapSupplier(row: typeof mdSupplier.$inferSelect): Supplier {
     return {
       id: row.id,
       code: row.code,
@@ -379,6 +403,9 @@ export class MasterDataService {
       rating: Number(row.rating ?? 0),
       status: row.status ?? 'active',
       remark: row.remark,
+      taxEntityId: row.taxEntityId ?? null,
+      defaultTaxRate:
+        row.defaultTaxRate != null ? Number(row.defaultTaxRate) : null,
       createdAt: row.createdAt.toISOString(),
     };
   }

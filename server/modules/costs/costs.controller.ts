@@ -11,7 +11,15 @@ import {
 import type { Request } from 'express';
 import { CanRole, NeedLogin } from '@server/platform';
 import { actorFromRequest } from '@server/common/auth/actor';
-import { IsIn, IsNumber, IsOptional, IsString } from 'class-validator';
+import {
+  IsDateString,
+  IsIn,
+  IsNumber,
+  IsOptional,
+  IsString,
+  IsUUID,
+  Min,
+} from 'class-validator';
 import { CostsService } from './costs.service';
 import type {
   CostAllocation,
@@ -34,10 +42,52 @@ const COST_DIMENSIONS: CostDimension[] = [
   'period',
 ];
 
+const COST_TYPES = [
+  'labor',
+  'outsource',
+  'compute',
+  'storage',
+  'tool',
+  'travel',
+  'flex_labor',
+] as const;
+
 export class TimesheetActionDto {
   @IsString()
   @IsIn(['submit', 'confirm', 'reject'])
   action!: 'submit' | 'confirm' | 'reject';
+}
+
+export class CreateCostBodyDto implements CreateCostDto {
+  @IsUUID()
+  projectId!: string;
+
+  @IsString()
+  @IsIn([...COST_TYPES])
+  costType!: CreateCostDto['costType'];
+
+  @IsNumber()
+  @Min(0)
+  amount!: number;
+
+  @IsOptional()
+  @IsDateString()
+  occurredDate?: string;
+
+  @IsString()
+  sourceRef!: string;
+
+  @IsOptional()
+  @IsUUID()
+  supplierId?: string;
+
+  @IsOptional()
+  @IsUUID()
+  departmentId?: string;
+
+  @IsOptional()
+  @IsString()
+  remark?: string;
 }
 
 class CreateTimesheetRequestDto implements CreateTimesheetDto {
@@ -102,8 +152,16 @@ export class CostsController {
 
   @CanRole(['admin'])
   @Post()
-  async createCost(@Body() dto: CreateCostDto): Promise<CostItem> {
+  async createCost(@Body() dto: CreateCostBodyDto): Promise<CostItem> {
     return this.costsService.createCost(dto);
+  }
+
+  @CanRole(['admin'])
+  @Post(':id/red-flush')
+  async redFlush(
+    @Param('id', ParseUUIDPipe) id: string
+  ): Promise<CostItem> {
+    return this.costsService.redFlush(id);
   }
 
   @Get('timesheets')

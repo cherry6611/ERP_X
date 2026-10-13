@@ -17,12 +17,14 @@ import {
   gte,
   inArray,
   like,
+  or,
   lt,
   sql,
   type SQL,
 } from 'drizzle-orm';
 import {
   erpCostAllocation,
+  erpProjectCost,
   erpTimesheet,
   hrAppraisal,
   hrCandidate,
@@ -101,7 +103,7 @@ export class HrPayService {
     const employees = await this.db
       .select({ id: mdEmployee.id })
       .from(mdEmployee)
-      .where(eq(mdEmployee.platformUserId, userId))
+      .where(or(eq(mdEmployee.feishuUnionId, userId), eq(mdEmployee.platformUserId, userId)))
       .limit(1);
     const employeeId: string | undefined = employees[0]?.id;
     if (!employeeId) return [];
@@ -195,7 +197,7 @@ export class HrPayService {
       }
       await this.approvePayroll(payroll);
 
-      /* 工资单审批通过 → 生成凭证草稿：借 管理费用(6602) / 贷 应付职工薪酬(2211) */
+      /* 方案 A：借 6401 / 贷 2211；预提红冲凭证在 approvePayroll 内按项目发出 */
       try {
         const netAmount = Number(payroll.netSalary ?? 0);
         const periodMatch = /^(\d{4})-(\d{2})$/.exec(payroll.period ?? '');
@@ -206,67 +208,236 @@ export class HrPayService {
               ).getUTCDate()
             ).padStart(2, '0')}`
           : new Date().toISOString().slice(0, 10);
-        await this.voucherHookService.generateVoucherDraft({
-          sourceType: 'payroll',
-          sourceRef: `payroll:${payroll.code}`,
-          voucherDate,
-          summary: `工资单审批 ${payroll.code}`,
-          lines: [
-            { accountCode: '6602', debit: netAmount },
-            { accountCode: '2211', credit: netAmount },
-          ],
-        });
+        // 修复 P1-8：净工资为 0 或负数时不生成凭证（否则会出现借方为负数的凭证）
+        if (netAmount > 0) {
+          await this.voucherHookService.generateVoucherDraft({
+            sourceType: 'payroll',
+            sourceRef: `payroll:${payroll.code}`,
+            voucherDate,
+            summary: `工资单审批 ${payroll.code}`,
+            lines: [
+              { accountCode: '6401', debit: netAmount },
+              { accountCode: '2211', credit: netAmount },
+            ],
+          });
+        } else {
+          this.logger.warn(
+            `工资单 ${payroll.code} 净额 ${netAmount} 非正数，跳过凭证生成`
+          );
+        }
       } catch (error) {
+        // 修复 P1-7：凭证失败要登记补偿队列，否则总账永久缺凭证
         this.logger.error(
           `工资凭证草稿生成失败：payroll:${payroll.code}`,
           error instanceof Error ? error.stack : String(error)
         );
+        try {
+          await this.voucherHookService.recordCompensation(
+            'payroll',
+            `payroll:${payroll.code}`,
+            '工资单审批凭证生成失败'
+          );
+        } catch (compError) {
+          this.logger.error(
+            `工资凭证补偿登记失败：payroll:${payroll.code}`,
+            compError instanceof Error ? compError.stack : String(compError)
+          );
+        }
       }
     }
     return this.getPayrollItem(id);
   }
 
   /**
-   * 审批通过：净工资 > 0 时按当月已确认工时的项目占比
-   * 生成分摊记录（erp_cost_allocation），并置 allocation_generated。
+   * 审批通过：按当月已确认工时找项目，始终红冲该员工预提；
+   * 仅净工资 > 0 时生成正向分摊（erp_cost_allocation）与 6401/2211 凭证。
    */
   private async approvePayroll(
     payroll: typeof hrPayroll.$inferSelect
   ): Promise<void> {
     const net: number = Number(payroll.netSalary ?? 0);
-    const items: AllocationItem[] =
-      net > 0 ? await this.collectAllocationItems(payroll) : [];
-    const monthKey = this.currentMonthKey('CAL');
+    // T13：净额 <= 0 时仍须收集项目以便红冲预提；正向分摊在循环内按 net>0 跳过
+    const allocated: AllocationItem[] =
+      await this.collectAllocationItems(payroll);
+    const period = payroll.period ?? '';
+    const accruedProjectRows =
+      payroll.employeeId && period.length >= 7
+        ? await this.db
+            .selectDistinct({ projectId: erpProjectCost.projectId })
+            .from(erpProjectCost)
+            .innerJoin(
+              erpTimesheet,
+              sql`${erpProjectCost.sourceRef} = ${sql.raw("'timesheet:'")} || ${erpTimesheet.code}`
+            )
+            .where(
+              and(
+                eq(erpProjectCost.period, period),
+                eq(erpProjectCost.isAccrual, 1),
+                like(erpProjectCost.sourceRef, 'timesheet:%'),
+                eq(erpTimesheet.employeeId, payroll.employeeId)
+              )
+            )
+        : [];
+    const amountByProject = new Map(
+      allocated.map((item) => [item.projectId, item.amount])
+    );
+    for (const row of accruedProjectRows) {
+      if (row.projectId && !amountByProject.has(row.projectId)) {
+        amountByProject.set(row.projectId, 0);
+      }
+    }
+    const items: AllocationItem[] = [...amountByProject.entries()].map(
+      ([projectId, amount]) => ({ projectId, amount })
+    );
+    const reverseVouchers: { projectId: string; amount: number }[] = [];
     await this.db.transaction(async (tx) => {
       if (items.length > 0) {
-        const countRows: Array<{ total: number }> = await tx
-          .select({ total: count() })
-          .from(erpCostAllocation)
-          .where(like(erpCostAllocation.code, `${monthKey}%`));
-        let seq: number = Number(countRows[0]?.total ?? 0);
         for (const item of items) {
-          seq += 1;
-          const allocCode = `${monthKey}${String(seq).padStart(4, '0')}`;
+          const reverseRef = `accrual-reverse:${payroll.code}:${item.projectId}`;
+          const existingReverse = await tx
+            .select({ id: erpProjectCost.id })
+            .from(erpProjectCost)
+            .where(eq(erpProjectCost.sourceRef, reverseRef))
+            .limit(1);
+          if (existingReverse.length === 0) {
+            // 修复 F-02-A：预提必须按【员工】红冲。
+            // erp_project_cost 没有 employeeId 列，用 sourceRef（'timesheet:<工时单号>'）
+            // 回连工时表来限定本人；否则审批 A 的工资单会把整个项目当期所有人的
+            // 预提一次性冲掉，且 B、C 的工资单仍能重复命中同一批预提行。
+            const accruedRows = await tx
+              .select({
+                id: erpProjectCost.id,
+                amount: erpProjectCost.amount,
+              })
+              .from(erpProjectCost)
+              .innerJoin(
+                erpTimesheet,
+                sql`${erpProjectCost.sourceRef} = ${sql.raw("'timesheet:'")} || ${erpTimesheet.code}`
+              )
+              .where(
+                and(
+                  eq(erpProjectCost.projectId, item.projectId),
+                  eq(erpProjectCost.period, period),
+                  eq(erpProjectCost.isAccrual, 1),
+                  like(erpProjectCost.sourceRef, 'timesheet:%'),
+                  eq(erpTimesheet.employeeId, payroll.employeeId)
+                )
+              );
+            const accrued = accruedRows.reduce(
+              (sum, row) => sum + Number(row.amount ?? 0),
+              0
+            );
+            if (accrued > 0) {
+              const reverseCode = await generateBizCode(
+                tx as unknown as PostgresJsDatabase,
+                erpProjectCost,
+                erpProjectCost.code,
+                'CST'
+              );
+              await tx.insert(erpProjectCost).values({
+                code: reverseCode,
+                projectId: item.projectId,
+                costType: 'labor',
+                amount: String(-accrued),
+                period,
+                occurredDate: new Date().toISOString().slice(0, 10),
+                sourceRef: reverseRef,
+                isAccrual: 0,
+                offsetOf: accruedRows[0]?.id ?? null,
+                remark: `红冲工时预提 ${payroll.code}`,
+              });
+              // 修复 F-02-A：把已冲减的预提行标记为 2（已红冲），
+              // 否则 is_accrual 恒为 1，下次红冲仍会命中同一批行 → 重复冲减。
+              if (accruedRows.length > 0) {
+                await tx
+                  .update(erpProjectCost)
+                  .set({ isAccrual: 2, updatedAt: new Date() })
+                  .where(
+                    inArray(
+                      erpProjectCost.id,
+                      accruedRows.map((row) => row.id)
+                    )
+                  );
+              }
+              reverseVouchers.push({
+                projectId: item.projectId,
+                amount: accrued,
+              });
+            }
+          }
+
+          // 净额非正：跳过正向分摊与项目实际成本（仍已做预提红冲）
+          if (!(net > 0 && item.amount > 0)) {
+            continue;
+          }
+
+          const allocCode = await generateBizCode(
+            tx as unknown as PostgresJsDatabase,
+            erpCostAllocation,
+            erpCostAllocation.code,
+            'CAL'
+          );
+          const sourceRef = `payroll:${payroll.code}:${item.projectId}`;
           await tx.insert(erpCostAllocation).values({
             code: allocCode,
             sourceDesc: `工资单 ${payroll.code} 分摊`,
             costType: 'labor',
             amount: String(item.amount),
             targetProjectId: item.projectId,
-            period: payroll.period ?? '',
-            sourceRef: `payroll:${payroll.code}`,
+            period,
+            sourceRef,
+          });
+          const costCode = await generateBizCode(
+            tx as unknown as PostgresJsDatabase,
+            erpProjectCost,
+            erpProjectCost.code,
+            'CST'
+          );
+          await tx.insert(erpProjectCost).values({
+            code: costCode,
+            projectId: item.projectId,
+            costType: 'labor',
+            amount: String(item.amount),
+            period,
+            occurredDate: new Date().toISOString().slice(0, 10),
+            sourceRef,
+            isAccrual: 0,
+            remark: `工资分摊（实际） ${payroll.code}`,
           });
         }
       }
-      await tx
+      // 修复 P1-6：加 CAS，防止并发审批产生两份红冲/分摊。
+      // （allocationGenerated 属「先读后写」，两个并发请求可同时通过 payrollAction 的检查）
+      const approved = await tx
         .update(hrPayroll)
         .set({
           status: 'approved',
           allocationGenerated: items.length > 0,
           updatedAt: new Date(),
         })
-        .where(eq(hrPayroll.id, payroll.id));
+        .where(
+          and(
+            eq(hrPayroll.id, payroll.id),
+            eq(hrPayroll.status, 'submitted')
+          )
+        )
+        .returning({ id: hrPayroll.id });
+      if (approved.length === 0) {
+        throw new BadRequestException('该工资单已被审批，请勿重复操作');
+      }
     });
+    for (const reverse of reverseVouchers) {
+      await this.voucherHookService.generateVoucherDraft({
+        sourceType: 'payroll',
+        sourceRef: `accrual-reverse:${payroll.code}:${reverse.projectId}`,
+        voucherDate: new Date().toISOString().slice(0, 10),
+        summary: `红冲工时预提 ${payroll.code}`,
+        lines: [
+          { accountCode: '2202', debit: reverse.amount },
+          { accountCode: '6401', credit: reverse.amount },
+        ],
+      });
+    }
   }
 
   /** 按项目汇总该员工该月份的已确认工时，折算分摊金额 */

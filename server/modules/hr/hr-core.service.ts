@@ -439,6 +439,40 @@ export class HrCoreService {
     }
   }
 
+  /**
+   * 软停用/启用员工主数据（admin）。
+   * inactive 为档案停用（区别于 resigned 离职流程）；active 可从 inactive 恢复。
+   */
+  async setEmployeeStatus(
+    id: string,
+    status: 'active' | 'inactive'
+  ): Promise<Employee> {
+    if (status !== 'active' && status !== 'inactive') {
+      throw new BadRequestException('员工启停状态仅支持 active / inactive');
+    }
+    const existing = await this.db
+      .select({ status: mdEmployee.status })
+      .from(mdEmployee)
+      .where(eq(mdEmployee.id, id));
+    if (existing.length === 0) throw new NotFoundException('员工不存在');
+    const current: string = existing[0].status ?? 'active';
+    if (current === 'resigned') {
+      throw new BadRequestException('已离职员工不能通过启停接口变更状态');
+    }
+    if (status === 'active' && current !== 'inactive' && current !== 'active') {
+      throw new BadRequestException(
+        `当前状态 ${current} 请使用转正/离职流程，不能直接设为 active`
+      );
+    }
+    const rows = await this.db
+      .update(mdEmployee)
+      .set({ status, updatedAt: new Date() })
+      .where(eq(mdEmployee.id, id))
+      .returning({ id: mdEmployee.id });
+    if (rows.length === 0) throw new NotFoundException('员工不存在');
+    return this.getEmployeeById(id);
+  }
+
   async updateEmployee(id: string, dto: UpdateEmployeeDto): Promise<Employee> {
     const existing = await this.db
       .select({ status: mdEmployee.status })
@@ -447,11 +481,16 @@ export class HrCoreService {
     if (existing.length === 0) throw new NotFoundException('员工不存在');
     const currentStatus: string = existing[0].status ?? 'active';
     if (dto.status !== undefined && dto.status !== currentStatus) {
-      const allowed = EMPLOYEE_STATUS_TRANSITIONS[currentStatus] ?? [];
-      if (!allowed.includes(dto.status)) {
-        throw new BadRequestException(
-          `非法的员工状态流转：${currentStatus} → ${dto.status}`
-        );
+      // inactive ↔ active 走专用启停接口；此处仍允许从 inactive 恢复为 active
+      if (currentStatus === 'inactive' && dto.status === 'active') {
+        // ok
+      } else {
+        const allowed = EMPLOYEE_STATUS_TRANSITIONS[currentStatus] ?? [];
+        if (!allowed.includes(dto.status)) {
+          throw new BadRequestException(
+            `非法的员工状态流转：${currentStatus} → ${dto.status}`
+          );
+        }
       }
       if (dto.status === 'resigned' && !dto.resignDate) {
         throw new BadRequestException('员工离职必须同时提供离职日期');
@@ -529,7 +568,7 @@ export class HrCoreService {
       .from(mdEmployee)
       .where(
         and(
-          eq(mdEmployee.platformUserId, userId),
+          or(eq(mdEmployee.feishuUnionId, userId), eq(mdEmployee.platformUserId, userId)),
           sql`${mdEmployee.status} is distinct from 'resigned'`
         )
       )
