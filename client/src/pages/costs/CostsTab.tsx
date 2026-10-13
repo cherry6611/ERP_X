@@ -23,9 +23,21 @@ import { Table, TableColumnsType } from 'antd';
 import { CanRole } from '@client/src/platform/auth';
 import DateField from '@client/src/components/erp/DateField';
 import { AttachmentField } from '@client/src/components/attachments/AttachmentField';
+import { DataState } from '@client/src/components/DataState';
 import FilterBar from '@client/src/components/erp/FilterBar';
 import StatCard from '@client/src/components/erp/StatCard';
 import { Button } from '@client/src/components/ui/button';
+import { dialogSize } from '@client/src/theme/dialog-size';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@client/src/components/ui/alert-dialog';
 import {
   Dialog,
   DialogContent,
@@ -53,6 +65,7 @@ import {
 import { costsApi, feishuSyncApi, projectsApi } from '@client/src/api';
 import FeishuSyncRecordsDialog from '@client/src/components/erp/FeishuSyncRecordsDialog';
 import { useAsyncData } from '@client/src/hooks/useAsyncData';
+import { useDebouncedValue } from '@client/src/hooks/useDebouncedValue';
 import { formatMoney } from '@client/src/utils/format';
 import { COST_TYPE_LABELS } from '@client/src/utils/biz-labels';
 import { getApiErrorMessage } from '@client/src/utils/api-error-message';
@@ -110,8 +123,11 @@ type CostFormInput = z.input<typeof costSchema>;
 const CostsTab: React.FC = () => {
   const [projectFilter, setProjectFilter] = useState<string>('all');
   const [typeFilter, setTypeFilter] = useState<string>('all');
+  const [keyword, setKeyword] = useState('');
+  const keywordQuery = useDebouncedValue(keyword);
   const [createOpen, setCreateOpen] = useState(false);
   const [syncing, setSyncing] = useState(false);
+  const [syncConfirm, setSyncConfirm] = useState(false);
   const [recordsOpen, setRecordsOpen] = useState(false);
   const [attachmentTarget, setAttachmentTarget] = useState<CostItem | null>(null);
 
@@ -123,6 +139,24 @@ const CostsTab: React.FC = () => {
       ),
     [projectFilter, typeFilter],
   );
+  const filteredData = React.useMemo(() => {
+    const rows = data ?? [];
+    const q = keywordQuery.trim().toLowerCase();
+    if (!q) return rows;
+    return rows.filter((row) => {
+      const haystack = [
+        row.code,
+        row.projectName,
+        row.sourceRef,
+        row.supplierName,
+        row.remark,
+      ]
+        .filter(Boolean)
+        .join(' ')
+        .toLowerCase();
+      return haystack.includes(q);
+    });
+  }, [data, keywordQuery]);
   const { data: summary } = useAsyncData(() => costsApi.getCostSummary(), []);
   const { data: projects } = useAsyncData<Project[]>(() => projectsApi.listProjects(), []);
 
@@ -146,7 +180,7 @@ const CostsTab: React.FC = () => {
       form.reset({ projectId: '', costType: 'compute', amount: 0, sourceRef: '', remark: '' });
       await reload();
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : '归集失败');
+      toast.error(getApiErrorMessage(err, '归集失败'));
     }
   });
 
@@ -167,7 +201,7 @@ const CostsTab: React.FC = () => {
   };
 
   const handleExport = () => {
-    const rows: CostItem[] = data ?? [];
+    const rows: CostItem[] = filteredData;
     if (rows.length === 0) {
       toast.error('当前列表为空，无可导出数据');
       return;
@@ -187,9 +221,18 @@ const CostsTab: React.FC = () => {
     {
       title: '金额',
       dataIndex: 'amount',
-      width: 120,
+      width: 140,
       align: 'right',
-      render: (v: number) => formatMoney(v),
+      render: (v: number, record) => (
+        <div className="text-right">
+          <div>{formatMoney(v)}</div>
+          <div className="text-xs text-muted-foreground">
+            {record.costType === 'labor' || record.costType === 'flex_labor'
+              ? '不含税'
+              : '含税'}
+          </div>
+        </div>
+      ),
     },
     { title: '期间', dataIndex: 'period', width: 90 },
     { title: '发生日期', dataIndex: 'occurredDate', width: 110, render: (v) => v ?? '-' },
@@ -252,6 +295,16 @@ const CostsTab: React.FC = () => {
           </Select>
         </div>
         <div className="flex items-center gap-2">
+          <Label htmlFor="cost-keyword">搜索</Label>
+          <Input
+            id="cost-keyword"
+            className="w-56"
+            placeholder="编号 / 项目 / 摘要…"
+            value={keyword}
+            onChange={(e) => setKeyword(e.target.value)}
+          />
+        </div>
+        <div className="flex items-center gap-2">
           <Label htmlFor="cost-type-filter">类型</Label>
           <Select value={typeFilter} onValueChange={setTypeFilter}>
             <SelectTrigger id="cost-type-filter" className="w-36">
@@ -280,7 +333,7 @@ const CostsTab: React.FC = () => {
         <Button
           variant="outline"
           disabled={syncing}
-          onClick={() => void handleSyncToBase()}
+          onClick={() => setSyncConfirm(true)}
           aria-label="同步成本到多维表格"
         >
           <Upload className="h-4 w-4" />
@@ -295,29 +348,27 @@ const CostsTab: React.FC = () => {
           同步记录
         </Button>
       </FilterBar>
-      {error ? (
-        <p className="text-sm text-destructive">
-          {error}
-          <Button variant="ghost" size="sm" className="ml-2" onClick={() => void reload()}>
-            重试
-          </Button>
-        </p>
-      ) : null}
-      <Table
-        columns={columns}
-        dataSource={data ?? []}
+      <DataState
         loading={loading}
-        rowKey="id"
-        scroll={{ x: 1200, y: 500 }}
-        pagination={{
-          pageSize: 10,
-          showTotal: (total: number) => `共 ${total} 条`,
-        }}
-        locale={{ emptyText: '暂无成本，点击右上角「归集成本」创建' }}
-      />
+        error={error}
+        onRetry={() => void reload()}
+        skeleton="table"
+      >
+        <Table
+          columns={columns}
+          dataSource={filteredData}
+          rowKey="id"
+          scroll={{ x: 1200, y: 500 }}
+          pagination={{
+            pageSize: 10,
+            showTotal: (total: number) => `共 ${total} 条`,
+          }}
+          locale={{ emptyText: '暂无成本，点击右上角「归集成本」创建' }}
+        />
+      </DataState>
 
       <Dialog open={createOpen} onOpenChange={setCreateOpen}>
-        <DialogContent className="max-w-md">
+        <DialogContent className={dialogSize.md}>
           <DialogHeader>
             <DialogTitle>归集成本</DialogTitle>
           </DialogHeader>
@@ -379,25 +430,31 @@ const CostsTab: React.FC = () => {
                 <FormField
                   control={form.control}
                   name="amount"
-                  render={({ field }) => (
-                    <FormItem className="flex-1">
-                      <FormLabel>
-                        金额（元） <span aria-hidden="true" className="text-destructive">*</span>
-                      </FormLabel>
-                      <FormControl>
-                        <Input
-                          type="number"
-                          min={0}
-                          value={String(field.value ?? '')}
-                          onChange={field.onChange}
-                          onBlur={field.onBlur}
-                          name={field.name}
-                          ref={field.ref}
-                        />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
+                  render={({ field }) => {
+                    const costType = form.watch('costType');
+                    const isLabor =
+                      costType === 'labor' || costType === 'flex_labor';
+                    return (
+                      <FormItem className="flex-1">
+                        <FormLabel>
+                          {isLabor ? '金额（不含税）' : '金额（含税）'}{' '}
+                          <span aria-hidden="true" className="text-destructive">*</span>
+                        </FormLabel>
+                        <FormControl>
+                          <Input
+                            type="number"
+                            min={0}
+                            value={String(field.value ?? '')}
+                            onChange={field.onChange}
+                            onBlur={field.onBlur}
+                            name={field.name}
+                            ref={field.ref}
+                          />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    );
+                  }}
                 />
               </div>
               <FormField
@@ -449,7 +506,7 @@ const CostsTab: React.FC = () => {
           if (!open) setAttachmentTarget(null);
         }}
       >
-        <DialogContent className="max-w-md">
+        <DialogContent className={dialogSize.md}>
           <DialogHeader>
             <DialogTitle>
               成本凭证 -{' '}
@@ -469,6 +526,20 @@ const CostsTab: React.FC = () => {
           ) : null}
         </DialogContent>
       </Dialog>
+      <AlertDialog open={syncConfirm} onOpenChange={setSyncConfirm}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>同步到多维表格</AlertDialogTitle>
+            <AlertDialogDescription>
+              将把成本数据写入飞书多维表格。已同步成功的记录会跳过。
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>取消</AlertDialogCancel>
+            <AlertDialogAction onClick={() => void handleSyncToBase()}>确认同步</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 };

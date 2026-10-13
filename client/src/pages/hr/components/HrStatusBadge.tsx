@@ -6,6 +6,7 @@ import { Badge } from '@client/src/components/ui/badge';
 export const EMPLOYEE_STATUS_LABELS: Record<string, string> = {
   probation: '试用期',
   active: '在职',
+  inactive: '停用',
   resigned: '已离职',
 };
 
@@ -71,9 +72,9 @@ export const RECRUIT_STATUS_LABELS: Record<string, string> = {
 /* HR 域 Badge 颜色语义：草稿/待审批=灰、已生效/已批准=蓝、完成/已入职=绿、驳回/淘汰=红、进行中=黄 */
 
 const GREEN_CLASS =
-  'border-transparent bg-emerald-100 text-emerald-700 hover:bg-emerald-100';
+  'border-transparent bg-success/10 text-success hover:bg-success/10';
 const YELLOW_CLASS =
-  'border-transparent bg-amber-100 text-amber-700 hover:bg-amber-100';
+  'border-transparent bg-warning/10 text-warning hover:bg-warning/10';
 
 const GREEN_STATUSES = new Set([
   'present',

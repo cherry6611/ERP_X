@@ -6,7 +6,9 @@ import { toast } from 'sonner';
 import { Download, Plus, Upload } from 'lucide-react';
 import { Table, TableColumnsType } from 'antd';
 import PageShell from '@client/src/components/PageShell';
+import { DataState } from '@client/src/components/DataState';
 import StatusBadge from '@client/src/components/erp/StatusBadge';
+import { CanRole } from '@client/src/platform/auth';
 import { Button } from '@client/src/components/ui/button';
 import {
   Dialog,
@@ -43,6 +45,11 @@ import {
 } from '@client/src/components/excel/excel-utils';
 import { masterDataApi } from '@client/src/api';
 import { useAsyncData } from '@client/src/hooks/useAsyncData';
+import { useDebouncedValue } from '@client/src/hooks/useDebouncedValue';
+import { getApiErrorMessage } from '@client/src/utils/api-error-message';
+import {
+  resolveRateOptions,
+} from '@client/src/utils/tax-rate-options';
 import type { CreateSupplierDto, Supplier, UpdateSupplierDto } from '@shared/api.interface';
 
 const SUPPLIER_TYPE_LABELS: Record<string, string> = {
@@ -175,6 +182,8 @@ const supplierSchema = z.object({
   rating: z.coerce.number().min(0).max(5),
   status: z.string(),
   remark: z.string(),
+  taxEntityId: z.string(),
+  defaultTaxRate: z.string(),
 });
 
 type SupplierFormData = z.output<typeof supplierSchema>;
@@ -182,12 +191,13 @@ type SupplierFormInput = z.input<typeof supplierSchema>;
 
 const SuppliersPage: React.FC = () => {
   const [keyword, setKeyword] = useState('');
+  const keywordQuery = useDebouncedValue(keyword);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editing, setEditing] = useState<Supplier | null>(null);
   const [importOpen, setImportOpen] = useState(false);
   const { data, loading, error, reload } = useAsyncData<Supplier[]>(
-    () => masterDataApi.listSuppliers(keyword || undefined),
-    [keyword],
+    () => masterDataApi.listSuppliers(keywordQuery || undefined),
+    [keywordQuery],
   );
 
   const form = useForm<SupplierFormInput, unknown, SupplierFormData>({
@@ -201,8 +211,14 @@ const SuppliersPage: React.FC = () => {
       rating: 0,
       status: 'active',
       remark: '',
+      taxEntityId: '',
+      defaultTaxRate: '',
     },
   });
+  const { data: taxEntities } = useAsyncData(
+    () => masterDataApi.listTaxEntities(),
+    [],
+  );
 
   const handleExport = () => {
     const rows: Supplier[] = data ?? [];
@@ -224,6 +240,8 @@ const SuppliersPage: React.FC = () => {
       rating: 0,
       status: 'active',
       remark: '',
+      taxEntityId: '',
+      defaultTaxRate: '',
     });
     setDialogOpen(true);
   };
@@ -239,27 +257,47 @@ const SuppliersPage: React.FC = () => {
       rating: supplier.rating,
       status: supplier.status,
       remark: supplier.remark ?? '',
+      taxEntityId: supplier.taxEntityId ?? '',
+      defaultTaxRate:
+        supplier.defaultTaxRate != null ? String(supplier.defaultTaxRate) : '',
     });
     setDialogOpen(true);
   };
 
   const onSubmit = form.handleSubmit(async (data) => {
     try {
+      const taxPayload = {
+        taxEntityId: data.taxEntityId || null,
+        defaultTaxRate:
+          data.defaultTaxRate === '' ? null : Number(data.defaultTaxRate),
+      };
       if (editing) {
-        const dto: UpdateSupplierDto = { ...data };
+        const dto: UpdateSupplierDto = { ...data, ...taxPayload };
         await masterDataApi.updateSupplier(editing.id, dto);
         toast.success('供应商已更新');
       } else {
-        const dto: CreateSupplierDto = { ...data };
+        const dto: CreateSupplierDto = { ...data, ...taxPayload };
         await masterDataApi.createSupplier(dto);
         toast.success('供应商已创建');
       }
       setDialogOpen(false);
       await reload();
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : '保存失败');
+      toast.error(getApiErrorMessage(err, '保存失败'));
     }
   });
+
+  const toggleStatus = async (supplier: Supplier) => {
+    const next: 'active' | 'inactive' =
+      supplier.status === 'inactive' ? 'active' : 'inactive';
+    try {
+      await masterDataApi.setSupplierStatus(supplier.id, next);
+      toast.success(next === 'inactive' ? '供应商已停用' : '供应商已启用');
+      await reload();
+    } catch (err) {
+      toast.error(getApiErrorMessage(err, '状态更新失败'));
+    }
+  };
 
   const columns: TableColumnsType<Supplier> = [
     { title: '编号', dataIndex: 'code', fixed: 'left', width: 130 },
@@ -290,11 +328,22 @@ const SuppliersPage: React.FC = () => {
       title: '操作',
       key: 'action',
       fixed: 'right',
-      width: 90,
+      width: 160,
       render: (_, record) => (
-        <Button variant="ghost" size="sm" onClick={() => openEdit(record)}>
-          编辑
-        </Button>
+        <CanRole roles={['admin']}>
+          <div className="flex gap-1">
+            <Button variant="ghost" size="sm" onClick={() => openEdit(record)}>
+              编辑
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => void toggleStatus(record)}
+            >
+              {record.status === 'inactive' ? '启用' : '停用'}
+            </Button>
+          </div>
+        </CanRole>
       ),
     },
   ];
@@ -309,10 +358,12 @@ const SuppliersPage: React.FC = () => {
           value={keyword}
           onChange={(e) => setKeyword(e.target.value)}
         />
-        <Button onClick={openCreate}>
-          <Plus className="h-4 w-4" />
-          新建供应商
-        </Button>
+        <CanRole roles={['admin']}>
+          <Button onClick={openCreate}>
+            <Plus className="h-4 w-4" />
+            新建供应商
+          </Button>
+        </CanRole>
         <Button variant="outline" onClick={handleExport}>
           <Download className="h-4 w-4" />
           导出 Excel
@@ -322,26 +373,24 @@ const SuppliersPage: React.FC = () => {
           导入 Excel
         </Button>
       </div>
-      {error ? (
-        <p className="text-sm text-destructive">
-          {error}
-          <Button variant="ghost" size="sm" className="ml-2" onClick={() => void reload()}>
-            重试
-          </Button>
-        </p>
-      ) : null}
-      <Table
-        columns={columns}
-        dataSource={data ?? []}
+      <DataState
         loading={loading}
-        rowKey="id"
-        scroll={{ x: 1100, y: 500 }}
-        pagination={{
-          pageSize: 10,
-          showTotal: (t: number) => `共 ${t} 条`,
-        }}
-        locale={{ emptyText: '暂无供应商，点击右上角「新建供应商」创建' }}
-      />
+        error={error}
+        onRetry={() => void reload()}
+        skeleton="table"
+      >
+        <Table
+          columns={columns}
+          dataSource={data ?? []}
+          rowKey="id"
+          scroll={{ x: 1100, y: 500 }}
+          pagination={{
+            pageSize: 10,
+            showTotal: (t: number) => `共 ${t} 条`,
+          }}
+          locale={{ emptyText: '暂无供应商，点击右上角「新建供应商」创建' }}
+        />
+      </DataState>
       <ExcelImportDialog<CreateSupplierDto>
         open={importOpen}
         onOpenChange={setImportOpen}
@@ -493,6 +542,75 @@ const SuppliersPage: React.FC = () => {
                   </FormItem>
                 )}
               />
+              <div className="flex gap-4">
+                <FormField
+                  control={form.control}
+                  name="taxEntityId"
+                  render={({ field }) => (
+                    <FormItem className="flex-1">
+                      <FormLabel>关联纳税主体</FormLabel>
+                      <Select
+                        value={field.value || '__none__'}
+                        onValueChange={(value) =>
+                          field.onChange(value === '__none__' ? '' : value)
+                        }
+                      >
+                        <FormControl>
+                          <SelectTrigger>
+                            <SelectValue placeholder="可选" />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          <SelectItem value="__none__">不指定</SelectItem>
+                          {(taxEntities ?? [])
+                            .filter((entity) => entity.status === 'active')
+                            .map((entity) => (
+                              <SelectItem key={entity.id} value={entity.id}>
+                                {entity.name}
+                              </SelectItem>
+                            ))}
+                        </SelectContent>
+                      </Select>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={form.control}
+                  name="defaultTaxRate"
+                  render={({ field }) => {
+                    const entityId = form.watch('taxEntityId');
+                    const entity = (taxEntities ?? []).find((row) => row.id === entityId);
+                    const rates = resolveRateOptions(entity);
+                    return (
+                      <FormItem className="w-36">
+                        <FormLabel>默认税率</FormLabel>
+                        <Select
+                          value={field.value || '__none__'}
+                          onValueChange={(value) =>
+                            field.onChange(value === '__none__' ? '' : value)
+                          }
+                        >
+                          <FormControl>
+                            <SelectTrigger>
+                              <SelectValue placeholder="可选" />
+                            </SelectTrigger>
+                          </FormControl>
+                          <SelectContent>
+                            <SelectItem value="__none__">不指定</SelectItem>
+                            {rates.map((rate) => (
+                              <SelectItem key={rate} value={String(rate)}>
+                                {rate}%
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        <FormMessage />
+                      </FormItem>
+                    );
+                  }}
+                />
+              </div>
               <FormField
                 control={form.control}
                 name="remark"

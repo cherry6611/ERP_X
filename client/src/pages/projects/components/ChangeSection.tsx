@@ -6,6 +6,7 @@ import { toast } from 'sonner';
 import { Plus } from 'lucide-react';
 import { Table, TableColumnsType } from 'antd';
 import { CanRole } from '@client/src/platform/auth';
+import { DataState } from '@client/src/components/DataState';
 import StatusBadge from '@client/src/components/erp/StatusBadge';
 import { Badge } from '@client/src/components/ui/badge';
 import { Button } from '@client/src/components/ui/button';
@@ -34,6 +35,7 @@ import {
 } from '@client/src/components/ui/select';
 import { Textarea } from '@client/src/components/ui/textarea';
 import { projectsApi } from '@client/src/api';
+import { getApiErrorMessage } from '@client/src/utils/api-error-message';
 import type { CreateProjectChangeDto, ProjectChange } from '@shared/api.interface';
 
 const CHANGE_TYPE_LABELS: Record<string, string> = {
@@ -83,7 +85,7 @@ const ChangeSection: React.FC<ChangeSectionProps> = ({ projectId, onChanged }) =
       setChanges(detail.changes);
       setProjectClosed(detail.status === 'closed');
     } catch (err) {
-      setError(err instanceof Error ? err.message : '加载项目变更失败');
+      setError(getApiErrorMessage(err, '加载项目变更失败'));
     } finally {
       setLoading(false);
     }
@@ -119,7 +121,7 @@ const ChangeSection: React.FC<ChangeSectionProps> = ({ projectId, onChanged }) =
       });
       await refresh();
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : '提交失败');
+      toast.error(getApiErrorMessage(err, '提交失败'));
     }
   });
 
@@ -129,7 +131,7 @@ const ChangeSection: React.FC<ChangeSectionProps> = ({ projectId, onChanged }) =
       toast.success(action === 'approve' ? '变更已批准' : '变更已驳回');
       await refresh();
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : '操作失败');
+      toast.error(getApiErrorMessage(err, '操作失败'));
     }
   };
 
@@ -183,9 +185,7 @@ const ChangeSection: React.FC<ChangeSectionProps> = ({ projectId, onChanged }) =
           </Button>
         )}
       </div>
-      {loading ? <p className="text-sm text-muted-foreground">加载中...</p> : null}
-      {error ? <p className="text-sm text-destructive">{error}</p> : null}
-      {!loading && !error ? (
+      <DataState loading={loading} error={error} skeleton="table">
         <Table
           columns={changeColumns}
           dataSource={changes}
@@ -194,7 +194,7 @@ const ChangeSection: React.FC<ChangeSectionProps> = ({ projectId, onChanged }) =
           pagination={false}
           size="small"
         />
-      ) : null}
+      </DataState>
 
       <Dialog open={changeOpen} onOpenChange={setChangeOpen}>
         <DialogContent className="max-w-md">

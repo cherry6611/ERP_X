@@ -7,6 +7,7 @@ import { Paperclip, Plus } from 'lucide-react';
 import { Table, TableColumnsType } from 'antd';
 import { AttachmentField } from '@client/src/components/attachments/AttachmentField';
 import DateField from '@client/src/components/erp/DateField';
+import { CanRole } from '@client/src/platform/auth';
 import { Button } from '@/components/ui/button';
 import {
   Card,
@@ -41,8 +42,10 @@ import {
 import { Textarea } from '@/components/ui/textarea';
 import { costsApi, projectsApi } from '@client/src/api';
 import { useAsyncData } from '@client/src/hooks/useAsyncData';
+import { confirmDanger } from '@client/src/utils/confirmDanger';
 import { formatMoney } from '@client/src/utils/format';
 import { COST_TYPE_LABELS } from '@client/src/utils/biz-labels';
+import { getApiErrorMessage } from '@client/src/utils/api-error-message';
 import type { CostItem, CostType, CreateCostDto, CostTypeSummary } from '@shared/api.interface';
 
 const costSchema = z.object({
@@ -107,7 +110,7 @@ const CostSection: React.FC<CostSectionProps> = ({ projectId, onChanged }) => {
       await Promise.all([reload(), reloadSummary(), reloadAccounting()]);
       onChanged?.();
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : '归集失败');
+      toast.error(getApiErrorMessage(err, '归集失败'));
     }
   });
 
@@ -134,12 +137,44 @@ const CostSection: React.FC<CostSectionProps> = ({ projectId, onChanged }) => {
       title: '操作',
       key: 'action',
       fixed: 'right',
-      width: 90,
+      width: 160,
       render: (_, record) => (
-        <Button variant="ghost" size="sm" onClick={() => setAttachmentTarget(record)}>
-          <Paperclip className="h-4 w-4" />
-          凭证
-        </Button>
+        <div className="flex gap-1">
+          <Button variant="ghost" size="sm" onClick={() => setAttachmentTarget(record)}>
+            <Paperclip className="h-4 w-4" />
+            凭证
+          </Button>
+          {Number(record.amount) > 0 ? (
+            <CanRole roles={['admin']}>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => {
+                  void (async () => {
+                    const ok = await confirmDanger(
+                      `确认红冲成本 ${record.code}？将生成冲销记录，此操作不可恢复。`,
+                    );
+                    if (!ok) return;
+                    try {
+                      await costsApi.redFlushCost(record.id);
+                      toast.success('已红冲');
+                      await Promise.all([
+                        reload(),
+                        reloadSummary(),
+                        reloadAccounting(),
+                      ]);
+                      onChanged?.();
+                    } catch (err: unknown) {
+                      toast.error(getApiErrorMessage(err, '红冲失败'));
+                    }
+                  })();
+                }}
+              >
+                红冲
+              </Button>
+            </CanRole>
+          ) : null}
+        </div>
       ),
     },
   ];
@@ -153,10 +188,12 @@ const CostSection: React.FC<CostSectionProps> = ({ projectId, onChanged }) => {
           <CardTitle className="text-base font-semibold">成本</CardTitle>
           <CardDescription>成本合计 {formatMoney(totalCost)}</CardDescription>
         </div>
-        <Button onClick={() => setCreateOpen(true)}>
-          <Plus className="h-4 w-4" />
-          登记成本
-        </Button>
+        <CanRole roles={['admin']}>
+          <Button onClick={() => setCreateOpen(true)}>
+            <Plus className="h-4 w-4" />
+            登记成本
+          </Button>
+        </CanRole>
       </CardHeader>
       <CardContent className="flex flex-col gap-4">
         <div className="flex flex-wrap gap-2">

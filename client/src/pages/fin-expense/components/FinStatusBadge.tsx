@@ -25,9 +25,9 @@ export const CLAIM_STATUS_LABELS: Record<string, string> = {
 /* 颜色语义：待审批=灰、已批准=蓝、驳回=红、升级审批=黄、关闭=绿 */
 
 const GREEN_CLASS =
-  'border-transparent bg-emerald-100 text-emerald-700 hover:bg-emerald-100';
+  'border-transparent bg-success/10 text-success hover:bg-success/10';
 const YELLOW_CLASS =
-  'border-transparent bg-amber-100 text-amber-700 hover:bg-amber-100';
+  'border-transparent bg-warning/10 text-warning hover:bg-warning/10';
 
 const GREEN_STATUSES = new Set(['closed']);
 const YELLOW_STATUSES = new Set(['escalated']);

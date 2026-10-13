@@ -199,7 +199,7 @@ export function ExcelImportDialog<TDto>(props: ExcelImportDialogProps<TDto>) {
 
   const renderResultCell = (row: ImportRowState<TDto>) => {
     if (row.status === 'success') {
-      return <span className="text-green-600">导入成功</span>;
+      return <span className="text-success">导入成功</span>;
     }
     if (row.status === 'failed') {
       return <span className="text-destructive">{row.resultMessage}</span>;

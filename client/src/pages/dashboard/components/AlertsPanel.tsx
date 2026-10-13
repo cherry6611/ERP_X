@@ -1,7 +1,7 @@
 import React from 'react';
-import { AlertTriangle, BellRing } from 'lucide-react';
+import { BellRing } from 'lucide-react';
+import { DataState } from '@client/src/components/DataState';
 import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
 import { biApi } from '@client/src/api';
 import { useAsyncData } from '@client/src/hooks/useAsyncData';
 import type { AlertItem } from '@shared/api.interface';
@@ -39,28 +39,20 @@ const AlertsPanel: React.FC = () => {
     <div data-ai-section-type="card-list" className="rounded-lg border bg-card p-4">
       <div className="flex items-center gap-2">
         <BellRing className="h-4 w-4 text-muted-foreground" aria-hidden="true" />
-        <h3 className="text-base font-semibold">通知中心</h3>
+        <h2 className="text-base font-semibold">通知中心</h2>
         {sorted.length > 0 ? (
           <span className="text-sm text-muted-foreground">
             共 {sorted.length} 项逾期与预警
           </span>
         ) : null}
       </div>
-      {error ? (
-        <div className="flex items-center gap-2 py-4 text-sm text-destructive">
-          <AlertTriangle className="h-4 w-4 shrink-0" aria-hidden="true" />
-          <span>通知中心加载失败：{error}</span>
-          <Button variant="ghost" size="sm" onClick={() => void reload()}>
-            重试
-          </Button>
-        </div>
-      ) : loading ? (
-        <p className="py-4 text-sm text-muted-foreground">加载中...</p>
-      ) : sorted.length === 0 ? (
-        <p className="py-6 text-center text-sm text-muted-foreground">
-          暂无逾期与预警事项
-        </p>
-      ) : (
+      <DataState
+        loading={loading}
+        error={error ? `通知中心加载失败：${error}` : null}
+        empty={!loading && !error && sorted.length === 0}
+        emptyText="暂无逾期与预警事项"
+        onRetry={() => void reload()}
+      >
         <ul className="mt-3 divide-y">
           {sorted.map((item: AlertItem, index: number) => (
             <li
@@ -71,7 +63,7 @@ const AlertsPanel: React.FC = () => {
                 variant={item.severity === 'danger' ? 'destructive' : 'outline'}
                 className={
                   item.severity === 'warning'
-                    ? 'border-transparent bg-amber-100 text-amber-700'
+                    ? 'border-transparent bg-warning/15 text-warning'
                     : undefined
                 }
               >
@@ -87,7 +79,7 @@ const AlertsPanel: React.FC = () => {
                 className={`shrink-0 text-sm font-medium ${
                   item.severity === 'danger'
                     ? 'text-destructive'
-                    : 'text-amber-600'
+                    : 'text-warning'
                 }`}
               >
                 {daysText(item)}
@@ -95,7 +87,7 @@ const AlertsPanel: React.FC = () => {
             </li>
           ))}
         </ul>
-      )}
+      </DataState>
     </div>
   );
 };

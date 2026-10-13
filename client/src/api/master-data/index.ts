@@ -10,9 +10,12 @@ import type {
   Employee,
   PagedResult,
   Supplier,
+  TaxEntity,
   UpdateCustomerDto,
   UpdateSupplierDto,
 } from '@shared/api.interface';
+
+export type { TaxEntity };
 
 export async function listCustomers(keyword?: string): Promise<Customer[]> {
   const resp = await axiosForBackend.get<PagedResult<Customer>>(
@@ -46,6 +49,18 @@ export async function createCustomer(dto: CreateCustomerDto): Promise<Customer> 
 
 export async function updateCustomer(id: string, dto: UpdateCustomerDto): Promise<Customer> {
   const resp = await axiosForBackend.patch<Customer>(`/api/master-data/customers/${id}`, dto);
+  ensureNotForbidden(resp);
+  return resp.data;
+}
+
+export async function setCustomerStatus(
+  id: string,
+  status: 'active' | 'inactive'
+): Promise<Customer> {
+  const resp = await axiosForBackend.patch<Customer>(
+    `/api/master-data/customers/${id}/status`,
+    { status }
+  );
   ensureNotForbidden(resp);
   return resp.data;
 }
@@ -105,8 +120,57 @@ export async function createSupplier(dto: CreateSupplierDto): Promise<Supplier> 
   return resp.data;
 }
 
+export async function listTaxEntities(): Promise<TaxEntity[]> {
+  const resp = await axiosForBackend.get<TaxEntity[]>('/api/master-data/tax-entities');
+  return resp.data;
+}
+
+export async function createTaxEntity(
+  dto: Omit<TaxEntity, 'id' | 'isDefault' | 'status'>
+): Promise<TaxEntity> {
+  const resp = await axiosForBackend.post<TaxEntity>('/api/master-data/tax-entities', dto);
+  return resp.data;
+}
+
+export async function updateTaxEntity(
+  id: string,
+  dto: Partial<Omit<TaxEntity, 'id' | 'isDefault' | 'status'>>
+): Promise<TaxEntity> {
+  const resp = await axiosForBackend.patch<TaxEntity>(
+    `/api/master-data/tax-entities/${id}`,
+    dto
+  );
+  return resp.data;
+}
+
+export async function setDefaultTaxEntity(id: string): Promise<TaxEntity> {
+  const resp = await axiosForBackend.post<TaxEntity>(
+    `/api/master-data/tax-entities/${id}/set-default`
+  );
+  return resp.data;
+}
+
+export async function toggleTaxEntityStatus(id: string): Promise<TaxEntity> {
+  const resp = await axiosForBackend.post<TaxEntity>(
+    `/api/master-data/tax-entities/${id}/toggle-status`
+  );
+  return resp.data;
+}
+
 export async function updateSupplier(id: string, dto: UpdateSupplierDto): Promise<Supplier> {
   const resp = await axiosForBackend.patch<Supplier>(`/api/master-data/suppliers/${id}`, dto);
+  ensureNotForbidden(resp);
+  return resp.data;
+}
+
+export async function setSupplierStatus(
+  id: string,
+  status: 'active' | 'inactive'
+): Promise<Supplier> {
+  const resp = await axiosForBackend.patch<Supplier>(
+    `/api/master-data/suppliers/${id}/status`,
+    { status }
+  );
   ensureNotForbidden(resp);
   return resp.data;
 }

@@ -3,9 +3,10 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { useForm } from 'react-hook-form';
 import { z } from 'zod';
 import { toast } from 'sonner';
-import { Download, Plus, Target } from 'lucide-react';
+import { Download, Plus } from 'lucide-react';
 import { Table, TableColumnsType } from 'antd';
 import { CanRole } from '@client/src/platform/auth';
+import { DataState } from '@client/src/components/DataState';
 import FilterBar from '@client/src/components/erp/FilterBar';
 import StatusBadge from '@client/src/components/erp/StatusBadge';
 import DateField from '@client/src/components/erp/DateField';
@@ -36,13 +37,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@client/src/components/ui/select';
-import {
-  Empty,
-  EmptyDescription,
-  EmptyHeader,
-  EmptyMedia,
-  EmptyTitle,
-} from '@client/src/components/ui/empty';
 import { crmApi, masterDataApi } from '@client/src/api';
 import QuotationFormDialog from './QuotationFormDialog';
 import { useAsyncData } from '@client/src/hooks/useAsyncData';
@@ -52,6 +46,7 @@ import {
   type ExcelSheetColumn,
 } from '@client/src/components/excel/excel-utils';
 import { formatMoney, formatPercent } from '@client/src/utils/format';
+import { getApiErrorMessage } from '@client/src/utils/api-error-message';
 import type {
   CreateOpportunityDto,
   Customer,
@@ -161,7 +156,7 @@ const OpportunitiesTab: React.FC = () => {
       await reload();
       setDetailTarget(created);
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : '创建失败');
+      toast.error(getApiErrorMessage(err, '创建失败'));
     }
   });
 
@@ -178,7 +173,7 @@ const OpportunitiesTab: React.FC = () => {
       setAdvanceTarget(null);
       await reload();
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : '更新失败');
+      toast.error(getApiErrorMessage(err, '更新失败'));
     }
   });
 
@@ -188,7 +183,7 @@ const OpportunitiesTab: React.FC = () => {
       toast.success(`已生成合同草稿 ${contract.code}`);
       await reload();
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : '转合同失败');
+      toast.error(getApiErrorMessage(err, '转合同失败'));
     }
   };
 
@@ -277,49 +272,36 @@ const OpportunitiesTab: React.FC = () => {
             </SelectContent>
           </Select>
         </div>
-        <CanRole roles={['admin']}>
-          <Button onClick={openCreate}>
-            <Plus className="h-4 w-4" />
-            新建商机
-          </Button>
-        </CanRole>
+        <Button onClick={openCreate}>
+          <Plus className="h-4 w-4" />
+          新建商机
+        </Button>
         <Button variant="outline" onClick={handleExport}>
           <Download className="h-4 w-4" />
           导出 Excel
         </Button>
       </FilterBar>
-      {error ? (
-        <p className="text-sm text-destructive">
-          {error}
-          <Button variant="ghost" size="sm" className="ml-2" onClick={() => void reload()}>
-            重试
-          </Button>
-        </p>
-      ) : null}
-      <Table
-        columns={columns}
-        dataSource={data ?? []}
+      <DataState
         loading={loading}
-        rowKey="id"
-        scroll={{ x: 1200, y: 500 }}
-        pagination={{
-          pageSize: 10,
-          showTotal: (t: number) => `共 ${t} 条`,
-        }}
-        locale={{
-          emptyText: (
-            <Empty className="py-8">
-              <EmptyHeader>
-                <EmptyMedia variant="icon">
-                  <Target />
-                </EmptyMedia>
-                <EmptyTitle>暂无商机</EmptyTitle>
-                <EmptyDescription>点击右上角「新建商机」创建</EmptyDescription>
-              </EmptyHeader>
-            </Empty>
-          ),
-        }}
-      />
+        error={error}
+        empty={!loading && !error && (data?.length ?? 0) === 0}
+        emptyTitle="暂无商机"
+        emptyText="点击上方「新建商机」按钮创建"
+        onRetry={() => void reload()}
+        skeleton="table"
+      >
+        <Table
+          columns={columns}
+          dataSource={data ?? []}
+          rowKey="id"
+          scroll={{ x: 1200, y: 500 }}
+          pagination={{
+            pageSize: 10,
+            showTotal: (t: number) => `共 ${t} 条`,
+          }}
+          locale={{ emptyText: ' ' }}
+        />
+      </DataState>
 
       <Dialog open={createOpen} onOpenChange={setCreateOpen}>
         <DialogContent className="max-w-lg">

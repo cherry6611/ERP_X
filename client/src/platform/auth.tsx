@@ -60,6 +60,10 @@ export function useAuth(): AuthState {
   return useContext(AuthContext);
 }
 
+/**
+ * 按角色码显隐。`roles` 与后端 `@CanRole([...])` / `FinanceRead` 等一致，
+ * 例如财务只读页可传 `['admin', 'finance_viewer']`；写操作仍用 `['admin']`。
+ */
 export function CanRole({
   children,
   roles,

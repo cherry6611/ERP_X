@@ -1,6 +1,6 @@
 import React from 'react';
 import { Table, TableColumnsType } from 'antd';
-import { Button } from '@client/src/components/ui/button';
+import { DataState } from '@client/src/components/DataState';
 import { revenuesApi } from '@client/src/api';
 import { useAsyncData } from '@client/src/hooks/useAsyncData';
 import { formatMoney } from '@client/src/utils/format';
@@ -44,22 +44,21 @@ const UnbilledTab: React.FC = () => {
         <p className="text-sm text-muted-foreground">未开票收入合计</p>
         <p className="text-xl font-semibold">{formatMoney(totalUnbilled)}</p>
       </div>
-      {error ? (
-        <p className="text-sm text-destructive">
-          {error}
-          <Button variant="ghost" size="sm" className="ml-2" onClick={() => void reload()}>
-            重试
-          </Button>
-        </p>
-      ) : null}
-      <Table
-        columns={columns}
-        dataSource={data ?? []}
+      <DataState
         loading={loading}
-        rowKey="projectId"
-        scroll={{ x: 900, y: 500 }}
-        pagination={false}
-      />
+        error={error}
+        onRetry={() => void reload()}
+        skeleton="table"
+      >
+        <Table
+          columns={columns}
+          dataSource={data ?? []}
+          rowKey="projectId"
+          scroll={{ x: 900, y: 500 }}
+          pagination={false}
+          locale={{ emptyText: '暂无未开票收入' }}
+        />
+      </DataState>
     </div>
   );
 };

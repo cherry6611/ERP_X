@@ -216,14 +216,14 @@ const PurOrderPanel: React.FC = () => {
         `${record.acceptedQuantity} / ${record.quantity}`,
     },
     {
-      title: '单价',
+      title: '单价（含税）',
       dataIndex: 'unitPrice',
       width: 100,
       align: 'right',
       render: (v: number) => formatMoney(v),
     },
     {
-      title: '订单金额',
+      title: '订单金额（含税）',
       dataIndex: 'amount',
       width: 120,
       align: 'right',
@@ -495,7 +495,8 @@ const PurOrderPanel: React.FC = () => {
                   render={({ field }) => (
                     <FormItem className="flex-1">
                       <FormLabel>
-                        单价 <span aria-hidden="true" className="text-destructive">*</span>
+                        单价（含税）{' '}
+                        <span aria-hidden="true" className="text-destructive">*</span>
                       </FormLabel>
                       <FormControl>
                         <Input

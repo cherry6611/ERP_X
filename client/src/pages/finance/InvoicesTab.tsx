@@ -6,6 +6,7 @@ import { toast } from 'sonner';
 import { Download, FileInput, FilePlus, Plus } from 'lucide-react';
 import { Table, TableColumnsType } from 'antd';
 import { CanRole } from '@client/src/platform/auth';
+import { DataState } from '@client/src/components/DataState';
 import FilterBar from '@client/src/components/erp/FilterBar';
 import StatCard from '@client/src/components/erp/StatCard';
 import { Badge } from '@client/src/components/ui/badge';
@@ -47,6 +48,14 @@ import { contractsApi, financeApi, masterDataApi } from '@client/src/api';
 import { useAsyncData } from '@client/src/hooks/useAsyncData';
 import { formatMoney, formatPercent } from '@client/src/utils/format';
 import { STATUS_VARIANTS } from '@client/src/utils/biz-labels';
+import { getApiErrorMessage } from '@client/src/utils/api-error-message';
+import {
+  coerceTaxRate,
+  resolveRateOptions,
+  resolveTaxEntity,
+} from '@client/src/utils/tax-rate-options';
+import { formatTaxSplitLine } from '@client/src/utils/tax-display';
+import { VAT_RATES } from '@shared/tax';
 import type {
   ArItem,
   Contract,
@@ -55,6 +64,7 @@ import type {
   InvoiceItem,
   InvoiceType,
   Supplier,
+  TaxEntity,
 } from '@shared/api.interface';
 
 const INVOICE_TYPE_LABELS: Record<string, string> = {
@@ -94,6 +104,9 @@ const invoiceSchema = z
     supplierId: z.string(),
     invoiceType: z.string().min(1, '请选择发票类型'),
     amount: z.coerce.number().min(0.01, '开票金额必须大于 0'),
+    taxRate: z.coerce
+      .number()
+      .refine((value) => (VAT_RATES as readonly number[]).includes(value), '请选择合法税率'),
     arId: z.string(),
     invoiceNo: z.string(),
     invoiceDate: z.string(),
@@ -117,6 +130,7 @@ const FORM_DEFAULTS: InvoiceFormInput = {
   supplierId: '',
   invoiceType: 'vat_special',
   amount: 0,
+  taxRate: 6,
   arId: 'none',
   invoiceNo: '',
   invoiceDate: '',
@@ -146,6 +160,10 @@ const InvoicesTab: React.FC = () => {
     () => masterDataApi.listSuppliers(),
     [],
   );
+  const { data: taxEntities } = useAsyncData<TaxEntity[]>(
+    () => masterDataApi.listTaxEntities(),
+    [],
+  );
   const { data: ars } = useAsyncData<ArItem[]>(() => financeApi.listArs(), []);
 
   const form = useForm<InvoiceFormInput, unknown, InvoiceFormData>({
@@ -153,6 +171,10 @@ const InvoicesTab: React.FC = () => {
     defaultValues: FORM_DEFAULTS,
   });
   const formDirection: InvoiceDirection = form.watch('direction');
+  const watchedContractId = form.watch('contractId');
+  const watchedSupplierId = form.watch('supplierId');
+  const watchedAmount = form.watch('amount');
+  const watchedTaxRate = form.watch('taxRate');
 
   const invoices: InvoiceItem[] = data ?? [];
   const salesTaxTotal: number = invoices
@@ -170,6 +192,7 @@ const InvoicesTab: React.FC = () => {
       direction: values.direction,
       invoiceType: values.invoiceType as InvoiceType,
       amount: values.amount,
+      taxRate: values.taxRate,
       remark: values.remark || undefined,
     };
     if (values.direction === 'sales') {
@@ -188,7 +211,7 @@ const InvoicesTab: React.FC = () => {
       form.reset(FORM_DEFAULTS);
       await reload();
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : '发票登记失败');
+      toast.error(getApiErrorMessage(err, '发票登记失败'));
     }
   });
 
@@ -220,7 +243,7 @@ const InvoicesTab: React.FC = () => {
       '发票类型',
       '发票号码',
       '关联应收',
-      '开票金额',
+      '开票金额（含税）',
       '税率',
       '税额',
       '开票日期',
@@ -268,7 +291,11 @@ const InvoicesTab: React.FC = () => {
           label: '发票类型',
           value: INVOICE_TYPE_LABELS[detailTarget.invoiceType] ?? detailTarget.invoiceType,
         },
-        { label: '开票金额（不含税）', value: formatMoney(detailTarget.amount) },
+        { label: '开票金额（含税）', value: formatMoney(detailTarget.amount) },
+        {
+          label: '价税拆分',
+          value: formatTaxSplitLine(detailTarget.amount, detailTarget.taxRate),
+        },
         { label: '税率', value: formatPercent(detailTarget.taxRate) },
         { label: '税额', value: formatMoney(detailTarget.taxAmount) },
         { label: '客户', value: detailTarget.customerName ?? '-' },
@@ -298,7 +325,7 @@ const InvoicesTab: React.FC = () => {
       setLinkArId('');
       await reload();
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : '关联应收失败');
+      toast.error(getApiErrorMessage(err, '关联应收失败'));
     } finally {
       setLinking(false);
     }
@@ -350,11 +377,18 @@ const InvoicesTab: React.FC = () => {
       render: (v: string | null) => v ?? '-',
     },
     {
-      title: '开票金额',
+      title: '开票金额（含税）',
       dataIndex: 'amount',
-      width: 130,
+      width: 180,
       align: 'right',
-      render: (v: number) => formatMoney(v),
+      render: (v: number, record) => (
+        <div className="text-right">
+          <div>{formatMoney(v)}</div>
+          <div className="text-xs text-muted-foreground">
+            {formatTaxSplitLine(v, record.taxRate)}
+          </div>
+        </div>
+      ),
     },
     {
       title: '税额',
@@ -455,26 +489,24 @@ const InvoicesTab: React.FC = () => {
           </CanRole>
         </div>
       </div>
-      {error ? (
-        <p className="text-sm text-destructive">
-          {error}
-          <Button variant="ghost" size="sm" className="ml-2" onClick={() => void reload()}>
-            重试
-          </Button>
-        </p>
-      ) : null}
-      <Table
-        columns={columns}
-        dataSource={invoices}
+      <DataState
         loading={loading}
-        rowKey="id"
-        scroll={{ x: 1500, y: 500 }}
-        pagination={{
-          pageSize: 10,
-          showTotal: (t: number) => `共 ${t} 条`,
-        }}
-        locale={{ emptyText: '暂无发票，点击右上角「发票登记」创建' }}
-      />
+        error={error}
+        onRetry={() => void reload()}
+        skeleton="table"
+      >
+        <Table
+          columns={columns}
+          dataSource={invoices}
+          rowKey="id"
+          scroll={{ x: 1500, y: 500 }}
+          pagination={{
+            pageSize: 10,
+            showTotal: (t: number) => `共 ${t} 条`,
+          }}
+          locale={{ emptyText: '暂无发票，点击右上角「发票登记」创建' }}
+        />
+      </DataState>
 
       <Dialog open={createOpen} onOpenChange={setCreateOpen}>
         <DialogContent className="max-w-md">
@@ -518,7 +550,22 @@ const InvoicesTab: React.FC = () => {
                       <FormLabel>
                         合同 <span aria-hidden="true" className="text-destructive">*</span>
                       </FormLabel>
-                      <Select onValueChange={field.onChange} value={field.value}>
+                      <Select
+                        value={field.value}
+                        onValueChange={(value) => {
+                          field.onChange(value);
+                          const contract = (contracts ?? []).find((c) => c.id === value);
+                          const entity = resolveTaxEntity({
+                            taxEntityId: contract?.taxEntityId,
+                            taxEntities: taxEntities ?? [],
+                          });
+                          const nextRate = coerceTaxRate(
+                            Number(contract?.taxRate ?? form.getValues('taxRate') ?? 6),
+                            entity
+                          );
+                          form.setValue('taxRate', nextRate);
+                        }}
+                      >
                         <FormControl>
                           <SelectTrigger>
                             <SelectValue placeholder="请选择合同" />
@@ -545,7 +592,22 @@ const InvoicesTab: React.FC = () => {
                       <FormLabel>
                         供应商 <span aria-hidden="true" className="text-destructive">*</span>
                       </FormLabel>
-                      <Select onValueChange={field.onChange} value={field.value}>
+                      <Select
+                        value={field.value}
+                        onValueChange={(value) => {
+                          field.onChange(value);
+                          const supplier = (suppliers ?? []).find((s) => s.id === value);
+                          const entity = resolveTaxEntity({
+                            taxEntityId: supplier?.taxEntityId,
+                            taxEntities: taxEntities ?? [],
+                            supplierTaxEntityId: supplier?.taxEntityId,
+                          });
+                          form.setValue(
+                            'taxRate',
+                            coerceTaxRate(Number(form.getValues('taxRate') ?? 6), entity)
+                          );
+                        }}
+                      >
                         <FormControl>
                           <SelectTrigger>
                             <SelectValue placeholder="请选择供应商" />
@@ -624,7 +686,7 @@ const InvoicesTab: React.FC = () => {
                   render={({ field }) => (
                     <FormItem className="flex-1">
                       <FormLabel>
-                        开票金额（元，不含税）{' '}
+                        金额（含税）{' '}
                         <span aria-hidden="true" className="text-destructive">*</span>
                       </FormLabel>
                       <FormControl>
@@ -643,6 +705,57 @@ const InvoicesTab: React.FC = () => {
                   )}
                 />
               </div>
+              <FormField
+                control={form.control}
+                name="taxRate"
+                render={({ field }) => {
+                  const selectedContract = (contracts ?? []).find(
+                    (c) => c.id === watchedContractId
+                  );
+                  const selectedSupplier = (suppliers ?? []).find(
+                    (s) => s.id === watchedSupplierId
+                  );
+                  const entity = resolveTaxEntity({
+                    taxEntityId:
+                      formDirection === 'sales'
+                        ? selectedContract?.taxEntityId
+                        : selectedSupplier?.taxEntityId,
+                    taxEntities: taxEntities ?? [],
+                    customerTaxEntityId: null,
+                    supplierTaxEntityId: selectedSupplier?.taxEntityId,
+                  });
+                  const rates = resolveRateOptions(entity);
+                  return (
+                    <FormItem>
+                      <FormLabel>税率（%）</FormLabel>
+                      <Select
+                        value={String(field.value)}
+                        onValueChange={(value) => field.onChange(Number(value))}
+                      >
+                        <FormControl>
+                          <SelectTrigger>
+                            <SelectValue placeholder="税率" />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          {rates.map((rate) => (
+                            <SelectItem key={rate} value={String(rate)}>
+                              {rate}%
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <p className="text-xs text-muted-foreground">
+                        {formatTaxSplitLine(
+                          Number(watchedAmount ?? 0),
+                          Number(watchedTaxRate ?? field.value ?? 0)
+                        )}
+                      </p>
+                      <FormMessage />
+                    </FormItem>
+                  );
+                }}
+              />
               <div className="flex gap-4">
                 <FormField
                   control={form.control}

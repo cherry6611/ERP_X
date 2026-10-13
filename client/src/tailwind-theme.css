@@ -20,25 +20,27 @@
   --secondary: hsl(220 14% 96%);
   --secondary-foreground: hsl(220 14% 14%);
   --muted: hsl(220 14% 96%);
-  --muted-foreground: hsl(218 7% 59%);
+  /* U-47：略加深，卡片/小字场景仍达 WCAG AA 4.5:1 */
+  --muted-foreground: hsl(218 12% 40%);
   --accent: hsl(220 14% 96%);
   --accent-foreground: hsl(220 14% 14%);
   --info: hsl(221 83% 53%);
   --info-foreground: hsl(230 100% 98%);
-  --destructive: hsl(2 84% 62%);
+  --destructive: hsl(0 72% 51%);
   --destructive-foreground: hsl(0 0% 100%);
-  --success: hsl(130 54% 42%);
-  --success-foreground: hsl(115 77% 97%);
-  --warning: hsl(26 90% 49%);
-  --warning-foreground: hsl(33 100% 96%);
+  --success: hsl(142 70% 38%);
+  --success-foreground: hsl(0 0% 100%);
+  --warning: hsl(38 92% 50%);
+  --warning-foreground: hsl(220 14% 14%);
   --border: hsl(220 14% 89%);
   --input: hsl(220 14% 89%);
   --ring: hsl(221 83% 53%);
+  /* 图表语义：1收入蓝 / 2成本红 / 3预算绿 / 4预警橙 / 5其他紫 */
   --chart-1: hsl(222 82% 56%);
-  --chart-2: hsl(174 77% 46%);
-  --chart-3: hsl(46 100% 52%);
-  --chart-4: hsl(27 92% 49%);
-  --chart-5: hsl(292 54% 76%);
+  --chart-2: hsl(0 72% 51%);
+  --chart-3: hsl(142 70% 38%);
+  --chart-4: hsl(38 92% 50%);
+  --chart-5: hsl(262 60% 60%);
   --sidebar: hsl(220 14% 96%);
   --sidebar-foreground: hsl(220 14% 14%);
   --sidebar-primary: hsl(221 83% 53%);
@@ -48,41 +50,47 @@
   --sidebar-border: hsl(220 14% 89%);
   --sidebar-ring: hsl(221 83% 53%);
 
+  /* 间距节奏（4px 基准） */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+
   /* Computed borders using hsl relative color syntax */
   --primary-border: hsl(from hsl(221 83% 53%) h s calc(l + var(--opaque-button-border-intensity)));
   --secondary-border: hsl(from hsl(220 14% 96%) h s calc(l + var(--opaque-button-border-intensity)));
-  --destructive-border: hsl(from hsl(2 84% 62%) h s calc(l + var(--opaque-button-border-intensity)));
+  --destructive-border: hsl(from hsl(0 72% 51%) h s calc(l + var(--opaque-button-border-intensity)));
   --accent-border: hsl(from hsl(220 14% 96%) h s calc(l + var(--opaque-button-border-intensity)));
   --muted-border: hsl(from hsl(220 14% 96%) h s calc(l + var(--opaque-button-border-intensity)));
   --font-sans:
-    'LarkHackSafariFont', 'LarkEmojiFont', 'LarkChineseQuote', '-apple-system',
-    'BlinkMacSystemFont', 'Helvetica Neue', 'Tahoma', 'PingFang SC',
-    'Microsoft Yahei', 'Arial', 'Hiragino Sans GB', 'sans-serif',
-    'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol', 'Noto Color Emoji';
+    'PingFang SC', 'Microsoft YaHei', system-ui, -apple-system, 'Segoe UI',
+    sans-serif;
   --font-serif:
     'Geist', 'Geist Fallback', ui-serif, Georgia, Cambria, 'Times New Roman',
     Times, serif;
   --font-mono: Source Code Pro, monospace;
+  /* radius-md = 8px；sm=6 lg=12 见 @theme */
   --radius: 0.5rem;
   --shadow-x: 0px;
-  --shadow-y: 2px;
-  --shadow-blur: 12px;
+  --shadow-y: 1px;
+  --shadow-blur: 2px;
   --shadow-spread: 0px;
-  --shadow-opacity: 0.02;
+  --shadow-opacity: 0.04;
   --shadow-color: #000000;
-  --shadow-2xs: 0px 2px 12px 0px hsl(0 0% 0% / 0.01);
-  --shadow-xs: 0px 2px 12px 0px hsl(0 0% 0% / 0.01);
-  --shadow-sm:
-    0px 2px 12px 0px hsl(0 0% 0% / 0.02), 0px 1px 2px -1px hsl(0 0% 0% / 0.02);
-  --shadow:
-    0px 2px 12px 0px hsl(0 0% 0% / 0.02), 0px 1px 2px -1px hsl(0 0% 0% / 0.02);
+  --shadow-2xs: 0 1px 2px 0 rgba(0, 0, 0, 0.04);
+  --shadow-xs: 0 1px 2px 0 rgba(0, 0, 0, 0.04);
+  --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.04);
+  --shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.04);
   --shadow-md:
-    0px 2px 12px 0px hsl(0 0% 0% / 0.02), 0px 2px 4px -1px hsl(0 0% 0% / 0.02);
+    0 1px 2px 0 rgba(0, 0, 0, 0.04), 0 2px 4px -1px rgba(0, 0, 0, 0.04);
   --shadow-lg:
-    0px 2px 12px 0px hsl(0 0% 0% / 0.02), 0px 4px 6px -1px hsl(0 0% 0% / 0.02);
+    0 4px 6px -1px rgba(0, 0, 0, 0.08), 0 2px 4px -2px rgba(0, 0, 0, 0.04);
   --shadow-xl:
-    0px 2px 12px 0px hsl(0 0% 0% / 0.02), 0px 8px 10px -1px hsl(0 0% 0% / 0.02);
-  --shadow-2xl: 0px 2px 12px 0px hsl(0 0% 0% / 0.05);
+    0 8px 10px -2px rgba(0, 0, 0, 0.08), 0 4px 6px -2px rgba(0, 0, 0, 0.04);
+  --shadow-2xl: 0 12px 24px -4px rgba(0, 0, 0, 0.12);
   --tracking-normal: 0em;
   --spacing: 0.25rem;
 }
@@ -131,9 +139,9 @@
   --font-mono: var(--font-mono);
   --font-serif: var(--font-serif);
 
-  --radius-sm: calc(var(--radius) - 4px);
-  --radius-md: calc(var(--radius) - 2px);
-  --radius-lg: var(--radius);
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
   --radius-xl: calc(var(--radius) + 4px);
 
   --shadow-2xs: var(--shadow-2xs);

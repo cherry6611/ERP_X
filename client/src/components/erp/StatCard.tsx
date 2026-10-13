@@ -31,10 +31,10 @@ const StatCard: React.FC<StatCardProps> = ({
 }) => (
   <div
     data-ai-section-type="card-stat"
-    className="rounded-lg border bg-card p-4 flex flex-col gap-2 hover-elevate transition-all hover:-translate-y-0.5 hover:border-primary/25 hover:shadow-md"
+    className="flex flex-col gap-2 rounded-lg border bg-card p-4 transition-all hover:-translate-y-px hover:border-primary/25 hover:shadow-md motion-reduce:transform-none motion-reduce:transition-none"
   >
     <div className="flex items-start justify-between gap-2">
-      <p className="text-sm text-muted-foreground">{label}</p>
+      <p className="text-xs text-muted-foreground">{label}</p>
       {Icon ? (
         <span
           className={cn(

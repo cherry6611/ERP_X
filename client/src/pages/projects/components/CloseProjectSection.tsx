@@ -5,6 +5,7 @@ import { z } from 'zod';
 import { toast } from 'sonner';
 import { CheckCircle2 } from 'lucide-react';
 import { CanRole } from '@client/src/platform/auth';
+import { DataState } from '@client/src/components/DataState';
 import { Button } from '@client/src/components/ui/button';
 import {
   Dialog,
@@ -30,6 +31,7 @@ import {
 } from '@client/src/components/ui/select';
 import { Textarea } from '@client/src/components/ui/textarea';
 import { projectsApi } from '@client/src/api';
+import { getApiErrorMessage } from '@client/src/utils/api-error-message';
 import type { ProjectDetail } from '@shared/api.interface';
 
 const closeProjectFormSchema = z.object({
@@ -62,7 +64,7 @@ const CloseProjectSection: React.FC<CloseProjectSectionProps> = ({ projectId, on
     try {
       setDetail(await projectsApi.getProject(projectId));
     } catch (err) {
-      setError(err instanceof Error ? err.message : '加载结项信息失败');
+      setError(getApiErrorMessage(err, '加载结项信息失败'));
     } finally {
       setLoading(false);
     }
@@ -89,15 +91,12 @@ const CloseProjectSection: React.FC<CloseProjectSectionProps> = ({ projectId, on
       await load();
       onChanged?.();
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : '结项失败');
+      toast.error(getApiErrorMessage(err, '结项失败'));
     }
   });
 
-  if (loading && !detail) {
-    return <p className="text-sm text-muted-foreground">加载中...</p>;
-  }
-  if (error && !detail) {
-    return <p className="text-sm text-destructive">{error}</p>;
+  if ((loading || error) && !detail) {
+    return <DataState loading={loading} error={error} />;
   }
   if (!detail) return null;
 

@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import PageShell from '@client/src/components/PageShell';
 import AssetPanel from './components/AssetPanel';
 import AssetDepreciationPanel from './components/AssetDepreciationPanel';
 import AssetChangePanel from './components/AssetChangePanel';
@@ -19,14 +20,11 @@ const AssetPage: React.FC = () => {
   const [tab, setTab] = useState<string>('assets');
 
   return (
-    <div className="p-6 flex flex-col gap-6" data-ai-section-type="card-list">
-      <div>
-        <h1 className="text-2xl font-semibold">固定资产</h1>
-        <p className="text-sm text-muted-foreground mt-1">
-          资产台账、月度折旧计提与领用/调拨/报废变更审批
-        </p>
-      </div>
-      <div className="flex gap-2 flex-wrap">
+    <PageShell
+      title="固定资产"
+      description="资产台账、月度折旧计提与领用/调拨/报废变更审批"
+    >
+      <div className="flex gap-2 flex-wrap" data-ai-section-type="card-list">
         {ASSET_TABS.map((item) => (
           <button
             key={item.key}
@@ -43,7 +41,7 @@ const AssetPage: React.FC = () => {
         ))}
       </div>
       <div>{ASSET_TAB_CONTENT[tab]}</div>
-    </div>
+    </PageShell>
   );
 };
 

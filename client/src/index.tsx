@@ -7,9 +7,13 @@ import { AppContainer } from '@client/src/platform/AppContainer';
 import { ErrorRender } from '@client/src/platform/AppContainer';
 
 import RoutesComponent from './app.tsx';
-import './index.css';
+import * as echarts from 'echarts';
+import { udTheme } from '@client/src/theme/echarts-ud-theme';
 import { createPortal } from 'react-dom';
 import { Toaster } from '@client/src/components/ui/sonner';
+import './index.css';
+
+echarts.registerTheme('ud', udTheme());
 
 const CLIENT_BASE_PATH = process.env.CLIENT_BASE_PATH || '/';
 

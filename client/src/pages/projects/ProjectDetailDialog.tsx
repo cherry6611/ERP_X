@@ -4,6 +4,7 @@ import { useForm } from 'react-hook-form';
 import { z } from 'zod';
 import { toast } from 'sonner';
 import { CanRole } from '@client/src/platform/auth';
+import { DataState } from '@client/src/components/DataState';
 import StatusBadge from '@client/src/components/erp/StatusBadge';
 import { Button } from '@client/src/components/ui/button';
 import {
@@ -30,6 +31,7 @@ import MilestoneSection from '@client/src/pages/projects/components/MilestoneSec
 import DeliverableSection from '@client/src/pages/projects/components/DeliverableSection';
 import ChangeSection from '@client/src/pages/projects/components/ChangeSection';
 import CloseProjectSection from '@client/src/pages/projects/components/CloseProjectSection';
+import { getApiErrorMessage } from '@client/src/utils/api-error-message';
 import type { ProjectDetail, ProjectStatusAction } from '@shared/api.interface';
 
 // close 动作入口由 CloseProjectSection 提供，这里只保留其余状态动作
@@ -79,7 +81,7 @@ const ProjectDetailDialog: React.FC<ProjectDetailDialogProps> = ({
     try {
       setDetail(await projectsApi.getProject(projectId));
     } catch (err) {
-      setError(err instanceof Error ? err.message : '加载项目详情失败');
+      setError(getApiErrorMessage(err, '加载项目详情失败'));
     } finally {
       setLoading(false);
     }
@@ -97,7 +99,7 @@ const ProjectDetailDialog: React.FC<ProjectDetailDialogProps> = ({
       toast.success('状态已更新');
       await load();
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : '操作失败');
+      toast.error(getApiErrorMessage(err, '操作失败'));
     }
   };
 
@@ -123,7 +125,7 @@ const ProjectDetailDialog: React.FC<ProjectDetailDialogProps> = ({
       setProgressOpen(false);
       await load();
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : '更新失败');
+      toast.error(getApiErrorMessage(err, '更新失败'));
     }
   });
 
@@ -143,8 +145,7 @@ const ProjectDetailDialog: React.FC<ProjectDetailDialogProps> = ({
             ) : null}
           </DialogTitle>
         </DialogHeader>
-        {loading ? <p className="text-sm text-muted-foreground">加载中...</p> : null}
-        {error ? <p className="text-sm text-destructive">{error}</p> : null}
+        <DataState loading={loading} error={error}>
         {detail && accounting ? (
           <div className="flex flex-col gap-6">
             <div className="grid grid-cols-4 gap-3 text-sm">
@@ -243,6 +244,7 @@ const ProjectDetailDialog: React.FC<ProjectDetailDialogProps> = ({
             ) : null}
           </div>
         ) : null}
+        </DataState>
 
         <Dialog open={progressOpen} onOpenChange={setProgressOpen}>
           <DialogContent className="max-w-sm">

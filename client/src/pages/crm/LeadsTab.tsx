@@ -3,9 +3,10 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { useForm } from 'react-hook-form';
 import { z } from 'zod';
 import { toast } from 'sonner';
-import { Download, Inbox, Plus } from 'lucide-react';
+import { Download, Plus } from 'lucide-react';
 import { Table, TableColumnsType } from 'antd';
 import { CanRole } from '@client/src/platform/auth';
+import { DataState } from '@client/src/components/DataState';
 import FilterBar from '@client/src/components/erp/FilterBar';
 import StatusBadge from '@client/src/components/erp/StatusBadge';
 import DateField from '@client/src/components/erp/DateField';
@@ -37,13 +38,6 @@ import {
   SelectValue,
 } from '@client/src/components/ui/select';
 import { Textarea } from '@client/src/components/ui/textarea';
-import {
-  Empty,
-  EmptyDescription,
-  EmptyHeader,
-  EmptyMedia,
-  EmptyTitle,
-} from '@client/src/components/ui/empty';
 import { crmApi } from '@client/src/api';
 import { useAsyncData } from '@client/src/hooks/useAsyncData';
 import { LEAD_STATUS_LABELS } from '@client/src/utils/biz-labels';
@@ -51,6 +45,7 @@ import {
   exportRowsToXlsx,
   type ExcelSheetColumn,
 } from '@client/src/components/excel/excel-utils';
+import { getApiErrorMessage } from '@client/src/utils/api-error-message';
 import type {
   CreateLeadDto,
   Lead,
@@ -150,12 +145,12 @@ const LeadsTab: React.FC = () => {
     const dto: CreateLeadDto = { ...values };
     try {
       const created = await crmApi.createLead(dto);
-      toast.success('线索已登记');
+      toast.success('线索已创建');
       setCreateOpen(false);
       await reload();
       setDetailTarget(created);
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : '登记失败');
+      toast.error(getApiErrorMessage(err, '登记失败'));
     }
   });
 
@@ -173,7 +168,7 @@ const LeadsTab: React.FC = () => {
       setFollowTarget(null);
       await reload();
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : '更新失败');
+      toast.error(getApiErrorMessage(err, '更新失败'));
     }
   });
 
@@ -210,7 +205,7 @@ const LeadsTab: React.FC = () => {
       title: '操作',
       key: 'action',
       fixed: 'right',
-      width: 140,
+      width: 200,
       render: (_, record) => (
         <div className="flex items-center gap-1">
           <Button variant="ghost" size="sm" onClick={() => setDetailTarget(record)}>
@@ -220,6 +215,25 @@ const LeadsTab: React.FC = () => {
             <Button variant="ghost" size="sm" onClick={() => openFollow(record)}>
               跟进
             </Button>
+            {record.status !== 'converted' && record.status !== 'lost' ? (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => {
+                  void crmApi
+                    .convertLead(record.id)
+                    .then(() => {
+                      toast.success('已转为商机');
+                      return reload();
+                    })
+                    .catch((err: unknown) =>
+                      toast.error(getApiErrorMessage(err, '转商机失败'))
+                    );
+                }}
+              >
+                转商机
+              </Button>
+            ) : null}
           </CanRole>
         </div>
       ),
@@ -245,54 +259,41 @@ const LeadsTab: React.FC = () => {
             </SelectContent>
           </Select>
         </div>
-        <CanRole roles={['admin']}>
-          <Button onClick={openCreate}>
-            <Plus className="h-4 w-4" />
-            登记线索
-          </Button>
-        </CanRole>
+        <Button onClick={openCreate}>
+          <Plus className="h-4 w-4" />
+          新建线索
+        </Button>
         <Button variant="outline" onClick={handleExport}>
           <Download className="h-4 w-4" />
           导出 Excel
         </Button>
       </FilterBar>
-      {error ? (
-        <p className="text-sm text-destructive">
-          {error}
-          <Button variant="ghost" size="sm" className="ml-2" onClick={() => void reload()}>
-            重试
-          </Button>
-        </p>
-      ) : null}
-      <Table
-        columns={columns}
-        dataSource={data ?? []}
+      <DataState
         loading={loading}
-        rowKey="id"
-        scroll={{ x: 1200, y: 500 }}
-        pagination={{
-          pageSize: 10,
-          showTotal: (t: number) => `共 ${t} 条`,
-        }}
-        locale={{
-          emptyText: (
-            <Empty className="py-8">
-              <EmptyHeader>
-                <EmptyMedia variant="icon">
-                  <Inbox />
-                </EmptyMedia>
-                <EmptyTitle>暂无线索</EmptyTitle>
-                <EmptyDescription>点击右上角「登记线索」创建</EmptyDescription>
-              </EmptyHeader>
-            </Empty>
-          ),
-        }}
-      />
+        error={error}
+        empty={!loading && !error && (data?.length ?? 0) === 0}
+        emptyTitle="暂无线索"
+        emptyText="点击上方「新建线索」按钮创建"
+        onRetry={() => void reload()}
+        skeleton="table"
+      >
+        <Table
+          columns={columns}
+          dataSource={data ?? []}
+          rowKey="id"
+          scroll={{ x: 1200, y: 500 }}
+          pagination={{
+            pageSize: 10,
+            showTotal: (t: number) => `共 ${t} 条`,
+          }}
+          locale={{ emptyText: ' ' }}
+        />
+      </DataState>
 
       <Dialog open={createOpen} onOpenChange={setCreateOpen}>
         <DialogContent className="max-w-lg">
           <DialogHeader>
-            <DialogTitle>登记线索</DialogTitle>
+            <DialogTitle>新建线索</DialogTitle>
           </DialogHeader>
           <Form {...createForm}>
             <form onSubmit={onCreate} className="space-y-4">

@@ -50,6 +50,14 @@ export async function createReceipt(dto: CreateReceiptDto): Promise<ReceiptItem>
   return resp.data;
 }
 
+export async function voidReceipt(id: string): Promise<ReceiptItem> {
+  const resp = await axiosForBackend.post<ReceiptItem>(
+    `/api/finance/receipts/${id}/void`
+  );
+  ensureNotForbidden(resp);
+  return resp.data;
+}
+
 export async function arWriteoff(dto: ArWriteoffDto): Promise<ArItem> {
   const resp = await axiosForBackend.post<ArItem>('/api/finance/ar-writeoffs', dto);
   ensureNotForbidden(resp);
@@ -91,6 +99,14 @@ export async function approvePayment(id: string, action: PaymentAction): Promise
   const resp = await axiosForBackend.post<PaymentItem>(`/api/finance/payments/${id}/approve`, {
     action,
   });
+  ensureNotForbidden(resp);
+  return resp.data;
+}
+
+export async function voidPayment(id: string): Promise<PaymentItem> {
+  const resp = await axiosForBackend.post<PaymentItem>(
+    `/api/finance/payments/${id}/void`
+  );
   ensureNotForbidden(resp);
   return resp.data;
 }

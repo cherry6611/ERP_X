@@ -6,6 +6,7 @@ import { toast } from 'sonner';
 import { Plus } from 'lucide-react';
 import { Table, TableColumnsType } from 'antd';
 import { CanRole } from '@client/src/platform/auth';
+import { DataState } from '@client/src/components/DataState';
 import StatusBadge from '@client/src/components/erp/StatusBadge';
 import { Badge } from '@client/src/components/ui/badge';
 import { Button } from '@client/src/components/ui/button';
@@ -25,17 +26,33 @@ import {
   FormMessage,
 } from '@client/src/components/ui/form';
 import { Input } from '@client/src/components/ui/input';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@client/src/components/ui/select';
 import { Textarea } from '@client/src/components/ui/textarea';
 import { AttachmentField } from '@client/src/components/attachments/AttachmentField';
-import { contractsApi } from '@client/src/api';
+import { contractsApi, crmApi, masterDataApi } from '@client/src/api';
+import type { ContractItem } from '@client/src/api/contracts';
 import { formatMoney } from '@client/src/utils/format';
+import { getApiErrorMessage } from '@client/src/utils/api-error-message';
 import { BILLING_MODEL_LABELS, CONTRACT_STATUS_LABELS } from '@client/src/utils/biz-labels';
+import { formatTaxSplitLine } from '@client/src/utils/tax-display';
+import {
+  coerceTaxRate,
+  resolveRateOptions,
+} from '@client/src/utils/tax-rate-options';
 import type {
   Calloff,
   ContractDetail,
   ContractMilestone,
   ContractStatusAction,
   ContractVersion,
+  Quotation,
+  TaxEntity,
 } from '@shared/api.interface';
 
 const STATUS_ACTIONS: Partial<Record<string, { action: ContractStatusAction; label: string }[]>> = {
@@ -44,8 +61,14 @@ const STATUS_ACTIONS: Partial<Record<string, { action: ContractStatusAction; lab
     { action: 'approve', label: '审批通过' },
     { action: 'reject', label: '驳回' },
   ],
-  active: [{ action: 'start', label: '开始履约' }],
-  performing: [{ action: 'complete', label: '履约完成' }],
+  active: [
+    { action: 'start', label: '开始履约' },
+    { action: 'terminate', label: '终止合同' },
+  ],
+  performing: [
+    { action: 'complete', label: '履约完成' },
+    { action: 'terminate', label: '终止合同' },
+  ],
   completed: [{ action: 'close', label: '关闭合同' }],
 };
 
@@ -87,11 +110,24 @@ const ContractDetailDialog: React.FC<ContractDetailDialogProps> = ({
   onOpenChange,
 }) => {
   const [detail, setDetail] = useState<ContractDetail | null>(null);
+  const [items, setItems] = useState<ContractItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [milestoneOpen, setMilestoneOpen] = useState(false);
   const [calloffOpen, setCalloffOpen] = useState(false);
   const [changeOpen, setChangeOpen] = useState(false);
+  const [itemOpen, setItemOpen] = useState(false);
+  const [itemDraft, setItemDraft] = useState({
+    itemName: '',
+    quantity: 1,
+    unitPrice: 0,
+    taxRate: 6,
+  });
+  const [taxEntities, setTaxEntities] = useState<TaxEntity[]>([]);
+  const [quotationImportOpen, setQuotationImportOpen] = useState(false);
+  const [quotations, setQuotations] = useState<Quotation[]>([]);
+  const [selectedQuotationId, setSelectedQuotationId] = useState('');
+  const [importingQuotation, setImportingQuotation] = useState(false);
 
   const milestoneForm = useForm<MilestoneFormInput, unknown, MilestoneFormData>({
     resolver: zodResolver(milestoneSchema),
@@ -111,9 +147,14 @@ const ContractDetailDialog: React.FC<ContractDetailDialogProps> = ({
     setLoading(true);
     setError(null);
     try {
-      setDetail(await contractsApi.getContract(contractId));
+      const [nextDetail, nextItems] = await Promise.all([
+        contractsApi.getContract(contractId),
+        contractsApi.listContractItems(contractId),
+      ]);
+      setDetail(nextDetail);
+      setItems(nextItems);
     } catch (err) {
-      setError(err instanceof Error ? err.message : '加载合同详情失败');
+      setError(getApiErrorMessage(err, '加载合同详情失败'));
     } finally {
       setLoading(false);
     }
@@ -124,6 +165,11 @@ const ContractDetailDialog: React.FC<ContractDetailDialogProps> = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, contractId]);
 
+  useEffect(() => {
+    if (!open) return;
+    void masterDataApi.listTaxEntities().then(setTaxEntities).catch(() => setTaxEntities([]));
+  }, [open]);
+
   const doAction = async (action: ContractStatusAction) => {
     if (!contractId) return;
     try {
@@ -131,7 +177,7 @@ const ContractDetailDialog: React.FC<ContractDetailDialogProps> = ({
       toast.success('状态已更新');
       await load();
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : '操作失败');
+      toast.error(getApiErrorMessage(err, '操作失败'));
     }
   };
 
@@ -149,7 +195,7 @@ const ContractDetailDialog: React.FC<ContractDetailDialogProps> = ({
       milestoneForm.reset({ name: '', amount: 0, dueCondition: '' });
       await load();
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : '添加失败');
+      toast.error(getApiErrorMessage(err, '添加失败'));
     }
   });
 
@@ -159,7 +205,7 @@ const ContractDetailDialog: React.FC<ContractDetailDialogProps> = ({
       toast.success('里程碑已达成');
       await load();
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : '操作失败');
+      toast.error(getApiErrorMessage(err, '操作失败'));
     }
   };
 
@@ -175,7 +221,7 @@ const ContractDetailDialog: React.FC<ContractDetailDialogProps> = ({
       calloffForm.reset({ amount: 0, remark: '' });
       await load();
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : '下单失败');
+      toast.error(getApiErrorMessage(err, '下单失败'));
     }
   });
 
@@ -191,7 +237,7 @@ const ContractDetailDialog: React.FC<ContractDetailDialogProps> = ({
       changeForm.reset({ changeLog: '', newAmount: 0 });
       await load();
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : '变更失败');
+      toast.error(getApiErrorMessage(err, '变更失败'));
     }
   });
 
@@ -281,8 +327,7 @@ const ContractDetailDialog: React.FC<ContractDetailDialogProps> = ({
             ) : null}
           </DialogTitle>
         </DialogHeader>
-        {loading ? <p className="text-sm text-muted-foreground">加载中...</p> : null}
-        {error ? <p className="text-sm text-destructive">{error}</p> : null}
+        <DataState loading={loading} error={error}>
         {detail ? (
           <div className="flex flex-col gap-6">
             <div className="grid grid-cols-3 gap-3 text-sm">
@@ -299,12 +344,23 @@ const ContractDetailDialog: React.FC<ContractDetailDialogProps> = ({
                 </p>
               </div>
               <div>
-                <p className="text-muted-foreground">合同金额</p>
+                <p className="text-muted-foreground">合同金额（含税）</p>
                 <p>{formatMoney(detail.amount)}</p>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  {formatTaxSplitLine(detail.amount, detail.taxRate)}
+                </p>
               </div>
               <div>
                 <p className="text-muted-foreground">税率</p>
                 <p>{detail.taxRate}%</p>
+              </div>
+              <div>
+                <p className="text-muted-foreground">不含税金额</p>
+                <p>{formatMoney(detail.netAmount ?? 0)}</p>
+              </div>
+              <div>
+                <p className="text-muted-foreground">税额</p>
+                <p>{formatMoney(detail.taxAmount ?? 0)}</p>
               </div>
               <div>
                 <p className="text-muted-foreground">负责人</p>
@@ -347,6 +403,117 @@ const ContractDetailDialog: React.FC<ContractDetailDialogProps> = ({
                 </Button>
               </div>
             </CanRole>
+
+            <div className="flex flex-col gap-3">
+              <div className="flex items-center justify-between">
+                <h3 className="text-base font-semibold">合同明细</h3>
+                {detail.status === 'draft' ? (
+                  <CanRole roles={['admin']}>
+                    <div className="flex gap-2">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => {
+                          // 修复 P0-3：打开时按合同主体校正默认税率，
+                          // 否则小规模主体下 <select value={6}> 匹配不到选项 → 显示空白、提交 400
+                          setItemDraft((prev) => ({
+                            ...prev,
+                            taxRate: coerceTaxRate(
+                              Number(detail?.taxRate ?? prev.taxRate ?? 6),
+                              taxEntities.find((e) => e.id === detail?.taxEntityId) ??
+                                taxEntities.find((e) => e.isDefault) ??
+                                taxEntities[0]
+                            ),
+                          }));
+                          setItemOpen(true);
+                        }}
+                      >
+                        <Plus className="h-4 w-4" />
+                        添加明细
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => {
+                          setSelectedQuotationId('');
+                          setQuotationImportOpen(true);
+                          void crmApi
+                            .listQuotations()
+                            .then(setQuotations)
+                            .catch((err: unknown) => {
+                              setQuotations([]);
+                              toast.error(getApiErrorMessage(err, '加载报价单失败'));
+                            });
+                        }}
+                      >
+                        从报价导入
+                      </Button>
+                    </div>
+                  </CanRole>
+                ) : null}
+              </div>
+              <Table
+                rowKey="id"
+                size="small"
+                pagination={false}
+                dataSource={items}
+                columns={[
+                  { title: '序号', dataIndex: 'seq', width: 60 },
+                  { title: '名称', dataIndex: 'itemName' },
+                  { title: '数量', dataIndex: 'quantity', width: 80 },
+                  {
+                    title: '含税单价',
+                    dataIndex: 'unitPrice',
+                    width: 110,
+                    render: (v: number) => formatMoney(v),
+                  },
+                  {
+                    title: '税率',
+                    dataIndex: 'taxRate',
+                    width: 70,
+                    render: (v: number) => `${v}%`,
+                  },
+                  {
+                    title: '含税金额',
+                    dataIndex: 'amount',
+                    width: 180,
+                    render: (v: number, row: ContractItem) => (
+                      <div>
+                        <div>{formatMoney(v)}</div>
+                        <div className="text-xs text-muted-foreground">
+                          {formatTaxSplitLine(v, row.taxRate)}
+                        </div>
+                      </div>
+                    ),
+                  },
+                  {
+                    title: '操作',
+                    key: 'action',
+                    width: 80,
+                    render: (_value, row: ContractItem) =>
+                      detail.status === 'draft' ? (
+                        <CanRole roles={['admin']}>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            onClick={() =>
+                              void contractsApi
+                                .deleteContractItem(detail.id, row.id)
+                                .then(load)
+                                .catch((err: unknown) =>
+                                  toast.error(getApiErrorMessage(err, '删除失败'))
+                                )
+                            }
+                          >
+                            删除
+                          </Button>
+                        </CanRole>
+                      ) : null,
+                  },
+                ]}
+                locale={{ emptyText: '暂无明细，草稿阶段可添加' }}
+              />
+            </div>
 
             <div className="flex flex-col gap-3">
               <div className="flex items-center justify-between">
@@ -416,6 +583,7 @@ const ContractDetailDialog: React.FC<ContractDetailDialogProps> = ({
             ) : null}
           </div>
         ) : null}
+        </DataState>
 
         <Dialog open={milestoneOpen} onOpenChange={setMilestoneOpen}>
           <DialogContent className="max-w-md">
@@ -585,9 +753,168 @@ const ContractDetailDialog: React.FC<ContractDetailDialogProps> = ({
             </Form>
           </DialogContent>
         </Dialog>
+
+        <Dialog open={itemOpen} onOpenChange={setItemOpen}>
+          <DialogContent className="max-w-md">
+            <DialogHeader>
+              <DialogTitle>添加合同明细</DialogTitle>
+            </DialogHeader>
+            <div className="space-y-3">
+              <Input
+                placeholder="明细名称"
+                value={itemDraft.itemName}
+                onChange={(e) =>
+                  setItemDraft({ ...itemDraft, itemName: e.target.value })
+                }
+              />
+              <div className="flex gap-3">
+                <Input
+                  type="number"
+                  min={0}
+                  placeholder="数量"
+                  value={String(itemDraft.quantity)}
+                  onChange={(e) =>
+                    setItemDraft({
+                      ...itemDraft,
+                      quantity: Number(e.target.value),
+                    })
+                  }
+                />
+                <Input
+                  type="number"
+                  min={0}
+                  placeholder="含税单价"
+                  value={String(itemDraft.unitPrice)}
+                  onChange={(e) =>
+                    setItemDraft({
+                      ...itemDraft,
+                      unitPrice: Number(e.target.value),
+                    })
+                  }
+                />
+                <select
+                  className="h-9 rounded-md border px-2 text-sm"
+                  value={itemDraft.taxRate}
+                  onChange={(e) =>
+                    setItemDraft({
+                      ...itemDraft,
+                      taxRate: Number(e.target.value),
+                    })
+                  }
+                >
+                  {resolveRateOptions(
+                    taxEntities.find((e) => e.id === detail?.taxEntityId) ??
+                      taxEntities.find((e) => e.isDefault) ??
+                      taxEntities[0]
+                  ).map((rate) => (
+                    <option key={rate} value={rate}>
+                      {rate}%
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+            <DialogFooter>
+              <Button
+                onClick={() => {
+                  if (!contractId) return;
+                  void contractsApi
+                    .createContractItem(contractId, itemDraft)
+                    .then(() => {
+                      setItemOpen(false);
+                      // 修复 P0-3：重置时同样要校正，否则又把 6 塞回小规模主体的下拉里
+                      setItemDraft({
+                        itemName: '',
+                        quantity: 1,
+                        unitPrice: 0,
+                        taxRate: coerceTaxRate(
+                          Number(detail?.taxRate ?? 6),
+                          taxEntities.find((e) => e.id === detail?.taxEntityId) ??
+                            taxEntities.find((e) => e.isDefault) ??
+                            taxEntities[0]
+                        ),
+                      });
+                      return load();
+                    })
+                    .catch((err: unknown) =>
+                      toast.error(getApiErrorMessage(err, '添加失败'))
+                    );
+                }}
+              >
+                保存
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+        <Dialog
+          open={quotationImportOpen}
+          onOpenChange={(next) => {
+            setQuotationImportOpen(next);
+            if (!next) {
+              setSelectedQuotationId('');
+            }
+          }}
+        >
+          <DialogContent className="max-w-md">
+            <DialogHeader>
+              <DialogTitle>从报价导入明细</DialogTitle>
+            </DialogHeader>
+            <div className="space-y-2">
+              <label className="text-sm font-medium" htmlFor="quotation-import-select">
+                选择报价单
+              </label>
+              <Select
+                value={selectedQuotationId || undefined}
+                onValueChange={setSelectedQuotationId}
+              >
+                <SelectTrigger id="quotation-import-select">
+                  <SelectValue placeholder="请选择报价单" />
+                </SelectTrigger>
+                <SelectContent>
+                  {quotations.map((q) => (
+                    <SelectItem key={q.id} value={q.id}>
+                      {q.code} · {q.title}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <DialogFooter>
+              <Button
+                variant="outline"
+                onClick={() => setQuotationImportOpen(false)}
+                disabled={importingQuotation}
+              >
+                取消
+              </Button>
+              <Button
+                disabled={!selectedQuotationId || importingQuotation}
+                onClick={() => {
+                  if (!contractId || !selectedQuotationId) return;
+                  setImportingQuotation(true);
+                  void contractsApi
+                    .importQuotationItems(contractId, selectedQuotationId)
+                    .then(() => {
+                      toast.success('已从报价导入明细');
+                      setQuotationImportOpen(false);
+                      setSelectedQuotationId('');
+                      return load();
+                    })
+                    .catch((err: unknown) =>
+                      toast.error(getApiErrorMessage(err, '导入失败'))
+                    )
+                    .finally(() => setImportingQuotation(false));
+                }}
+              >
+                {importingQuotation ? '导入中…' : '导入'}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       </DialogContent>
     </Dialog>
   );
 };
 
 export default ContractDetailDialog;
+

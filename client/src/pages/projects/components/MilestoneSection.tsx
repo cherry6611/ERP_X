@@ -7,6 +7,7 @@ import { toast } from 'sonner';
 import { Plus } from 'lucide-react';
 import { Table, TableColumnsType } from 'antd';
 import { CanRole } from '@client/src/platform/auth';
+import { DataState } from '@client/src/components/DataState';
 import StatusBadge from '@client/src/components/erp/StatusBadge';
 import { Badge } from '@client/src/components/ui/badge';
 import { Button } from '@client/src/components/ui/button';
@@ -27,6 +28,7 @@ import {
 } from '@client/src/components/ui/form';
 import { Input } from '@client/src/components/ui/input';
 import { projectsApi } from '@client/src/api';
+import { getApiErrorMessage } from '@client/src/utils/api-error-message';
 import type { ProjectMilestone } from '@shared/api.interface';
 
 const isMilestoneOverdue = (m: ProjectMilestone): boolean =>
@@ -93,7 +95,7 @@ const MilestoneSection: React.FC<MilestoneSectionProps> = ({ projectId, onChange
       const detail = await projectsApi.getProject(projectId);
       setMilestones(detail.milestones);
     } catch (err) {
-      setError(err instanceof Error ? err.message : '加载里程碑失败');
+      setError(getApiErrorMessage(err, '加载里程碑失败'));
     } finally {
       setLoading(false);
     }
@@ -120,7 +122,7 @@ const MilestoneSection: React.FC<MilestoneSectionProps> = ({ projectId, onChange
       milestoneForm.reset({ name: '', planDate: '', weightPct: '' });
       await refresh();
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : '添加失败');
+      toast.error(getApiErrorMessage(err, '添加失败'));
     }
   });
 
@@ -130,7 +132,7 @@ const MilestoneSection: React.FC<MilestoneSectionProps> = ({ projectId, onChange
       toast.success('里程碑已达成');
       await refresh();
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : '操作失败');
+      toast.error(getApiErrorMessage(err, '操作失败'));
     }
   };
 
@@ -156,7 +158,7 @@ const MilestoneSection: React.FC<MilestoneSectionProps> = ({ projectId, onChange
       setEditOpen(false);
       await refresh();
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : '更新失败');
+      toast.error(getApiErrorMessage(err, '更新失败'));
     }
   });
 
@@ -224,9 +226,7 @@ const MilestoneSection: React.FC<MilestoneSectionProps> = ({ projectId, onChange
           </Button>
         </CanRole>
       </div>
-      {loading ? <p className="text-sm text-muted-foreground">加载中...</p> : null}
-      {error ? <p className="text-sm text-destructive">{error}</p> : null}
-      {!loading && !error ? (
+      <DataState loading={loading} error={error} skeleton="table">
         <Table
           columns={milestoneColumns}
           dataSource={milestones}
@@ -235,7 +235,7 @@ const MilestoneSection: React.FC<MilestoneSectionProps> = ({ projectId, onChange
           pagination={false}
           size="small"
         />
-      ) : null}
+      </DataState>
 
       <Dialog open={addOpen} onOpenChange={setAddOpen}>
         <DialogContent className="max-w-sm">

@@ -5,6 +5,8 @@ import { z } from 'zod';
 import { toast } from 'sonner';
 import { Plus } from 'lucide-react';
 import { Table, TableColumnsType } from 'antd';
+import { DataState } from '@client/src/components/DataState';
+import { CanRole } from '@client/src/platform/auth';
 import { Badge } from '@client/src/components/ui/badge';
 import { Button } from '@client/src/components/ui/button';
 import {
@@ -34,8 +36,10 @@ import {
 import { Textarea } from '@/components/ui/textarea';
 import { projectsApi, revenuesApi } from '@client/src/api';
 import { useAsyncData } from '@client/src/hooks/useAsyncData';
+import { confirmDanger } from '@client/src/utils/confirmDanger';
 import { formatMoney } from '@client/src/utils/format';
 import { REVENUE_METHOD_LABELS } from '@client/src/utils/biz-labels';
+import { getApiErrorMessage } from '@client/src/utils/api-error-message';
 import type {
   CreateRevenueDto,
   Project,
@@ -84,7 +88,7 @@ const RevenuesTab: React.FC = () => {
       form.reset({ projectId: '', period: '', method: 'milestone', amount: 0, basis: '' });
       await reload();
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : '确认失败');
+      toast.error(getApiErrorMessage(err, '确认失败'));
     }
   });
 
@@ -100,16 +104,63 @@ const RevenuesTab: React.FC = () => {
       ),
     },
     { title: '期间', dataIndex: 'period', width: 90 },
-    { title: '确认金额', dataIndex: 'amount', width: 130, render: (v: number) => formatMoney(v) },
+    {
+      title: '确认金额（含税）',
+      dataIndex: 'amount',
+      width: 140,
+      render: (v: number) => formatMoney(v),
+    },
     { title: '依据', dataIndex: 'basis', width: 180, render: (v) => v ?? '-' },
     {
-      title: '调整状态',
-      dataIndex: 'adjusted',
+      title: '状态',
+      dataIndex: 'status',
       width: 100,
-      render: (v: boolean) => (v ? <Badge variant="outline">已调整</Badge> : '正常'),
+      render: (s: string) =>
+        s === 'reversed' ? (
+          <Badge variant="outline">已红冲</Badge>
+        ) : (
+          <Badge variant="secondary">已确认</Badge>
+        ),
     },
     { title: '确认日期', dataIndex: 'createdAt', width: 170, render: (v: string) => new Date(v).toLocaleString('zh-CN') },
+    {
+      title: '操作',
+      key: 'actions',
+      width: 100,
+      fixed: 'right',
+      render: (_: unknown, row: RevenueItem) =>
+        row.status === 'reversed' ? (
+          '-'
+        ) : (
+          <CanRole roles={['admin']}>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={() => void handleReverse(row)}
+            >
+              红冲
+            </Button>
+          </CanRole>
+        ),
+    },
   ];
+
+  async function handleReverse(row: RevenueItem) {
+    const ok = await confirmDanger(
+      `确认红冲收入 ${row.code}？将冲回应收并生成冲销凭证。`,
+    );
+    if (!ok) {
+      return;
+    }
+    try {
+      await revenuesApi.reverseRevenue(row.id, { reason: `手工红冲 ${row.code}` });
+      toast.success('收入已红冲');
+      await reload();
+    } catch (err) {
+      toast.error(getApiErrorMessage(err, '红冲失败'));
+    }
+  }
 
   return (
     <div className="flex flex-col gap-4">
@@ -130,27 +181,30 @@ const RevenuesTab: React.FC = () => {
             </SelectContent>
           </Select>
         </div>
-        <Button onClick={() => setCreateOpen(true)}>
-          <Plus className="h-4 w-4" />
-          确认收入
-        </Button>
-      </div>
-      {error ? (
-        <p className="text-sm text-destructive">
-          {error}
-          <Button variant="ghost" size="sm" className="ml-2" onClick={() => void reload()}>
-            重试
+        {/* 修复 P0-4：后端 POST /api/revenues 是 @CanRole(['admin'])，
+            未包裹时普通用户（如 finance_viewer）看得见、点得动，提交后 403 */}
+        <CanRole roles={['admin']}>
+          <Button onClick={() => setCreateOpen(true)}>
+            <Plus className="h-4 w-4" />
+            确认收入
           </Button>
-        </p>
-      ) : null}
-      <Table
-        columns={columns}
-        dataSource={data ?? []}
+        </CanRole>
+      </div>
+      <DataState
         loading={loading}
-        rowKey="id"
-        scroll={{ x: 1200, y: 500 }}
-        pagination={false}
-      />
+        error={error}
+        onRetry={() => void reload()}
+        skeleton="table"
+      >
+        <Table
+          columns={columns}
+          dataSource={data ?? []}
+          rowKey="id"
+          scroll={{ x: 1200, y: 500 }}
+          pagination={false}
+          locale={{ emptyText: '暂无收入确认记录' }}
+        />
+      </DataState>
 
       <Dialog open={createOpen} onOpenChange={setCreateOpen}>
         <DialogContent className="max-w-md">
@@ -234,7 +288,8 @@ const RevenuesTab: React.FC = () => {
                 render={({ field }) => (
                   <FormItem>
                     <FormLabel>
-                      确认金额（元） <span aria-hidden="true" className="text-destructive">*</span>
+                      金额（含税）{' '}
+                      <span aria-hidden="true" className="text-destructive">*</span>
                     </FormLabel>
                     <FormControl>
                       <Input

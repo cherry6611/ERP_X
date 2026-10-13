@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import PageShell from '@client/src/components/PageShell';
 import DatasetPanel from './components/DatasetPanel';
 import GrantPanel from './components/GrantPanel';
 
@@ -11,14 +12,11 @@ const DataAssetPage: React.FC = () => {
   const [tab, setTab] = useState<string>('datasets');
 
   return (
-    <div className="p-6 flex flex-col gap-6" data-ai-section-type="card-list">
-      <div>
-        <h1 className="text-2xl font-semibold">数据资产授权</h1>
-        <p className="text-sm text-muted-foreground mt-1">
-          数据集目录、授权记录与到期预警管理，项目立项前自动校验数据集授权
-        </p>
-      </div>
-      <div className="flex gap-2 flex-wrap">
+    <PageShell
+      title="数据资产授权"
+      description="数据集目录、授权记录与到期预警管理，项目立项前自动校验数据集授权"
+    >
+      <div className="flex gap-2 flex-wrap" data-ai-section-type="card-list">
         {DATA_ASSET_TABS.map((item) => (
           <button
             key={item.key}
@@ -37,7 +35,7 @@ const DataAssetPage: React.FC = () => {
       <div>
         {tab === 'datasets' ? <DatasetPanel /> : <GrantPanel />}
       </div>
-    </div>
+    </PageShell>
   );
 };
 

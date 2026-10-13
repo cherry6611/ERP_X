@@ -5,7 +5,7 @@ import HrStatusBadge, {
   EMPLOYEE_STATUS_LABELS,
   LEAVE_TYPE_LABELS,
 } from './HrStatusBadge';
-import { Button } from '@client/src/components/ui/button';
+import { DataState } from '@client/src/components/DataState';
 import { hrApi } from '@client/src/api';
 import { useAsyncData } from '@client/src/hooks/useAsyncData';
 import { formatMoney } from '@client/src/utils/format';
@@ -22,38 +22,27 @@ const MyHrPanel: React.FC = () => {
     [],
   );
 
-  if (loading) {
-    return <p className="text-sm text-muted-foreground">自助中心加载中...</p>;
-  }
-  if (error) {
-    return (
-      <p className="text-sm text-destructive">
-        {error}
-        <Button variant="ghost" size="sm" className="ml-2" onClick={() => void reload()}>
-          重试
-        </Button>
-      </p>
-    );
-  }
-  if (!data) {
-    return <p className="text-sm text-muted-foreground">暂无自助中心数据</p>;
-  }
-  if (!data.employee) {
-    return (
-      <div className="rounded-lg border bg-card p-8 text-center">
-        <p className="text-sm text-muted-foreground">
-          当前账号未绑定员工档案，请联系管理员在员工档案中绑定飞书账号
-        </p>
-      </div>
-    );
-  }
-
-  const employee = data.employee;
-  const attendance: AttendanceRecord[] = data.attendance ?? [];
-  const balances: LeaveBalance[] = data.leaveBalances ?? [];
-  const payrolls: PayrollItem[] = data.payrolls ?? [];
+  const employee = data?.employee;
+  const attendance: AttendanceRecord[] = data?.attendance ?? [];
+  const balances: LeaveBalance[] = data?.leaveBalances ?? [];
+  const payrolls: PayrollItem[] = data?.payrolls ?? [];
 
   return (
+    <DataState
+      loading={loading}
+      error={error}
+      empty={!loading && !error && !data}
+      emptyText="暂无自助中心数据"
+      onRetry={() => void reload()}
+      skeleton="card"
+    >
+      {!employee ? (
+        <div className="rounded-lg border bg-card p-8 text-center">
+          <p className="text-sm text-muted-foreground">
+            当前账号未绑定员工档案，请联系管理员在员工档案中绑定飞书账号
+          </p>
+        </div>
+      ) : (
     <div className="flex flex-col gap-6">
       <h3 className="text-base font-semibold">员工自助中心</h3>
       <div className="grid grid-cols-2 gap-4">
@@ -172,6 +161,8 @@ const MyHrPanel: React.FC = () => {
         </section>
       </div>
     </div>
+      )}
+    </DataState>
   );
 };
 

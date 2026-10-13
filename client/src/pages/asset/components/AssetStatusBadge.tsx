@@ -38,7 +38,7 @@ export const AssetStatusBadge: React.FC<{ status: string }> = ({ status }) => {
   if (status === 'scrapped') variant = 'destructive';
   if (status === 'repair') {
     variant = 'outline';
-    extra = 'border-yellow-300 bg-yellow-50 text-yellow-700';
+    extra = 'border-warning/40 bg-warning/15 text-warning';
   }
   return (
     <Badge variant={variant} className={extra}>

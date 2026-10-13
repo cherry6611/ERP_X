@@ -5,6 +5,7 @@ import { z } from 'zod';
 import { toast } from 'sonner';
 import { Plus } from 'lucide-react';
 import { Table, TableColumnsType } from 'antd';
+import { CanRole } from '@client/src/platform/auth';
 import {
   Dialog,
   DialogContent,
@@ -24,6 +25,7 @@ import { Input } from '@client/src/components/ui/input';
 import { Button } from '@client/src/components/ui/button';
 import { Badge } from '@client/src/components/ui/badge';
 import { masterDataApi } from '@client/src/api';
+import { getApiErrorMessage } from '@client/src/utils/api-error-message';
 import type { Customer, CustomerContact } from '@shared/api.interface';
 
 const contactSchema = z.object({
@@ -65,7 +67,7 @@ const ContactsDialog: React.FC<ContactsDialogProps> = ({
     try {
       setContacts(await masterDataApi.listContacts(customer.id));
     } catch (err) {
-      setError(err instanceof Error ? err.message : '加载联系人失败');
+      setError(getApiErrorMessage(err, '加载联系人失败'));
     } finally {
       setLoading(false);
     }
@@ -90,7 +92,7 @@ const ContactsDialog: React.FC<ContactsDialogProps> = ({
       await load();
       onChanged();
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : '添加联系人失败');
+      toast.error(getApiErrorMessage(err, '添加联系人失败'));
     }
   });
 
@@ -100,7 +102,7 @@ const ContactsDialog: React.FC<ContactsDialogProps> = ({
       toast.success('已设为主联系人');
       await load();
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : '设置失败');
+      toast.error(getApiErrorMessage(err, '设置失败'));
     }
   };
 
@@ -110,7 +112,7 @@ const ContactsDialog: React.FC<ContactsDialogProps> = ({
       toast.success('联系人已删除');
       await load();
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : '删除失败');
+      toast.error(getApiErrorMessage(err, '删除失败'));
     }
   };
 
@@ -158,10 +160,12 @@ const ContactsDialog: React.FC<ContactsDialogProps> = ({
           <p className="text-sm text-muted-foreground">
             每个客户仅一个主联系人，删除联系人不可恢复
           </p>
-          <Button size="sm" onClick={openCreate}>
-            <Plus className="h-4 w-4" />
-            添加联系人
-          </Button>
+          <CanRole roles={['admin']}>
+            <Button size="sm" onClick={openCreate}>
+              <Plus className="h-4 w-4" />
+              添加联系人
+            </Button>
+          </CanRole>
         </div>
         {error ? <p className="text-sm text-destructive">{error}</p> : null}
         <Table

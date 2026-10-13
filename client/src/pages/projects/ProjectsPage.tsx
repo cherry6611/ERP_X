@@ -5,6 +5,7 @@ import { Download, Plus } from 'lucide-react';
 import { Table, TableColumnsType } from 'antd';
 import { CanRole } from '@client/src/platform/auth';
 import PageShell from '@client/src/components/PageShell';
+import { DataState } from '@client/src/components/DataState';
 import StatusBadge from '@client/src/components/erp/StatusBadge';
 import ProjectFormDialog from './ProjectFormDialog';
 import ProjectDetailDialog from './ProjectDetailDialog';
@@ -23,6 +24,7 @@ import {
 } from '@client/src/components/ui/select';
 import { projectsApi } from '@client/src/api';
 import { useAsyncData } from '@client/src/hooks/useAsyncData';
+import { useDebouncedValue } from '@client/src/hooks/useDebouncedValue';
 import { formatMoney, formatPercent } from '@client/src/utils/format';
 import { PROJECT_STATUS_LABELS } from '@client/src/utils/biz-labels';
 import {
@@ -48,6 +50,7 @@ const PROJECT_EXPORT_COLUMNS: ExcelSheetColumn<Project>[] = [
 const ProjectsPage: React.FC = () => {
   const [statusFilter, setStatusFilter] = useState('all');
   const [keyword, setKeyword] = useState('');
+  const keywordQuery = useDebouncedValue(keyword);
   const [formOpen, setFormOpen] = useState(false);
   const [detailId, setDetailId] = useState<string | null>(null);
   const [similarTarget, setSimilarTarget] = useState<SimilarTarget | null>(null);
@@ -56,9 +59,9 @@ const ProjectsPage: React.FC = () => {
     () =>
       projectsApi.listProjects({
         status: statusFilter !== 'all' ? statusFilter : undefined,
-        keyword: keyword || undefined,
+        keyword: keywordQuery || undefined,
       }),
-    [statusFilter, keyword],
+    [statusFilter, keywordQuery],
   );
 
   const handleExport = () => {
@@ -164,26 +167,24 @@ const ProjectsPage: React.FC = () => {
           导出 Excel
         </Button>
       </div>
-      {error ? (
-        <p className="text-sm text-destructive">
-          {error}
-          <Button variant="ghost" size="sm" className="ml-2" onClick={() => void reload()}>
-            重试
-          </Button>
-        </p>
-      ) : null}
-      <Table
-        columns={columns}
-        dataSource={data ?? []}
+      <DataState
         loading={loading}
-        rowKey="id"
-        scroll={{ x: 1300, y: 500 }}
-        pagination={{
-          pageSize: 10,
-          showTotal: (total: number) => `共 ${total} 条`,
-        }}
-        locale={{ emptyText: '暂无项目，点击右上角「新建项目」创建' }}
-      />
+        error={error}
+        onRetry={() => void reload()}
+        skeleton="table"
+      >
+        <Table
+          columns={columns}
+          dataSource={data ?? []}
+          rowKey="id"
+          scroll={{ x: 1300, y: 500 }}
+          pagination={{
+            pageSize: 10,
+            showTotal: (total: number) => `共 ${total} 条`,
+          }}
+          locale={{ emptyText: '暂无项目，点击右上角「新建项目」创建' }}
+        />
+      </DataState>
       <ProjectFormDialog
         open={formOpen}
         onOpenChange={setFormOpen}

@@ -13,9 +13,12 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@client/src/components/ui/select';
+import PageShell from '@client/src/components/PageShell';
+import { DataState } from '@client/src/components/DataState';
 import { adminApi } from '@client/src/api';
 import { useAsyncData } from '@client/src/hooks/useAsyncData';
 import { formatMoney } from '@client/src/utils/format';
+import { getApiErrorMessage } from '@client/src/utils/api-error-message';
 import AffairFormDialog from './components/AffairFormDialog';
 import AffairStatusBadge from './components/AffairStatusBadge';
 import DeleteConfirmDialog from './components/DeleteConfirmDialog';
@@ -51,13 +54,15 @@ const AdminAffairsPage: React.FC = () => {
   );
   const [operating, setOperating] = useState(false);
 
-  const { data, loading, error, reload } = useAsyncData(() =>
-    adminApi.listAdminAffairs({
-      page,
-      pageSize: PAGE_SIZE,
-      affairType: typeFilter !== 'all' ? typeFilter : undefined,
-      status: statusFilter !== 'all' ? statusFilter : undefined,
-    }),
+  const { data, loading, error, reload } = useAsyncData(
+    () =>
+      adminApi.listAdminAffairs({
+        page,
+        pageSize: PAGE_SIZE,
+        affairType: typeFilter !== 'all' ? typeFilter : undefined,
+        status: statusFilter !== 'all' ? statusFilter : undefined,
+      }),
+    [page, typeFilter, statusFilter],
   );
 
   const items = data?.items ?? [];
@@ -79,7 +84,7 @@ const AdminAffairsPage: React.FC = () => {
       toast.success(`事务 ${item.code} 已结清`);
       await reload();
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : '结清失败');
+      toast.error(getApiErrorMessage(err, '结清失败'));
     } finally {
       setOperating(false);
     }
@@ -94,7 +99,7 @@ const AdminAffairsPage: React.FC = () => {
       setDeleteTarget(null);
       await reload();
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : '删除失败');
+      toast.error(getApiErrorMessage(err, '删除失败'));
     } finally {
       setOperating(false);
     }
@@ -189,13 +194,18 @@ const AdminAffairsPage: React.FC = () => {
   ];
 
   return (
-    <div className="p-6 flex flex-col gap-6">
-      <div>
-        <h1 className="text-2xl font-semibold">车辆与差旅</h1>
-        <p className="text-sm text-muted-foreground mt-1">
-          用车与差旅事务登记、费用结清管理
-        </p>
-      </div>
+    <PageShell
+      title="车辆与差旅"
+      description="用车与差旅事务登记、费用结清管理"
+      actions={
+        <CanRole roles={['admin']}>
+          <Button onClick={openCreate} aria-label="新建事务">
+            <Plus className="size-4" aria-hidden="true" />
+            新建事务
+          </Button>
+        </CanRole>
+      }
+    >
       <div className="flex flex-wrap items-end gap-4">
         <div className="flex flex-col gap-1.5">
           <Label htmlFor="affair-type-filter">类型</Label>
@@ -239,29 +249,16 @@ const AdminAffairsPage: React.FC = () => {
             </SelectContent>
           </Select>
         </div>
-        <CanRole roles={['admin']}>
-          <Button
-            onClick={openCreate}
-            className="ml-auto"
-            aria-label="新建事务"
-          >
-            <Plus className="size-4" aria-hidden="true" />
-            新建事务
-          </Button>
-        </CanRole>
       </div>
-      {error ? (
-        <div className="flex items-center gap-3 text-sm text-destructive">
-          <span>加载失败：{error}</span>
-          <Button variant="outline" size="sm" onClick={() => void reload()}>
-            重试
-          </Button>
-        </div>
-      ) : (
+      <DataState
+        loading={loading}
+        error={error}
+        onRetry={() => void reload()}
+        skeleton="table"
+      >
         <Table
           columns={columns}
           dataSource={items}
-          loading={loading}
           rowKey="id"
           scroll={{ x: 1300, y: 500 }}
           locale={{ emptyText: '暂无事务记录，点击右上角新建事务' }}
@@ -272,7 +269,7 @@ const AdminAffairsPage: React.FC = () => {
             onChange: (p: number) => setPage(p),
           }}
         />
-      )}
+      </DataState>
       <AffairFormDialog
         open={formOpen}
         target={editTarget}
@@ -288,7 +285,7 @@ const AdminAffairsPage: React.FC = () => {
           if (!open) setDeleteTarget(null);
         }}
       />
-    </div>
+    </PageShell>
   );
 };
 

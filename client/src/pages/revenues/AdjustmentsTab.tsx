@@ -5,6 +5,8 @@ import { z } from 'zod';
 import { toast } from 'sonner';
 import { Plus } from 'lucide-react';
 import { Table, TableColumnsType } from 'antd';
+import { CanRole } from '@client/src/platform/auth';
+import { DataState } from '@client/src/components/DataState';
 import { Badge } from '@client/src/components/ui/badge';
 import { Button } from '@client/src/components/ui/button';
 import {
@@ -34,6 +36,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { revenuesApi } from '@client/src/api';
 import { useAsyncData } from '@client/src/hooks/useAsyncData';
 import { formatMoney } from '@client/src/utils/format';
+import { getApiErrorMessage } from '@client/src/utils/api-error-message';
 import type {
   AdjustType,
   CreateRevenueAdjustDto,
@@ -88,7 +91,7 @@ const AdjustmentsTab: React.FC = () => {
       form.reset({ revenueId: '', adjustmentType: 'discount', amount: 0, reason: '' });
       await reload();
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : '登记失败');
+      toast.error(getApiErrorMessage(err, '登记失败'));
     }
   });
 
@@ -100,7 +103,12 @@ const AdjustmentsTab: React.FC = () => {
       width: 90,
       render: (t: string) => <Badge variant="secondary">{ADJUSTMENT_TYPE_LABELS[t] ?? t}</Badge>,
     },
-    { title: '调整金额', dataIndex: 'amount', width: 130, render: (v: number) => formatMoney(v) },
+    {
+      title: '调整金额（含税）',
+      dataIndex: 'amount',
+      width: 140,
+      render: (v: number) => formatMoney(v),
+    },
     { title: '原因', dataIndex: 'reason', width: 220 },
     {
       title: '调整日期',
@@ -114,27 +122,28 @@ const AdjustmentsTab: React.FC = () => {
     <div className="flex flex-col gap-4">
       <div className="flex items-center justify-between">
         <p className="text-sm text-muted-foreground">折让、冲销、补提等收入调整记录</p>
-        <Button onClick={() => setCreateOpen(true)}>
-          <Plus className="h-4 w-4" />
-          登记调整
-        </Button>
-      </div>
-      {error ? (
-        <p className="text-sm text-destructive">
-          {error}
-          <Button variant="ghost" size="sm" className="ml-2" onClick={() => void reload()}>
-            重试
+        <CanRole roles={['admin']}>
+          <Button onClick={() => setCreateOpen(true)}>
+            <Plus className="h-4 w-4" />
+            登记调整
           </Button>
-        </p>
-      ) : null}
-      <Table
-        columns={columns}
-        dataSource={data ?? []}
+        </CanRole>
+      </div>
+      <DataState
         loading={loading}
-        rowKey="id"
-        scroll={{ x: 1000, y: 500 }}
-        pagination={false}
-      />
+        error={error}
+        onRetry={() => void reload()}
+        skeleton="table"
+      >
+        <Table
+          columns={columns}
+          dataSource={data ?? []}
+          rowKey="id"
+          scroll={{ x: 1000, y: 500 }}
+          pagination={false}
+          locale={{ emptyText: '暂无收入调整记录' }}
+        />
+      </DataState>
 
       <Dialog open={createOpen} onOpenChange={setCreateOpen}>
         <DialogContent className="max-w-md">
@@ -202,7 +211,7 @@ const AdjustmentsTab: React.FC = () => {
                   render={({ field }) => (
                     <FormItem className="flex-1">
                       <FormLabel>
-                        调整金额（元）{' '}
+                        金额（含税）{' '}
                         <span aria-hidden="true" className="text-destructive">*</span>
                       </FormLabel>
                       <FormControl>

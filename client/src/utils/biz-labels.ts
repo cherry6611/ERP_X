@@ -42,6 +42,7 @@ export const CONTRACT_STATUS_LABELS: Record<string, string> = {
   performing: '履约中',
   completed: '已完成',
   closed: '已关闭',
+  terminated: '已终止',
 };
 
 export const PROJECT_STATUS_LABELS: Record<string, string> = {

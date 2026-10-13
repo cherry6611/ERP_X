@@ -13,12 +13,12 @@ const PageShell: React.FC<PageShellProps> = ({
   actions,
   children,
 }) => (
-  <div className="p-6 flex flex-col gap-6 min-w-0">
+  <div className="flex min-w-0 flex-col gap-6 p-6">
     <div className="flex items-start justify-between gap-4">
       <div>
-        <h1 className="text-2xl font-semibold">{title}</h1>
+        <h1 className="text-2xl font-semibold leading-tight">{title}</h1>
         {description ? (
-          <p className="text-sm text-muted-foreground mt-1">{description}</p>
+          <p className="mt-1 text-sm text-muted-foreground">{description}</p>
         ) : null}
       </div>
       {actions ? (

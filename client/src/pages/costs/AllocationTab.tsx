@@ -138,7 +138,8 @@ const AllocationTab: React.FC = () => {
             render={({ field }) => (
               <FormItem className="w-40">
                 <FormLabel>
-                  金额（元） <span aria-hidden="true" className="text-destructive">*</span>
+                  金额（含税）{' '}
+                  <span aria-hidden="true" className="text-destructive">*</span>
                 </FormLabel>
                 <FormControl>
                   <Input

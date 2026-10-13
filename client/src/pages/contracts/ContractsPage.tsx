@@ -3,16 +3,38 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { useForm } from 'react-hook-form';
 import { z } from 'zod';
 import { toast } from 'sonner';
-import { Download, History, Plus, Upload } from 'lucide-react';
+import { Download, History, MoreHorizontal, Plus, Upload } from 'lucide-react';
 import { Table, TableColumnsType } from 'antd';
 import { CanRole } from '@client/src/platform/auth';
 import PageShell from '@client/src/components/PageShell';
+import { DataState } from '@client/src/components/DataState';
 import StatusBadge from '@client/src/components/erp/StatusBadge';
 import DateField from '@client/src/components/erp/DateField';
 import ContractFormDialog from './ContractFormDialog';
 import ContractDetailDialog from './ContractDetailDialog';
+import TaxEntityBanner from '@client/src/components/erp/TaxEntityBanner';
+import { formatTaxSplitLine } from '@client/src/utils/tax-display';
 import { Badge } from '@client/src/components/ui/badge';
 import { Button } from '@client/src/components/ui/button';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@client/src/components/ui/dropdown-menu';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@client/src/components/ui/alert-dialog';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@client/src/components/ui/tabs';
+import { dialogSize } from '@client/src/theme/dialog-size';
+import { useDebouncedValue } from '@client/src/hooks/useDebouncedValue';
 import {
   Dialog,
   DialogContent,
@@ -73,7 +95,7 @@ const CONTRACT_EXPORT_COLUMNS: ExcelSheetColumn<Contract>[] = [
     header: '计费模式',
     value: (row: Contract) => BILLING_MODEL_LABELS[row.billingModel] ?? row.billingModel,
   },
-  { header: '金额', value: (row: Contract) => row.amount },
+  { header: '金额（含税）', value: (row: Contract) => row.amount },
   {
     header: '状态',
     value: (row: Contract) => CONTRACT_STATUS_LABELS[row.status] ?? row.status,
@@ -109,6 +131,7 @@ const EMPTY_TRANSFER_FORM: TransferFormData = {
 const ContractsPage: React.FC = () => {
   const [statusFilter, setStatusFilter] = useState('all');
   const [keyword, setKeyword] = useState('');
+  const keywordQuery = useDebouncedValue(keyword);
   const [page, setPage] = useState<number>(1);
   const [pageSize, setPageSize] = useState<number>(PAGE_SIZE);
   const [formOpen, setFormOpen] = useState(false);
@@ -116,6 +139,7 @@ const ContractsPage: React.FC = () => {
   const [transferTarget, setTransferTarget] = useState<Contract | null>(null);
   const [operating, setOperating] = useState(false);
   const [syncing, setSyncing] = useState(false);
+  const [syncConfirm, setSyncConfirm] = useState(false);
   const [recordsOpen, setRecordsOpen] = useState(false);
   const [similarTarget, setSimilarTarget] = useState<SimilarTarget | null>(null);
 
@@ -123,9 +147,9 @@ const ContractsPage: React.FC = () => {
     () =>
       contractsApi.listContractsPaged(page, pageSize, {
         status: statusFilter !== 'all' ? statusFilter : undefined,
-        keyword: keyword || undefined,
+        keyword: keywordQuery || undefined,
       }),
-    [page, pageSize, statusFilter, keyword],
+    [page, pageSize, statusFilter, keywordQuery],
   );
   const items: Contract[] = data?.items ?? [];
 
@@ -172,7 +196,7 @@ const ContractsPage: React.FC = () => {
       setTransferTarget(null);
       await reload();
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : '合同转项目失败');
+      toast.error(getApiErrorMessage(err, '合同转项目失败'));
     } finally {
       setOperating(false);
     }
@@ -215,11 +239,18 @@ const ContractsPage: React.FC = () => {
       ),
     },
     {
-      title: '金额',
+      title: '金额（含税）',
       dataIndex: 'amount',
-      width: 130,
+      width: 200,
       align: 'right',
-      render: (v: number) => formatMoney(v),
+      render: (v: number, record) => (
+        <div className="text-right">
+          <div>{formatMoney(v)}</div>
+          <div className="text-xs text-muted-foreground">
+            {formatTaxSplitLine(v, record.taxRate)}
+          </div>
+        </div>
+      ),
     },
     { title: '税率', dataIndex: 'taxRate', width: 80, render: (v: number) => `${v}%` },
     {
@@ -237,26 +268,32 @@ const ContractsPage: React.FC = () => {
       width: 200,
       render: (_, record) => (
         <div className="flex gap-1">
-          <Button variant="ghost" size="sm" onClick={() => setDetailId(record.id)}>
+          <Button size="sm" onClick={() => setDetailId(record.id)}>
             详情
           </Button>
-          <Button
-            variant="ghost"
-            size="sm"
-            aria-label={`查找与 ${record.name} 相似的合同`}
-            onClick={() =>
-              setSimilarTarget({ id: record.id, code: record.code, name: record.name })
-            }
-          >
-            找相似
-          </Button>
-          <CanRole roles={['admin']}>
-            {TRANSFERABLE_STATUSES.includes(record.status) ? (
-              <Button variant="ghost" size="sm" onClick={() => setTransferTarget(record)}>
-                转项目
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="ghost" size="icon" aria-label={`${record.name} 的更多操作`}>
+                <MoreHorizontal className="size-4" />
               </Button>
-            ) : null}
-          </CanRole>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem
+                onClick={() =>
+                  setSimilarTarget({ id: record.id, code: record.code, name: record.name })
+                }
+              >
+                找相似
+              </DropdownMenuItem>
+              {TRANSFERABLE_STATUSES.includes(record.status) ? (
+                <CanRole roles={['admin']}>
+                  <DropdownMenuItem onClick={() => setTransferTarget(record)}>
+                    转项目
+                  </DropdownMenuItem>
+                </CanRole>
+              ) : null}
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
       ),
     },
@@ -264,6 +301,7 @@ const ContractsPage: React.FC = () => {
 
   return (
     <PageShell title="合同管理" description="合同登记、审批状态机、里程碑、Call-off 下单与变更留痕">
+      <TaxEntityBanner />
       <div className="flex flex-wrap items-center gap-3">
         <div className="flex items-center gap-2">
           <Label htmlFor="contract-status-filter">状态</Label>
@@ -301,15 +339,17 @@ const ContractsPage: React.FC = () => {
           <Download className="h-4 w-4" />
           导出 Excel
         </Button>
-        <Button
-          variant="outline"
-          disabled={syncing}
-          onClick={() => void handleSyncToBase()}
-          aria-label="同步合同到多维表格"
-        >
-          <Upload className="h-4 w-4" />
-          {syncing ? '同步中…' : '同步到多维表格'}
-        </Button>
+        <CanRole roles={['admin']}>
+          <Button
+            variant="outline"
+            disabled={syncing}
+            onClick={() => setSyncConfirm(true)}
+            aria-label="同步合同到多维表格"
+          >
+            <Upload className="h-4 w-4" />
+            {syncing ? '同步中…' : '同步到多维表格'}
+          </Button>
+        </CanRole>
         <Button
           variant="outline"
           onClick={() => setRecordsOpen(true)}
@@ -325,32 +365,30 @@ const ContractsPage: React.FC = () => {
           </Button>
         </CanRole>
       </div>
-      {error ? (
-        <p className="text-sm text-destructive">
-          {error}
-          <Button variant="ghost" size="sm" className="ml-2" onClick={() => void reload()}>
-            重试
-          </Button>
-        </p>
-      ) : null}
-      <Table
-        columns={columns}
-        dataSource={items}
+      <DataState
         loading={loading}
-        rowKey="id"
-        scroll={{ x: 1300, y: 500 }}
-        pagination={{
-          current: page,
-          pageSize,
-          total: data?.total ?? 0,
-          showTotal: (t: number) => `共 ${t} 条`,
-          onChange: (p: number, s: number) => {
-            setPage(p);
-            setPageSize(s);
-          },
-        }}
-        locale={{ emptyText: '暂无合同，登记新合同后开始管理' }}
-      />
+        error={error}
+        onRetry={() => void reload()}
+        skeleton="table"
+      >
+        <Table
+          columns={columns}
+          dataSource={items}
+          rowKey="id"
+          scroll={{ x: 1300, y: 500 }}
+          pagination={{
+            current: page,
+            pageSize,
+            total: data?.total ?? 0,
+            showTotal: (t: number) => `共 ${t} 条`,
+            onChange: (p: number, s: number) => {
+              setPage(p);
+              setPageSize(s);
+            },
+          }}
+          locale={{ emptyText: '暂无合同，登记新合同后开始管理' }}
+        />
+      </DataState>
       <ContractFormDialog
         open={formOpen}
         onOpenChange={setFormOpen}
@@ -372,7 +410,7 @@ const ContractsPage: React.FC = () => {
           if (!open) setTransferTarget(null);
         }}
       >
-        <DialogContent className="max-w-lg">
+        <DialogContent className={dialogSize.lg}>
           <DialogHeader>
             <DialogTitle>合同转项目</DialogTitle>
             <DialogDescription>
@@ -381,6 +419,12 @@ const ContractsPage: React.FC = () => {
           </DialogHeader>
           <Form {...transferForm}>
             <form className="flex flex-col gap-4" onSubmit={onTransfer}>
+              <Tabs defaultValue="base">
+                <TabsList>
+                  <TabsTrigger value="base">基本信息</TabsTrigger>
+                  <TabsTrigger value="plan">周期与备注</TabsTrigger>
+                </TabsList>
+                <TabsContent value="base" className="flex flex-col gap-4">
               <FormField
                 control={transferForm.control}
                 name="name"
@@ -444,6 +488,8 @@ const ContractsPage: React.FC = () => {
                   )}
                 />
               </div>
+                </TabsContent>
+                <TabsContent value="plan" className="flex flex-col gap-4">
               <FormField
                 control={transferForm.control}
                 name="deptName"
@@ -470,18 +516,34 @@ const ContractsPage: React.FC = () => {
                   </FormItem>
                 )}
               />
+                </TabsContent>
+              </Tabs>
               <DialogFooter>
                 <Button type="button" variant="outline" onClick={() => setTransferTarget(null)} disabled={operating}>
                   取消
                 </Button>
                 <Button type="submit" disabled={operating}>
-                  生成项目
+                  {operating ? '生成中…' : '生成项目'}
                 </Button>
               </DialogFooter>
             </form>
           </Form>
         </DialogContent>
       </Dialog>
+      <AlertDialog open={syncConfirm} onOpenChange={setSyncConfirm}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>同步到多维表格</AlertDialogTitle>
+            <AlertDialogDescription>
+              将把合同数据写入飞书多维表格。已同步成功的记录会跳过。
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>取消</AlertDialogCancel>
+            <AlertDialogAction onClick={() => void handleSyncToBase()}>确认同步</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
       <FeishuSyncRecordsDialog
         open={recordsOpen}
         onOpenChange={setRecordsOpen}

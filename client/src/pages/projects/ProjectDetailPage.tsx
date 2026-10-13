@@ -3,6 +3,8 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import { toast } from 'sonner';
 import { ArrowLeft, Pencil, Users, Wallet } from 'lucide-react';
 import { CanRole } from '@client/src/platform/auth';
+import { DataState } from '@client/src/components/DataState';
+import { usePageEntityName } from '@client/src/components/page-meta';
 import PageShell from '@client/src/components/PageShell';
 import StatCard from '@client/src/components/erp/StatCard';
 import StatusBadge from '@client/src/components/erp/StatusBadge';
@@ -27,6 +29,7 @@ import ProjectOverviewSection from '@client/src/pages/projects/components/Projec
 import QuotationSection from '@client/src/pages/projects/components/QuotationSection';
 import RevenueSection from '@client/src/pages/projects/components/RevenueSection';
 import TimesheetSection from '@client/src/pages/projects/components/TimesheetSection';
+import { getApiErrorMessage } from '@client/src/utils/api-error-message';
 import type {
   ProjectChainOverview,
   ProjectDetail,
@@ -95,6 +98,8 @@ const ProjectDetailPage: React.FC = () => {
     [],
   );
 
+  usePageEntityName(detail ? `${detail.code} ${detail.name}` : null);
+
   const reloadAll = useCallback(() => {
     void reloadDetail();
     void reloadChain();
@@ -109,7 +114,7 @@ const ProjectDetailPage: React.FC = () => {
       toast.success('状态已更新');
       await reloadDetail();
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : '操作失败');
+      toast.error(getApiErrorMessage(err, '操作失败'));
     } finally {
       setActing(false);
     }
@@ -136,7 +141,7 @@ const ProjectDetailPage: React.FC = () => {
   if (detailLoading || !detail) {
     return (
       <PageShell title="项目详情" description="项目全链路信息">
-        <p className="text-sm text-muted-foreground">加载中...</p>
+        <DataState loading />
       </PageShell>
     );
   }
@@ -278,36 +283,38 @@ const ProjectDetailPage: React.FC = () => {
           <CardTitle>项目健康指标（EVM）</CardTitle>
         </CardHeader>
         <CardContent>
-          {healthLoading ? (
-            <p className="text-sm text-muted-foreground">加载中...</p>
-          ) : evm ? (
-            <div className="grid grid-cols-2 gap-x-6 gap-y-3 text-sm xl:grid-cols-4">
-              <div className="flex justify-between gap-2">
-                <span className="text-muted-foreground">SPI</span>
-                <span>{evm.spi != null ? evm.spi.toFixed(2) : '-（需设置里程碑权重）'}</span>
+          <DataState
+            loading={healthLoading}
+            empty={!healthLoading && !evm}
+            emptyText="暂无项目健康数据"
+          >
+            {evm ? (
+              <div className="grid grid-cols-2 gap-x-6 gap-y-3 text-sm xl:grid-cols-4">
+                <div className="flex justify-between gap-2">
+                  <span className="text-muted-foreground">SPI</span>
+                  <span>{evm.spi != null ? evm.spi.toFixed(2) : '-（需设置里程碑权重）'}</span>
+                </div>
+                <div className="flex justify-between gap-2">
+                  <span className="text-muted-foreground">CPI</span>
+                  <span>{evm.cpi != null ? evm.cpi.toFixed(2) : '-（需设置里程碑权重）'}</span>
+                </div>
+                <div className="flex justify-between gap-2">
+                  <span className="text-muted-foreground">EAC</span>
+                  <span>{evm.eac != null ? formatMoney(evm.eac) : '-'}</span>
+                </div>
+                <div className="flex justify-between gap-2">
+                  <span className="text-muted-foreground">逾期里程碑</span>
+                  {evm.overdueMilestoneCount > 0 ? (
+                    <Badge variant="destructive">
+                      延期里程碑 {evm.overdueMilestoneCount} 个
+                    </Badge>
+                  ) : (
+                    <span>0 个</span>
+                  )}
+                </div>
               </div>
-              <div className="flex justify-between gap-2">
-                <span className="text-muted-foreground">CPI</span>
-                <span>{evm.cpi != null ? evm.cpi.toFixed(2) : '-（需设置里程碑权重）'}</span>
-              </div>
-              <div className="flex justify-between gap-2">
-                <span className="text-muted-foreground">EAC</span>
-                <span>{evm.eac != null ? formatMoney(evm.eac) : '-'}</span>
-              </div>
-              <div className="flex justify-between gap-2">
-                <span className="text-muted-foreground">逾期里程碑</span>
-                {evm.overdueMilestoneCount > 0 ? (
-                  <Badge variant="destructive">
-                    延期里程碑 {evm.overdueMilestoneCount} 个
-                  </Badge>
-                ) : (
-                  <span>0 个</span>
-                )}
-              </div>
-            </div>
-          ) : (
-            <p className="text-sm text-muted-foreground">暂无项目健康数据</p>
-          )}
+            ) : null}
+          </DataState>
         </CardContent>
       </Card>
 
@@ -323,10 +330,10 @@ const ProjectDetailPage: React.FC = () => {
           <CardContent>
             {chain?.customer ? (
               <InfoGrid items={customerItems} />
+            ) : chainLoading ? (
+              <DataState loading />
             ) : (
-              <p className="text-sm text-muted-foreground">
-                {chainLoading ? '加载中...' : '该项目未关联客户'}
-              </p>
+              <p className="text-sm text-muted-foreground">该项目未关联客户</p>
             )}
           </CardContent>
         </Card>
@@ -337,10 +344,10 @@ const ProjectDetailPage: React.FC = () => {
           <CardContent>
             {chain?.contract ? (
               <InfoGrid items={contractItems} />
+            ) : chainLoading ? (
+              <DataState loading />
             ) : (
-              <p className="text-sm text-muted-foreground">
-                {chainLoading ? '加载中...' : '该项目未关联合同'}
-              </p>
+              <p className="text-sm text-muted-foreground">该项目未关联合同</p>
             )}
           </CardContent>
         </Card>

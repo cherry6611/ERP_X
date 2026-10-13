@@ -2,6 +2,7 @@ import { axiosForBackend } from '@client/src/platform/request';
 import type {
   CreateRevenueAdjustDto,
   CreateRevenueDto,
+  ReverseRevenueDto,
   RevenueAdjust,
   RevenueItem,
   UnbilledItem,
@@ -33,5 +34,16 @@ export async function listAdjusts(revenueId?: string): Promise<RevenueAdjust[]> 
 
 export async function createAdjust(dto: CreateRevenueAdjustDto): Promise<RevenueAdjust> {
   const resp = await axiosForBackend.post<RevenueAdjust>('/api/revenues/adjusts', dto);
+  return resp.data;
+}
+
+export async function reverseRevenue(
+  id: string,
+  dto: ReverseRevenueDto = {}
+): Promise<RevenueItem> {
+  const resp = await axiosForBackend.post<RevenueItem>(
+    `/api/revenues/${id}/reverse`,
+    dto
+  );
   return resp.data;
 }

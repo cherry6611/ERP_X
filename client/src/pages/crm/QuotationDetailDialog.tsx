@@ -15,6 +15,7 @@ import { crmApi } from '@client/src/api';
 import { useAsyncData } from '@client/src/hooks/useAsyncData';
 import { QUOTATION_STATUS_LABELS } from '@client/src/utils/biz-labels';
 import { formatMoney, formatPercent } from '@client/src/utils/format';
+import { getApiErrorMessage } from '@client/src/utils/api-error-message';
 import type { Opportunity, Quotation, QuotationItem } from '@shared/api.interface';
 
 interface QuotationDetailDialogProps {
@@ -65,7 +66,7 @@ const QuotationDetailDialog: React.FC<QuotationDetailDialogProps> = ({
       onOpenChange(false);
       onChanged();
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : '操作失败');
+      toast.error(getApiErrorMessage(err, '操作失败'));
     }
   };
 

@@ -45,6 +45,12 @@ export async function createCost(dto: CreateCostDto): Promise<CostItem> {
   return resp.data;
 }
 
+export async function redFlushCost(id: string): Promise<CostItem> {
+  const resp = await axiosForBackend.post<CostItem>(`/api/costs/${id}/red-flush`);
+  ensureNotForbidden(resp);
+  return resp.data;
+}
+
 export async function listTimesheets(projectId?: string): Promise<Timesheet[]> {
   const resp = await axiosForBackend.get<Timesheet[]>('/api/costs/timesheets', {
     params: projectId ? { projectId } : undefined,

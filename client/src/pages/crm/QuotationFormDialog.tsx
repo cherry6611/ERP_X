@@ -33,6 +33,7 @@ import { Button } from '@client/src/components/ui/button';
 import { crmApi, masterDataApi } from '@client/src/api';
 import { useAsyncData } from '@client/src/hooks/useAsyncData';
 import { formatMoney, formatPercent, todayIso } from '@client/src/utils/format';
+import { getApiErrorMessage } from '@client/src/utils/api-error-message';
 import type {
   CreateQuotationDto,
   Customer,
@@ -145,7 +146,7 @@ const QuotationFormDialog: React.FC<QuotationFormDialogProps> = ({
       setDocUrl('');
       toast.success('解析成功，请确认明细');
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : '解析失败，请稍后重试');
+      toast.error(getApiErrorMessage(err, '解析失败，请稍后重试'));
     } finally {
       setParsing(false);
     }
@@ -297,7 +298,7 @@ const QuotationFormDialog: React.FC<QuotationFormDialogProps> = ({
       onOpenChange(false);
       onSaved(saved);
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : '保存失败');
+      toast.error(getApiErrorMessage(err, '保存失败'));
     }
   });
 

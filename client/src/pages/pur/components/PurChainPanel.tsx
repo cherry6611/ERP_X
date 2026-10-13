@@ -7,6 +7,7 @@ import {
   PackageCheck,
   ReceiptText,
 } from 'lucide-react';
+import { DataState } from '@client/src/components/DataState';
 import {
   Card,
   CardContent,
@@ -75,26 +76,26 @@ const PurChainPanel: React.FC = () => {
 
   return (
     <div className="flex flex-col gap-6">
-      <div
-        className="grid grid-cols-5 gap-4"
-        data-ai-section-type="card-stat"
-      >
-        {stats.map((item) => (
-          <Card key={item.key}>
-            <CardHeader className="pb-2">
-              <CardTitle className="flex items-center justify-between text-sm font-medium text-muted-foreground">
-                {item.label}
-                {item.icon}
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <p className="text-2xl font-semibold">
-                {loading ? '加载中...' : item.value}
-              </p>
-            </CardContent>
-          </Card>
-        ))}
-      </div>
+      <DataState loading={loading} skeleton="card">
+        <div
+          className="grid grid-cols-5 gap-4"
+          data-ai-section-type="card-stat"
+        >
+          {stats.map((item) => (
+            <Card key={item.key}>
+              <CardHeader className="pb-2">
+                <CardTitle className="flex items-center justify-between text-sm font-medium text-muted-foreground">
+                  {item.label}
+                  {item.icon}
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <p className="text-2xl font-semibold">{item.value}</p>
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+      </DataState>
 
       <Card>
         <CardHeader>

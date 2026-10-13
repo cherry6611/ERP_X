@@ -98,6 +98,18 @@ export async function updateEmployee(id: string, dto: UpdateEmployeeDto): Promis
   return resp.data;
 }
 
+export async function setEmployeeStatus(
+  id: string,
+  status: 'active' | 'inactive'
+): Promise<Employee> {
+  const resp = await axiosForBackend.patch<Employee>(
+    `/api/hr/employees/${id}/status`,
+    { status }
+  );
+  ensureNotForbidden(resp);
+  return resp.data;
+}
+
 /** 当前登录用户绑定的员工；未绑定返回 null */
 export async function fetchMyEmployee(): Promise<Employee | null> {
   const resp = await axiosForBackend.get<Employee | null>('/api/hr/employees/me');

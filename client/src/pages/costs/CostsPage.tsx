@@ -1,18 +1,17 @@
 import React, { useState } from 'react';
 import ReactECharts from 'echarts-for-react';
 import type { EChartsOption } from 'echarts';
-import { Loader2, RotateCcw } from 'lucide-react';
 import PageShell from '@client/src/components/PageShell';
+import { DataState } from '@client/src/components/DataState';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@client/src/components/ui/tabs';
 import {
   ToggleGroup,
   ToggleGroupItem,
 } from '@client/src/components/ui/toggle-group';
-import { Button } from '@client/src/components/ui/button';
 import { costsApi } from '@client/src/api';
 import { useAsyncData } from '@client/src/hooks/useAsyncData';
 import { formatMoney } from '@client/src/utils/format';
-import { CHART_COLORS } from '@client/src/utils/chart-colors';
+import { CHART_COLORS, CHART_SEMANTIC_COLORS } from '@client/src/utils/chart-colors';
 import type { CostDimension, CostDimensionSummary } from '@shared/api.interface';
 import CostsTab from './CostsTab';
 import TimesheetsTab from './TimesheetsTab';
@@ -47,7 +46,7 @@ const buildDimensionOption = (
           type: 'bar',
           name: '成本金额',
           data: items.map((item: CostDimensionSummary) => item.amount),
-          itemStyle: { color: CHART_COLORS[0] },
+          itemStyle: { color: CHART_SEMANTIC_COLORS.cost },
         },
       ],
     };
@@ -110,25 +109,15 @@ const CostDimensionAnalysisSection: React.FC = () => {
           ))}
         </ToggleGroup>
       </div>
-      {loading ? (
-        <div className="flex h-[300px] items-center justify-center gap-2 text-sm text-muted-foreground">
-          <Loader2 className="h-4 w-4 animate-spin" />
-          加载中…
-        </div>
-      ) : error ? (
-        <div className="flex flex-col items-center justify-center gap-2 py-12 text-sm text-destructive">
-          <p>{error}</p>
-          <Button variant="outline" size="sm" onClick={() => void reload()}>
-            <RotateCcw className="h-4 w-4" />
-            重试
-          </Button>
-        </div>
-      ) : items.length === 0 ? (
-        <p className="py-12 text-center text-sm text-muted-foreground">暂无成本数据</p>
-      ) : (
+      <DataState
+        loading={loading}
+        error={error}
+        empty={!loading && !error && items.length === 0}
+        emptyText="暂无成本数据"
+        onRetry={() => void reload()}
+        skeleton="card"
+      >
         <ReactECharts option={option} theme="ud" className="h-[300px] w-full" />
-      )}
-      {!loading && !error && items.length > 0 ? (
         <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
           {items.map((item: CostDimensionSummary) => (
             <div key={item.key} className="flex flex-col rounded-md border bg-background px-3 py-2">
@@ -139,7 +128,7 @@ const CostDimensionAnalysisSection: React.FC = () => {
             </div>
           ))}
         </div>
-      ) : null}
+      </DataState>
     </div>
   );
 };

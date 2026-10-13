@@ -7,6 +7,7 @@ import type {
   MonthlyTrend,
   ProjectFinancialHealthSummary,
   ProjectMargin,
+  TaxDistributionItem,
 } from '@shared/api.interface';
 
 export async function getBiOverview(): Promise<BiOverview> {
@@ -42,6 +43,13 @@ export async function getCustomerContributions(): Promise<CustomerContribution[]
 
 export async function getMonthlyTrends(): Promise<MonthlyTrend[]> {
   const resp = await axiosForBackend.get<MonthlyTrend[]>('/api/bi/monthly-trends');
+  return resp.data;
+}
+
+export async function getTaxDistribution(): Promise<TaxDistributionItem[]> {
+  const resp = await axiosForBackend.get<TaxDistributionItem[]>(
+    '/api/bi/tax-distribution'
+  );
   return resp.data;
 }
 

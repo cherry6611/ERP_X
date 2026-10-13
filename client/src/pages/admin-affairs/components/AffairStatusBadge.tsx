@@ -10,9 +10,9 @@ export const AFFAIR_STATUS_LABELS: Record<AdminAffairStatus, string> = {
 /* 颜色语义：已登记=黄、已结清=绿 */
 
 const YELLOW_CLASS =
-  'border-transparent bg-amber-100 text-amber-700 hover:bg-amber-100';
+  'border-transparent bg-warning/10 text-warning hover:bg-warning/10';
 const GREEN_CLASS =
-  'border-transparent bg-emerald-100 text-emerald-700 hover:bg-emerald-100';
+  'border-transparent bg-success/10 text-success hover:bg-success/10';
 
 const AffairStatusBadge: React.FC<{ status: AdminAffairStatus }> = ({
   status,

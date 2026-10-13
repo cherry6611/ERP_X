@@ -8,6 +8,7 @@ import { Table, TableColumnsType } from 'antd';
 import { CanRole } from '@client/src/platform/auth';
 import DateField from '@client/src/components/erp/DateField';
 import StatusBadge from '@client/src/components/erp/StatusBadge';
+import TaxEntityBanner from '@client/src/components/erp/TaxEntityBanner';
 import { Button } from '@/components/ui/button';
 import {
   Card,
@@ -52,6 +53,13 @@ import type {
   InvoiceType,
   Supplier,
 } from '@shared/api.interface';
+import {
+  coerceTaxRate,
+  resolveRateOptions,
+  resolveTaxEntity,
+} from '@client/src/utils/tax-rate-options';
+import { getApiErrorMessage } from '@client/src/utils/api-error-message';
+import { VAT_RATES } from '@shared/tax';
 
 const INVOICE_STATUS_LABELS: Record<string, string> = {
   issued: '已开票',
@@ -63,20 +71,15 @@ const DIRECTION_LABELS: Record<InvoiceDirection, string> = {
   purchase: '进项',
 };
 
-const TAX_RATE_OPTIONS: { value: string; label: string }[] = [
-  { value: '0', label: '0%' },
-  { value: '6', label: '6%' },
-  { value: '9', label: '9%' },
-  { value: '13', label: '13%' },
-];
-
 const invoiceSchema = z
   .object({
     direction: z.enum(['sales', 'purchase']),
     supplierId: z.string(),
     invoiceType: z.string().min(1, '请选择发票类型'),
     amount: z.coerce.number().min(0.01, '开票金额必须大于 0'),
-    taxRate: z.coerce.number().min(0).max(100),
+    taxRate: z.coerce
+      .number()
+      .refine((value) => (VAT_RATES as readonly number[]).includes(value), '请选择合法税率'),
     invoiceNo: z.string(),
     invoiceDate: z.string(),
     remark: z.string(),
@@ -120,6 +123,10 @@ const InvoiceSection: React.FC<InvoiceSectionProps> = ({ projectId, onChanged })
   const { data: suppliers } = useAsyncData<Supplier[]>(
     () => masterDataApi.listSuppliers(),
     [],
+  );
+  const { data: taxEntities } = useAsyncData(
+    () => masterDataApi.listTaxEntities(),
+    []
   );
 
   const form = useForm<InvoiceFormInput, unknown, InvoiceFormData>({
@@ -197,7 +204,7 @@ const InvoiceSection: React.FC<InvoiceSectionProps> = ({ projectId, onChanged })
       await Promise.all([reload(), reloadAccounting()]);
       onChanged?.();
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : '发票登记失败');
+      toast.error(getApiErrorMessage(err, '发票登记失败'));
     }
   });
 
@@ -205,6 +212,7 @@ const InvoiceSection: React.FC<InvoiceSectionProps> = ({ projectId, onChanged })
     <Card>
       <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-2 space-y-0">
         <div className="flex flex-col gap-1">
+          <TaxEntityBanner />
           <CardTitle className="text-base font-semibold">发票</CardTitle>
           <CardDescription>
             开票金额合计 {formatMoney(invoiceTotal)}，已确认收入{' '}
@@ -212,7 +220,20 @@ const InvoiceSection: React.FC<InvoiceSectionProps> = ({ projectId, onChanged })
           </CardDescription>
         </div>
         <CanRole roles={['admin']}>
-          <Button onClick={() => setCreateOpen(true)}>
+          <Button
+            onClick={() => {
+              // 修复 P0-2：打开弹窗时按合同主体校正默认税率，避免 6% 撞小规模主体白名单
+              const entity = resolveTaxEntity({
+                taxEntityId: chain?.contract?.taxEntityId ?? null,
+                taxEntities: taxEntities ?? [],
+              });
+              form.reset({
+                ...FORM_DEFAULTS,
+                taxRate: coerceTaxRate(Number(FORM_DEFAULTS.taxRate ?? 6), entity),
+              });
+              setCreateOpen(true);
+            }}
+          >
             <Plus className="h-4 w-4" />
             开票
           </Button>
@@ -344,26 +365,40 @@ const InvoiceSection: React.FC<InvoiceSectionProps> = ({ projectId, onChanged })
                 <FormField
                   control={form.control}
                   name="taxRate"
-                  render={({ field }) => (
+                  render={({ field }) => {
+                    // 修复 P0-2：项目开票一定挂在合同上，后端用的是
+                    // contract.taxEntityId（invoice.service.ts），前端必须同口径，
+                    // 否则默认主体是小规模时下拉只有 0/1/3，而 value=6 匹配不到
+                    // → Radix 渲染成空白下拉，提交仍是 6 → 400。
+                    const entity = resolveTaxEntity({
+                      taxEntityId: chain?.contract?.taxEntityId ?? null,
+                      taxEntities: taxEntities ?? [],
+                    });
+                    const rates = resolveRateOptions(entity);
+                    return (
                     <FormItem className="flex-1">
                       <FormLabel>税率</FormLabel>
-                      <Select onValueChange={field.onChange} value={String(field.value)}>
+                      <Select
+                        onValueChange={(value) => field.onChange(Number(value))}
+                        value={String(field.value)}
+                      >
                         <FormControl>
                           <SelectTrigger>
                             <SelectValue placeholder="请选择税率" />
                           </SelectTrigger>
                         </FormControl>
                         <SelectContent>
-                          {TAX_RATE_OPTIONS.map((opt) => (
-                            <SelectItem key={opt.value} value={opt.value}>
-                              {opt.label}
+                          {rates.map((rate) => (
+                            <SelectItem key={rate} value={String(rate)}>
+                              {rate}%
                             </SelectItem>
                           ))}
                         </SelectContent>
                       </Select>
                       <FormMessage />
                     </FormItem>
-                  )}
+                    );
+                  }}
                 />
               </div>
               <FormField
@@ -372,7 +407,7 @@ const InvoiceSection: React.FC<InvoiceSectionProps> = ({ projectId, onChanged })
                 render={({ field }) => (
                   <FormItem>
                     <FormLabel>
-                      开票金额（元，不含税）{' '}
+                      开票金额（元，含税）{' '}
                       <span aria-hidden="true" className="text-destructive">*</span>
                     </FormLabel>
                     <FormControl>

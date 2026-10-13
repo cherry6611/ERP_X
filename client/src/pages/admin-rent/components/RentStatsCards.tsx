@@ -1,5 +1,6 @@
 import React from 'react';
 import { FileCheck, CalendarClock, Banknote } from 'lucide-react';
+import { DataState } from '@client/src/components/DataState';
 import StatCard from '@client/src/components/erp/StatCard';
 import { formatMoney, formatNumber } from '@client/src/utils/format';
 import type { AdminRentContractStats } from '@shared/api.interface';
@@ -14,6 +15,10 @@ const RentStatsCards: React.FC<RentStatsCardsProps> = ({ stats, loading }) => {
   const expiringCount = stats ? formatNumber(stats.expiringCount) : '-';
   const totalMonthlyRent = stats ? formatMoney(stats.totalMonthlyRent) : '-';
 
+  if (loading) {
+    return <DataState loading skeleton="card" />;
+  }
+
   return (
     <div
       className="grid grid-cols-3 gap-4"
@@ -21,19 +26,19 @@ const RentStatsCards: React.FC<RentStatsCardsProps> = ({ stats, loading }) => {
     >
       <StatCard
         label="生效中合同数"
-        value={loading ? '加载中...' : activeCount}
+        value={activeCount}
         icon={FileCheck}
         tone="success"
       />
       <StatCard
         label="未来30天到期"
-        value={loading ? '加载中...' : expiringCount}
+        value={expiringCount}
         icon={CalendarClock}
         tone="warning"
       />
       <StatCard
         label="月租金合计"
-        value={loading ? '加载中...' : totalMonthlyRent}
+        value={totalMonthlyRent}
         icon={Banknote}
         tone="primary"
       />

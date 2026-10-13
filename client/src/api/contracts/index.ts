@@ -12,9 +12,12 @@ import type {
   CreateCalloffDto,
   CreateContractDto,
   CreateMilestoneDto,
+  ContractItem,
   PagedResult,
   UpdateContractDto,
 } from '@shared/api.interface';
+
+export type { ContractItem };
 
 export async function listContracts(params?: ContractListParams): Promise<Contract[]> {
   const resp = await axiosForBackend.get<PagedResult<Contract>>('/api/contracts', {
@@ -96,6 +99,52 @@ export async function createVersion(
   const resp = await axiosForBackend.post<ContractVersion>(
     `/api/contracts/${contractId}/changes`,
     dto,
+  );
+  ensureNotForbidden(resp);
+  return resp.data;
+}
+
+export async function listContractItems(contractId: string): Promise<ContractItem[]> {
+  const resp = await axiosForBackend.get<ContractItem[]>(
+    `/api/contracts/${contractId}/items`
+  );
+  return resp.data;
+}
+
+export async function createContractItem(
+  contractId: string,
+  dto: {
+    itemName: string;
+    unit?: string;
+    quantity: number;
+    unitPrice: number;
+    discountPct?: number;
+    taxRate: number;
+    estUnitCost?: number;
+  }
+): Promise<ContractItem> {
+  const resp = await axiosForBackend.post<ContractItem>(
+    `/api/contracts/${contractId}/items`,
+    dto
+  );
+  ensureNotForbidden(resp);
+  return resp.data;
+}
+
+export async function deleteContractItem(
+  contractId: string,
+  itemId: string
+): Promise<void> {
+  await axiosForBackend.post(`/api/contracts/${contractId}/items/${itemId}/delete`);
+}
+
+export async function importQuotationItems(
+  contractId: string,
+  quotationId: string
+): Promise<ContractItem[]> {
+  const resp = await axiosForBackend.post<ContractItem[]>(
+    `/api/contracts/${contractId}/items/import-quotation`,
+    { quotationId }
   );
   ensureNotForbidden(resp);
   return resp.data;

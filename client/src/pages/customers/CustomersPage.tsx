@@ -3,13 +3,28 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { useForm } from 'react-hook-form';
 import { z } from 'zod';
 import { toast } from 'sonner';
-import { Download, Plus, Upload } from 'lucide-react';
+import { Download, MoreHorizontal, Plus, Upload } from 'lucide-react';
 import { Table, TableColumnsType } from 'antd';
 import PageShell from '@client/src/components/PageShell';
+import { DataState } from '@client/src/components/DataState';
 import StatusBadge from '@client/src/components/erp/StatusBadge';
+import TaxEntityBanner from '@client/src/components/erp/TaxEntityBanner';
+import { CanRole } from '@client/src/platform/auth';
+import {
+  coerceTaxRate,
+  resolveRateOptions,
+} from '@client/src/utils/tax-rate-options';
+import { VAT_RATES } from '@shared/tax';
 import ContactsDialog from './ContactsDialog';
 import CreditDialog from './CreditDialog';
 import { Button } from '@client/src/components/ui/button';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@client/src/components/ui/dropdown-menu';
+import { useDebouncedValue } from '@client/src/hooks/useDebouncedValue';
 import {
   Dialog,
   DialogContent,
@@ -46,6 +61,7 @@ import {
 import { masterDataApi } from '@client/src/api';
 import { useAsyncData } from '@client/src/hooks/useAsyncData';
 import { formatMoney } from '@client/src/utils/format';
+import { getApiErrorMessage } from '@client/src/utils/api-error-message';
 import type {
   CreateCustomerDto,
   Customer,
@@ -166,6 +182,8 @@ const customerSchema = z.object({
   termsDays: z.coerce.number().min(0).max(365),
   status: z.string(),
   remark: z.string(),
+  taxEntityId: z.string(),
+  defaultTaxRate: z.string(),
 });
 
 type CustomerFormData = z.output<typeof customerSchema>;
@@ -173,6 +191,7 @@ type CustomerFormInput = z.input<typeof customerSchema>;
 
 const CustomersPage: React.FC = () => {
   const [keyword, setKeyword] = useState('');
+  const keywordQuery = useDebouncedValue(keyword);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editing, setEditing] = useState<Customer | null>(null);
   const [contactsCustomer, setContactsCustomer] = useState<Customer | null>(null);
@@ -182,8 +201,8 @@ const CustomersPage: React.FC = () => {
   const [pageSize, setPageSize] = useState(20);
 
   const { data, loading, error, reload } = useAsyncData<PagedResult<Customer>>(
-    () => masterDataApi.listCustomersPaged(page, pageSize, keyword || undefined),
-    [page, pageSize, keyword],
+    () => masterDataApi.listCustomersPaged(page, pageSize, keywordQuery || undefined),
+    [page, pageSize, keywordQuery],
   );
 
   const form = useForm<CustomerFormInput, unknown, CustomerFormData>({
@@ -197,8 +216,14 @@ const CustomersPage: React.FC = () => {
       termsDays: 30,
       status: 'prospect',
       remark: '',
+      taxEntityId: '',
+      defaultTaxRate: '',
     },
   });
+  const { data: taxEntities } = useAsyncData(
+    () => masterDataApi.listTaxEntities(),
+    []
+  );
 
   const handleExport = () => {
     const rows: Customer[] = data?.items ?? [];
@@ -220,6 +245,8 @@ const CustomersPage: React.FC = () => {
       termsDays: 30,
       status: 'prospect',
       remark: '',
+      taxEntityId: '',
+      defaultTaxRate: '',
     });
     setDialogOpen(true);
   };
@@ -235,27 +262,47 @@ const CustomersPage: React.FC = () => {
       termsDays: customer.termsDays,
       status: customer.status,
       remark: customer.remark ?? '',
+      taxEntityId: customer.taxEntityId ?? '',
+      defaultTaxRate:
+        customer.defaultTaxRate != null ? String(customer.defaultTaxRate) : '',
     });
     setDialogOpen(true);
   };
 
   const onSubmit = form.handleSubmit(async (data) => {
     try {
+      const taxPayload = {
+        taxEntityId: data.taxEntityId || null,
+        defaultTaxRate:
+          data.defaultTaxRate === '' ? null : Number(data.defaultTaxRate),
+      };
       if (editing) {
-        const dto: UpdateCustomerDto = { ...data };
+        const dto: UpdateCustomerDto = { ...data, ...taxPayload };
         await masterDataApi.updateCustomer(editing.id, dto);
         toast.success('客户已更新');
       } else {
-        const dto: CreateCustomerDto = { ...data };
+        const dto: CreateCustomerDto = { ...data, ...taxPayload };
         await masterDataApi.createCustomer(dto);
         toast.success('客户已创建');
       }
       setDialogOpen(false);
       await reload();
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : '保存失败');
+      toast.error(getApiErrorMessage(err, '保存失败'));
     }
   });
+
+  const toggleStatus = async (customer: Customer) => {
+    const next: 'active' | 'inactive' =
+      customer.status === 'inactive' ? 'active' : 'inactive';
+    try {
+      await masterDataApi.setCustomerStatus(customer.id, next);
+      toast.success(next === 'inactive' ? '客户已停用' : '客户已启用');
+      await reload();
+    } catch (err) {
+      toast.error(getApiErrorMessage(err, '状态更新失败'));
+    }
+  };
 
   const columns: TableColumnsType<Customer> = [
     { title: '编号', dataIndex: 'code', fixed: 'left', width: 130 },
@@ -288,18 +335,36 @@ const CustomersPage: React.FC = () => {
       title: '操作',
       key: 'action',
       fixed: 'right',
-      width: 220,
+      width: 260,
       render: (_, record) => (
         <div className="flex gap-1">
-          <Button variant="ghost" size="sm" onClick={() => openEdit(record)}>
-            编辑
-          </Button>
-          <Button variant="ghost" size="sm" onClick={() => setContactsCustomer(record)}>
-            联系人
-          </Button>
-          <Button variant="ghost" size="sm" onClick={() => setCreditCustomer(record)}>
-            信用
-          </Button>
+          <CanRole roles={['admin']}>
+            <Button size="sm" onClick={() => openEdit(record)}>
+              编辑
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => void toggleStatus(record)}
+            >
+              {record.status === 'inactive' ? '启用' : '停用'}
+            </Button>
+          </CanRole>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="ghost" size="icon" aria-label={`${record.name} 的更多操作`}>
+                <MoreHorizontal className="size-4" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <CanRole roles={['admin']}>
+                <DropdownMenuItem onClick={() => setContactsCustomer(record)}>
+                  联系人
+                </DropdownMenuItem>
+              </CanRole>
+              <DropdownMenuItem onClick={() => setCreditCustomer(record)}>信用</DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
       ),
     },
@@ -307,6 +372,7 @@ const CustomersPage: React.FC = () => {
 
   return (
     <PageShell title="客户管理" description="客户档案、多联系人、信用额度与账期管理">
+      <TaxEntityBanner />
       <div className="flex items-center gap-3">
         <Input
           aria-label="搜索客户"
@@ -318,44 +384,47 @@ const CustomersPage: React.FC = () => {
             setPage(1);
           }}
         />
-        <Button onClick={openCreate}>
-          <Plus className="h-4 w-4" />
-          新建客户
-        </Button>
+        <CanRole roles={['admin']}>
+          <Button onClick={openCreate}>
+            <Plus className="h-4 w-4" />
+            新建客户
+          </Button>
+        </CanRole>
         <Button variant="outline" onClick={handleExport}>
           <Download className="h-4 w-4" />
           导出 Excel
         </Button>
-        <Button variant="outline" onClick={() => setImportOpen(true)}>
-          <Upload className="h-4 w-4" />
-          导入 Excel
-        </Button>
-      </div>
-      {error ? (
-        <p className="text-sm text-destructive">
-          {error}
-          <Button variant="ghost" size="sm" className="ml-2" onClick={() => void reload()}>
-            重试
+        <CanRole roles={['admin']}>
+          <Button variant="outline" onClick={() => setImportOpen(true)}>
+            <Upload className="h-4 w-4" />
+            导入 Excel
           </Button>
-        </p>
-      ) : null}
-      <Table
-        columns={columns}
-        dataSource={data?.items ?? []}
+        </CanRole>
+      </div>
+      <DataState
         loading={loading}
-        rowKey="id"
-        scroll={{ x: 1100, y: 500 }}
-        pagination={{
-          current: page,
-          pageSize,
-          total: data?.total ?? 0,
-          showTotal: (t: number) => `共 ${t} 条`,
-          onChange: (p: number, s: number) => {
-            setPage(p);
-            setPageSize(s);
-          },
-        }}
-      />
+        error={error}
+        onRetry={() => void reload()}
+        skeleton="table"
+      >
+        <Table
+          columns={columns}
+          dataSource={data?.items ?? []}
+          rowKey="id"
+          scroll={{ x: 1100, y: 500 }}
+          pagination={{
+            current: page,
+            pageSize,
+            total: data?.total ?? 0,
+            showTotal: (t: number) => `共 ${t} 条`,
+            onChange: (p: number, s: number) => {
+              setPage(p);
+              setPageSize(s);
+            },
+          }}
+          locale={{ emptyText: '暂无客户，点击右上角「新建客户」创建' }}
+        />
+      </DataState>
       <ContactsDialog
         customer={contactsCustomer}
         open={contactsCustomer !== null}
@@ -524,6 +593,75 @@ const CustomersPage: React.FC = () => {
                       <FormMessage />
                     </FormItem>
                   )}
+                />
+              </div>
+              <div className="flex gap-4">
+                <FormField
+                  control={form.control}
+                  name="taxEntityId"
+                  render={({ field }) => (
+                    <FormItem className="flex-1">
+                      <FormLabel>关联纳税主体</FormLabel>
+                      <Select
+                        value={field.value || '__none__'}
+                        onValueChange={(value) =>
+                          field.onChange(value === '__none__' ? '' : value)
+                        }
+                      >
+                        <FormControl>
+                          <SelectTrigger>
+                            <SelectValue placeholder="可选" />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          <SelectItem value="__none__">不指定</SelectItem>
+                          {(taxEntities ?? [])
+                            .filter((entity) => entity.status === 'active')
+                            .map((entity) => (
+                              <SelectItem key={entity.id} value={entity.id}>
+                                {entity.name}
+                              </SelectItem>
+                            ))}
+                        </SelectContent>
+                      </Select>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={form.control}
+                  name="defaultTaxRate"
+                  render={({ field }) => {
+                    const entityId = form.watch('taxEntityId');
+                    const entity = (taxEntities ?? []).find((row) => row.id === entityId);
+                    const rates = resolveRateOptions(entity);
+                    return (
+                    <FormItem className="w-36">
+                      <FormLabel>默认税率</FormLabel>
+                      <Select
+                        value={field.value || '__none__'}
+                        onValueChange={(value) =>
+                          field.onChange(value === '__none__' ? '' : value)
+                        }
+                      >
+                        <FormControl>
+                          <SelectTrigger>
+                            <SelectValue placeholder="可选" />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          <SelectItem value="__none__">不指定</SelectItem>
+                          {rates.map((rate) => (
+                            <SelectItem key={rate} value={String(rate)}>
+                              {rate}%
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <FormMessage />
+                    </FormItem>
+                    );
+                  }}
                 />
               </div>
               <FormField

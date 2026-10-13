@@ -232,7 +232,7 @@ const GrantPanel: React.FC = () => {
     <div className="flex flex-col gap-6">
       <div className="flex flex-col gap-3">
         <h3 className="text-base font-semibold flex items-center gap-2">
-          <AlertTriangle className="h-4 w-4 text-amber-500" />
+          <AlertTriangle className="h-4 w-4 text-warning" />
           授权到期预警（30 天内到期 / 已过期）
         </h3>
         <Table

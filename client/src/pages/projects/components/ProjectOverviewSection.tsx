@@ -10,6 +10,7 @@ import {
   Users,
   Wallet,
 } from 'lucide-react';
+import { DataState } from '@client/src/components/DataState';
 import StatCard from '@client/src/components/erp/StatCard';
 import { Button } from '@client/src/components/ui/button';
 import {
@@ -90,9 +91,7 @@ const ProjectOverviewSection: React.FC<ProjectOverviewSectionProps> = ({
         <CardDescription>收入、成本、结算与里程碑执行摘要</CardDescription>
       </CardHeader>
       <CardContent>
-        {loading ? (
-          <p className="text-sm text-muted-foreground">加载中...</p>
-        ) : (
+        <DataState loading={loading} skeleton="card">
           <div className="flex flex-wrap gap-4">
             <div className="min-w-[200px] flex-1">
               <StatCard
@@ -181,7 +180,7 @@ const ProjectOverviewSection: React.FC<ProjectOverviewSectionProps> = ({
               />
             </div>
           </div>
-        )}
+        </DataState>
       </CardContent>
     </Card>
   );

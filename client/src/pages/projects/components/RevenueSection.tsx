@@ -36,6 +36,7 @@ import { projectsApi, revenuesApi } from '@client/src/api';
 import { useAsyncData } from '@client/src/hooks/useAsyncData';
 import { formatMoney } from '@client/src/utils/format';
 import { REVENUE_METHOD_LABELS } from '@client/src/utils/biz-labels';
+import { getApiErrorMessage } from '@client/src/utils/api-error-message';
 import type { CreateProjectRevenueDto, RevenueItem } from '@shared/api.interface';
 
 const REVENUE_STATUS_LABELS: Record<string, string> = {
@@ -93,7 +94,7 @@ const RevenueSection: React.FC<RevenueSectionProps> = ({ projectId, onChanged })
       await Promise.all([reload(), reloadAccounting()]);
       onChanged?.();
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : '收入确认失败');
+      toast.error(getApiErrorMessage(err, '收入确认失败'));
     }
   });
 

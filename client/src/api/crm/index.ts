@@ -34,6 +34,12 @@ export async function updateLead(id: string, dto: UpdateLeadDto): Promise<Lead> 
   return resp.data;
 }
 
+export async function convertLead(id: string): Promise<Opportunity> {
+  const resp = await axiosForBackend.post<Opportunity>(`/api/crm/leads/${id}/convert`);
+  ensureNotForbidden(resp);
+  return resp.data;
+}
+
 export async function listOpportunities(stage?: string): Promise<Opportunity[]> {
   const resp = await axiosForBackend.get<Opportunity[]>('/api/crm/opportunities', {
     params: stage ? { stage } : undefined,

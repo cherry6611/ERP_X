@@ -1,8 +1,9 @@
 import React, { useMemo, useState } from 'react';
 import { toast } from 'sonner';
-import { Download, FileText, Plus } from 'lucide-react';
+import { Download, Plus } from 'lucide-react';
 import { Table, TableColumnsType } from 'antd';
 import { CanRole } from '@client/src/platform/auth';
+import { DataState } from '@client/src/components/DataState';
 import FilterBar from '@client/src/components/erp/FilterBar';
 import StatusBadge from '@client/src/components/erp/StatusBadge';
 import { Button } from '@client/src/components/ui/button';
@@ -14,13 +15,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@client/src/components/ui/select';
-import {
-  Empty,
-  EmptyDescription,
-  EmptyHeader,
-  EmptyMedia,
-  EmptyTitle,
-} from '@client/src/components/ui/empty';
 import { crmApi } from '@client/src/api';
 import { useAsyncData } from '@client/src/hooks/useAsyncData';
 import { QUOTATION_STATUS_LABELS } from '@client/src/utils/biz-labels';
@@ -197,49 +191,36 @@ const QuotationsTab: React.FC = () => {
             </SelectContent>
           </Select>
         </div>
-        <CanRole roles={['admin']}>
-          <Button onClick={openCreate}>
-            <Plus className="h-4 w-4" />
-            新建报价
-          </Button>
-        </CanRole>
+        <Button onClick={openCreate}>
+          <Plus className="h-4 w-4" />
+          新建报价
+        </Button>
         <Button variant="outline" onClick={handleExport}>
           <Download className="h-4 w-4" />
           导出 Excel
         </Button>
       </FilterBar>
-      {error ? (
-        <p className="text-sm text-destructive">
-          {error}
-          <Button variant="ghost" size="sm" className="ml-2" onClick={() => void reload()}>
-            重试
-          </Button>
-        </p>
-      ) : null}
-      <Table
-        columns={columns}
-        dataSource={data ?? []}
+      <DataState
         loading={loading}
-        rowKey="id"
-        scroll={{ x: 1200, y: 500 }}
-        pagination={{
-          pageSize: 10,
-          showTotal: (t: number) => `共 ${t} 条`,
-        }}
-        locale={{
-          emptyText: (
-            <Empty className="py-8">
-              <EmptyHeader>
-                <EmptyMedia variant="icon">
-                  <FileText />
-                </EmptyMedia>
-                <EmptyTitle>暂无报价单</EmptyTitle>
-                <EmptyDescription>点击右上角「新建报价」创建</EmptyDescription>
-              </EmptyHeader>
-            </Empty>
-          ),
-        }}
-      />
+        error={error}
+        empty={!loading && !error && (data?.length ?? 0) === 0}
+        emptyTitle="暂无报价单"
+        emptyText="点击上方「新建报价」按钮创建"
+        onRetry={() => void reload()}
+        skeleton="table"
+      >
+        <Table
+          columns={columns}
+          dataSource={data ?? []}
+          rowKey="id"
+          scroll={{ x: 1200, y: 500 }}
+          pagination={{
+            pageSize: 10,
+            showTotal: (t: number) => `共 ${t} 条`,
+          }}
+          locale={{ emptyText: ' ' }}
+        />
+      </DataState>
 
       <QuotationFormDialog
         open={formOpen}

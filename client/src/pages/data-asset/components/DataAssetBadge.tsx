@@ -15,8 +15,8 @@ export const GRANT_STATUS_LABELS: Record<string, string> = {
 
 export const MASK_LEVEL_OPTIONS = ['L1', 'L2', 'L3', 'L4'];
 
-const YELLOW_CLASS =
-  'border-transparent bg-amber-100 text-amber-700 hover:bg-amber-100';
+const WARNING_CLASS =
+  'border-transparent bg-warning/15 text-warning hover:bg-warning/15';
 
 /* 颜色语义：生效/激活=蓝（default），失效/下线=灰（secondary） */
 
@@ -46,9 +46,9 @@ export const WarningBadge: React.FC<WarningBadgeProps> = ({ daysLeft }) => {
     );
   }
   if (daysLeft === 0) {
-    return <Badge className={YELLOW_CLASS}>今日到期</Badge>;
+    return <Badge className={WARNING_CLASS}>今日到期</Badge>;
   }
-  return <Badge className={YELLOW_CLASS}>{daysLeft} 天后到期</Badge>;
+  return <Badge className={WARNING_CLASS}>{daysLeft} 天后到期</Badge>;
 };
 
 export default DataAssetBadge;

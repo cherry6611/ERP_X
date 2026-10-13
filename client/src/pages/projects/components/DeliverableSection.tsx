@@ -8,6 +8,7 @@ import { Plus } from 'lucide-react';
 import { Table, TableColumnsType } from 'antd';
 import { CanRole } from '@client/src/platform/auth';
 import { AttachmentField } from '@client/src/components/attachments/AttachmentField';
+import { DataState } from '@client/src/components/DataState';
 import DateField from '@client/src/components/erp/DateField';
 import { Badge } from '@client/src/components/ui/badge';
 import { Button } from '@client/src/components/ui/button';
@@ -29,6 +30,7 @@ import {
 import { Input } from '@client/src/components/ui/input';
 import { Textarea } from '@client/src/components/ui/textarea';
 import { projectsApi } from '@client/src/api';
+import { getApiErrorMessage } from '@client/src/utils/api-error-message';
 import type {
   CreateDeliverableDto,
   DeliverableItem,
@@ -116,7 +118,7 @@ const DeliverableSection: React.FC<DeliverableSectionProps> = ({ projectId, onCh
       const detail = await projectsApi.getProject(projectId);
       setDeliverables(detail.deliverables);
     } catch (err) {
-      setError(err instanceof Error ? err.message : '加载交付物失败');
+      setError(getApiErrorMessage(err, '加载交付物失败'));
     } finally {
       setLoading(false);
     }
@@ -154,7 +156,7 @@ const DeliverableSection: React.FC<DeliverableSectionProps> = ({ projectId, onCh
       });
       await refresh();
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : '添加失败');
+      toast.error(getApiErrorMessage(err, '添加失败'));
     }
   });
 
@@ -164,7 +166,7 @@ const DeliverableSection: React.FC<DeliverableSectionProps> = ({ projectId, onCh
       toast.success(d.status === 'returned' ? '交付物已重新提交' : '交付物已提交验收');
       await refresh();
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : '操作失败');
+      toast.error(getApiErrorMessage(err, '操作失败'));
     }
   };
 
@@ -187,7 +189,7 @@ const DeliverableSection: React.FC<DeliverableSectionProps> = ({ projectId, onCh
       setAcceptTarget(null);
       await refresh();
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : '验收失败');
+      toast.error(getApiErrorMessage(err, '验收失败'));
     }
   });
 
@@ -206,7 +208,7 @@ const DeliverableSection: React.FC<DeliverableSectionProps> = ({ projectId, onCh
       setReturnTarget(null);
       await refresh();
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : '退回失败');
+      toast.error(getApiErrorMessage(err, '退回失败'));
     }
   });
 
@@ -327,9 +329,7 @@ const DeliverableSection: React.FC<DeliverableSectionProps> = ({ projectId, onCh
           </Button>
         </CanRole>
       </div>
-      {loading ? <p className="text-sm text-muted-foreground">加载中...</p> : null}
-      {error ? <p className="text-sm text-destructive">{error}</p> : null}
-      {!loading && !error ? (
+      <DataState loading={loading} error={error} skeleton="table">
         <Table
           columns={deliverableColumns}
           dataSource={deliverables}
@@ -339,7 +339,7 @@ const DeliverableSection: React.FC<DeliverableSectionProps> = ({ projectId, onCh
           size="small"
           locale={{ emptyText: '暂无交付物' }}
         />
-      ) : null}
+      </DataState>
 
       <Dialog open={addOpen} onOpenChange={setAddOpen}>
         <DialogContent className="max-w-md">

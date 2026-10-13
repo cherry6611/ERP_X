@@ -23,11 +23,11 @@ export const BILL_STATUS_LABELS: Record<string, string> = {
 
 /* 颜色语义：草稿=灰、待审批=黄、已批准=蓝、已付款=绿、已驳回=红 */
 const YELLOW_CLASS =
-  'border-transparent bg-amber-100 text-amber-700 hover:bg-amber-100';
+  'border-transparent bg-warning/10 text-warning hover:bg-warning/10';
 const BLUE_CLASS =
-  'border-transparent bg-blue-100 text-blue-700 hover:bg-blue-100';
+  'border-transparent bg-primary/10 text-primary hover:bg-primary/10';
 const GREEN_CLASS =
-  'border-transparent bg-emerald-100 text-emerald-700 hover:bg-emerald-100';
+  'border-transparent bg-success/10 text-success hover:bg-success/10';
 
 interface AdminBillStatusBadgeProps {
   status: AdminBillStatus;

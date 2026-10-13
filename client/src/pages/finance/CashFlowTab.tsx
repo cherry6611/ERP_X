@@ -5,12 +5,12 @@ import dayjs from 'dayjs';
 import { toast } from 'sonner';
 import { TrendingUp, Wallet } from 'lucide-react';
 import { Table, TableColumnsType } from 'antd';
+import { DataState } from '@client/src/components/DataState';
 import StatCard from '@client/src/components/erp/StatCard';
-import { Button } from '@/components/ui/button';
 import { financeApi } from '@client/src/api';
 import { useAsyncData } from '@client/src/hooks/useAsyncData';
 import { formatMoney } from '@client/src/utils/format';
-import { CHART_COLORS, CHART_SEMANTIC_COLORS } from '@client/src/utils/chart-colors';
+import { CHART_SEMANTIC_COLORS } from '@client/src/utils/chart-colors';
 import type { CashFlowForecast, CashFlowWeek } from '@shared/api.interface';
 
 const FORECAST_WEEKS = 13;
@@ -66,8 +66,8 @@ const CashFlowTab: React.FC = () => {
         yAxisIndex: 1,
         data: weeks.map((w: CashFlowWeek) => w.cumulativeCash),
         smooth: true,
-        itemStyle: { color: CHART_COLORS[0] },
-        lineStyle: { color: CHART_COLORS[0] },
+        itemStyle: { color: CHART_SEMANTIC_COLORS.revenue },
+        lineStyle: { color: CHART_SEMANTIC_COLORS.revenue },
       },
     ],
   };
@@ -128,36 +128,30 @@ const CashFlowTab: React.FC = () => {
           hint={`未来 ${FORECAST_WEEKS} 周流入流出的净额合计`}
         />
       </div>
-      {error ? (
-        <p className="text-sm text-destructive">
-          {error}
-          <Button variant="ghost" size="sm" className="ml-2" onClick={() => void reload()}>
-            重试
-          </Button>
-        </p>
-      ) : null}
-      <div className="rounded-lg border bg-card p-4">
-        <h3 className="text-base font-semibold">未来 {FORECAST_WEEKS} 周现金流预测</h3>
-        {weeks.length > 0 ? (
-          <ReactECharts option={option} theme="ud" className="h-[360px] w-full" />
-        ) : loading ? (
-          <p className="py-8 text-center text-sm text-muted-foreground">加载中...</p>
-        ) : (
-          <p className="py-8 text-center text-sm text-muted-foreground">暂无现金流预测数据</p>
-        )}
-      </div>
-      <Table
-        columns={columns}
-        dataSource={weeks}
+      <DataState
         loading={loading}
-        rowKey="weekStart"
-        scroll={{ x: 740, y: 420 }}
-        pagination={{
-          pageSize: 13,
-          showTotal: (t: number) => `共 ${t} 条`,
-        }}
-        locale={{ emptyText: '暂无现金流预测数据' }}
-      />
+        error={error}
+        empty={!loading && !error && weeks.length === 0}
+        emptyText="暂无现金流预测数据"
+        onRetry={() => void reload()}
+        skeleton="table"
+      >
+        <div className="rounded-lg border bg-card p-4">
+          <h3 className="text-base font-semibold">未来 {FORECAST_WEEKS} 周现金流预测</h3>
+          <ReactECharts option={option} theme="ud" className="h-[360px] w-full" />
+        </div>
+        <Table
+          columns={columns}
+          dataSource={weeks}
+          rowKey="weekStart"
+          scroll={{ x: 740, y: 420 }}
+          pagination={{
+            pageSize: 13,
+            showTotal: (t: number) => `共 ${t} 条`,
+          }}
+          locale={{ emptyText: ' ' }}
+        />
+      </DataState>
       <p className="text-sm text-muted-foreground">
         口径说明：流入=未结应收按账期落周；流出=未付应付、每月工资固定流出（按最近已审批周期）、已审批未付报销；期初现金=已确认回款−已支付
       </p>

@@ -2,6 +2,7 @@ import React, { useEffect } from 'react';
 import { AlertTriangle, Eye } from 'lucide-react';
 import { toast } from 'sonner';
 import { Table, TableColumnsType } from 'antd';
+import { DataState } from '@client/src/components/DataState';
 import StatCard from '@client/src/components/erp/StatCard';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -171,11 +172,7 @@ const ProjectFinancialHealthPanel: React.FC = () => {
           />
         </div>
       ) : null}
-      {loading ? (
-        <p className="py-6 text-center text-sm text-muted-foreground">
-          加载中...
-        </p>
-      ) : (
+      <DataState loading={loading} skeleton="table">
         <Table
           columns={columns}
           dataSource={sorted}
@@ -184,7 +181,7 @@ const ProjectFinancialHealthPanel: React.FC = () => {
           pagination={false}
           locale={{ emptyText: '暂无项目财务健康数据' }}
         />
-      )}
+      </DataState>
     </div>
   );
 };

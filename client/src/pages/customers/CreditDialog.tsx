@@ -1,4 +1,5 @@
 import React from 'react';
+import { DataState } from '@client/src/components/DataState';
 import {
   Dialog,
   DialogContent,
@@ -29,42 +30,42 @@ const CreditDialog: React.FC<CreditDialogProps> = ({ customer, open, onOpenChang
         <DialogHeader>
           <DialogTitle>客户信用 - {customer?.name}</DialogTitle>
         </DialogHeader>
-        {loading ? <p className="text-sm text-muted-foreground">加载中...</p> : null}
-        {error ? <p className="text-sm text-destructive">{error}</p> : null}
-        {data ? (
-          <div className="flex flex-col gap-3 text-sm">
-            <div className="flex justify-between">
-              <span className="text-muted-foreground">信用额度</span>
-              <span>{formatMoney(data.creditLimit)}</span>
+        <DataState loading={loading} error={error}>
+          {data ? (
+            <div className="flex flex-col gap-3 text-sm">
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">信用额度</span>
+                <span>{formatMoney(data.creditLimit)}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">账期内应收占用</span>
+                <span>{formatMoney(data.openArAmount)}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">逾期金额</span>
+                <span className={data.overdueAmount > 0 ? 'text-destructive' : ''}>
+                  {formatMoney(data.overdueAmount)}
+                </span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="text-muted-foreground">额度状态</span>
+                {data.exceedLimit ? (
+                  <Badge variant="destructive">已超额度</Badge>
+                ) : (
+                  <Badge variant="default">额度内</Badge>
+                )}
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="text-muted-foreground">逾期状态</span>
+                {data.hasOverdue ? (
+                  <Badge variant="destructive">存在逾期</Badge>
+                ) : (
+                  <Badge variant="default">无逾期</Badge>
+                )}
+              </div>
             </div>
-            <div className="flex justify-between">
-              <span className="text-muted-foreground">账期内应收占用</span>
-              <span>{formatMoney(data.openArAmount)}</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-muted-foreground">逾期金额</span>
-              <span className={data.overdueAmount > 0 ? 'text-destructive' : ''}>
-                {formatMoney(data.overdueAmount)}
-              </span>
-            </div>
-            <div className="flex justify-between items-center">
-              <span className="text-muted-foreground">额度状态</span>
-              {data.exceedLimit ? (
-                <Badge variant="destructive">已超额度</Badge>
-              ) : (
-                <Badge variant="default">额度内</Badge>
-              )}
-            </div>
-            <div className="flex justify-between items-center">
-              <span className="text-muted-foreground">逾期状态</span>
-              {data.hasOverdue ? (
-                <Badge variant="destructive">存在逾期</Badge>
-              ) : (
-                <Badge variant="default">无逾期</Badge>
-              )}
-            </div>
-          </div>
-        ) : null}
+          ) : null}
+        </DataState>
       </DialogContent>
     </Dialog>
   );

@@ -6,6 +6,7 @@ import { toast } from 'sonner';
 import { Download, Plus } from 'lucide-react';
 import { Table, TableColumnsType } from 'antd';
 import { CanRole } from '@client/src/platform/auth';
+import { DataState } from '@client/src/components/DataState';
 import StatusBadge from '@client/src/components/erp/StatusBadge';
 import { Button } from '@client/src/components/ui/button';
 import {
@@ -34,11 +35,13 @@ import {
 import { Textarea } from '@/components/ui/textarea';
 import { contractsApi, financeApi, masterDataApi } from '@client/src/api';
 import { useAsyncData } from '@client/src/hooks/useAsyncData';
+import { confirmDanger } from '@client/src/utils/confirmDanger';
 import { formatMoney } from '@client/src/utils/format';
 import {
   exportRowsToXlsx,
   type ExcelSheetColumn,
 } from '@client/src/components/excel/excel-utils';
+import { getApiErrorMessage } from '@client/src/utils/api-error-message';
 import type {
   ArItem,
   ArWriteoffDto,
@@ -59,7 +62,7 @@ const AR_EXPORT_COLUMNS: ExcelSheetColumn<ArItem>[] = [
   { header: '应收编号', value: (row: ArItem) => row.code },
   { header: '客户', value: (row: ArItem) => row.customerName },
   { header: '合同', value: (row: ArItem) => row.contractName },
-  { header: '应收金额', value: (row: ArItem) => row.amount },
+  { header: '应收金额（含税）', value: (row: ArItem) => row.amount },
   { header: '已核销', value: (row: ArItem) => row.settledAmount },
   {
     header: '未核销',
@@ -112,7 +115,10 @@ const ArTab: React.FC = () => {
     () => financeApi.listArs(undefined, statusFilter !== 'all' ? statusFilter : undefined),
     [statusFilter],
   );
-  const { data: receipts } = useAsyncData<ReceiptItem[]>(() => financeApi.listReceipts(), []);
+  const { data: receipts, reload: reloadReceipts } = useAsyncData<ReceiptItem[]>(
+    () => financeApi.listReceipts(),
+    []
+  );
   const { data: contracts } = useAsyncData<Contract[]>(() => contractsApi.listContracts(), []);
   const { data: customers } = useAsyncData<Customer[]>(
     () => masterDataApi.listCustomers(),
@@ -146,7 +152,7 @@ const ArTab: React.FC = () => {
       arForm.reset({ contractId: '', amount: 0, remark: '' });
       await reload();
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : '登记失败');
+      toast.error(getApiErrorMessage(err, '登记失败'));
     }
   });
 
@@ -164,7 +170,7 @@ const ArTab: React.FC = () => {
       receiptForm.reset({ customerId: '', amount: 0, method: 'bank', remark: '' });
       await reload();
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : '登记失败');
+      toast.error(getApiErrorMessage(err, '登记失败'));
     }
   });
 
@@ -181,7 +187,7 @@ const ArTab: React.FC = () => {
       writeoffForm.reset({ arId: '', receiptId: '', amount: 0 });
       await reload();
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : '核销失败');
+      toast.error(getApiErrorMessage(err, '核销失败'));
     }
   });
 
@@ -201,9 +207,9 @@ const ArTab: React.FC = () => {
     { title: '客户', dataIndex: 'customerName', width: 160 },
     { title: '合同', dataIndex: 'contractName', width: 180 },
     {
-      title: '应收金额',
+      title: '应收金额（含税）',
       dataIndex: 'amount',
-      width: 120,
+      width: 140,
       align: 'right',
       render: (v: number) => formatMoney(v),
     },
@@ -250,6 +256,37 @@ const ArTab: React.FC = () => {
     { title: '回款日期', dataIndex: 'receiptDate', width: 110, render: (v) => v ?? '-' },
     { title: '方式', dataIndex: 'method', width: 100, render: (v) => v ?? '-' },
     { title: '来源', dataIndex: 'source', width: 140, render: (v) => v ?? '-' },
+    {
+      title: '操作',
+      key: 'action',
+      width: 90,
+      render: (_, record) =>
+        record.status !== 'voided' ? (
+          <CanRole roles={['admin']}>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => {
+                void (async () => {
+                  const ok = await confirmDanger(
+                    `确认作废回款 ${record.code ?? record.id}？此操作不可恢复。`,
+                  );
+                  if (!ok) return;
+                  try {
+                    await financeApi.voidReceipt(record.id);
+                    toast.success('回款已作废');
+                    await Promise.all([reload(), reloadReceipts()]);
+                  } catch (err: unknown) {
+                    toast.error(getApiErrorMessage(err, '作废失败'));
+                  }
+                })();
+              }}
+            >
+              作废
+            </Button>
+          </CanRole>
+        ) : null,
+    },
   ];
 
   const receiptOptions = (receipts ?? []).filter((r) => r.status !== 'matched');
@@ -295,44 +332,42 @@ const ArTab: React.FC = () => {
           导出 Excel
         </Button>
       </div>
-      {error ? (
-        <p className="text-sm text-destructive">
-          {error}
-          <Button variant="ghost" size="sm" className="ml-2" onClick={() => void reload()}>
-            重试
-          </Button>
-        </p>
-      ) : null}
-      <div className="flex flex-col gap-3">
-        <h3 className="text-base font-semibold">应收账款</h3>
-        <Table
-          columns={arColumns}
-          dataSource={ars ?? []}
-          loading={loading}
-          rowKey="id"
-          scroll={{ x: 1200, y: 400 }}
-          pagination={{
-            pageSize: 10,
-            showTotal: (t: number) => `共 ${t} 条`,
-          }}
-          locale={{ emptyText: '暂无应收，点击右上角「登记应收」创建' }}
-        />
-      </div>
-      <div className="flex flex-col gap-3">
-        <h3 className="text-base font-semibold">回款记录</h3>
-        <Table
-          columns={receiptColumns}
-          dataSource={receipts ?? []}
-          rowKey="id"
-          scroll={{ x: 800, y: 300 }}
-          pagination={{
-            pageSize: 10,
-            showTotal: (t: number) => `共 ${t} 条`,
-          }}
-          locale={{ emptyText: '暂无回款，点击右上角「登记回款」创建' }}
-          size="small"
-        />
-      </div>
+      <DataState
+        loading={loading}
+        error={error}
+        onRetry={() => void reload()}
+        skeleton="table"
+      >
+        <div className="flex flex-col gap-3">
+          <h3 className="text-base font-semibold">应收账款</h3>
+          <Table
+            columns={arColumns}
+            dataSource={ars ?? []}
+            rowKey="id"
+            scroll={{ x: 1200, y: 400 }}
+            pagination={{
+              pageSize: 10,
+              showTotal: (t: number) => `共 ${t} 条`,
+            }}
+            locale={{ emptyText: '暂无应收，点击右上角「登记应收」创建' }}
+          />
+        </div>
+        <div className="flex flex-col gap-3">
+          <h3 className="text-base font-semibold">回款记录</h3>
+          <Table
+            columns={receiptColumns}
+            dataSource={receipts ?? []}
+            rowKey="id"
+            scroll={{ x: 800, y: 300 }}
+            pagination={{
+              pageSize: 10,
+              showTotal: (t: number) => `共 ${t} 条`,
+            }}
+            locale={{ emptyText: '暂无回款，点击右上角「登记回款」创建' }}
+            size="small"
+          />
+        </div>
+      </DataState>
 
       <Dialog open={arOpen} onOpenChange={setArOpen}>
         <DialogContent className="max-w-md">
@@ -374,7 +409,7 @@ const ArTab: React.FC = () => {
                   render={({ field }) => (
                     <FormItem className="flex-1">
                       <FormLabel>
-                        应收金额（元）{' '}
+                        金额（含税）{' '}
                         <span aria-hidden="true" className="text-destructive">*</span>
                       </FormLabel>
                       <FormControl>

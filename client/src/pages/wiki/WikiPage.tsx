@@ -126,9 +126,9 @@ const WikiPage: React.FC = () => {
       }
     >
       {permissionDenied ? (
-        <div className="rounded-md border border-amber-200 bg-amber-50 p-4 text-sm">
-          <p className="font-medium text-amber-800">知识库空间尚未授权本应用访问</p>
-          <p className="mt-2 text-amber-700">
+        <div className="rounded-md border border-warning/40 bg-warning/15 p-4 text-sm">
+          <p className="font-medium text-warning">知识库空间尚未授权本应用访问</p>
+          <p className="mt-2 text-warning">
             请管理员在飞书知识库空间「设置 → 成员管理」中，将本应用（云空间集成）添加为知识库成员并授予可编辑权限，完成后回到本页刷新即可。
           </p>
         </div>

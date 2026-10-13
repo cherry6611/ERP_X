@@ -219,26 +219,28 @@ const DrivePage: React.FC = () => {
             <RefreshCw className="mr-2 h-4 w-4" aria-hidden />
             刷新
           </Button>
-          <Button
-            variant="outline"
-            disabled={path.length === 0}
-            onClick={() => setFolderDialogOpen(true)}
-          >
-            <FolderPlus className="mr-2 h-4 w-4" aria-hidden />
-            新建文件夹
-          </Button>
-          <Button
-            variant="outline"
-            disabled={path.length === 0}
-            onClick={() => setDocDialogOpen(true)}
-          >
-            <FilePlus2 className="mr-2 h-4 w-4" aria-hidden />
-            新建文档
-          </Button>
-          <DriveUploadButton
-            folderToken={path.length > 0 ? path[path.length - 1].token : ''}
-            onUploaded={reload}
-          />
+          <CanRole roles={['admin', 'drive_editor']}>
+            <Button
+              variant="outline"
+              disabled={path.length === 0}
+              onClick={() => setFolderDialogOpen(true)}
+            >
+              <FolderPlus className="mr-2 h-4 w-4" aria-hidden />
+              新建文件夹
+            </Button>
+            <Button
+              variant="outline"
+              disabled={path.length === 0}
+              onClick={() => setDocDialogOpen(true)}
+            >
+              <FilePlus2 className="mr-2 h-4 w-4" aria-hidden />
+              新建文档
+            </Button>
+            <DriveUploadButton
+              folderToken={path.length > 0 ? path[path.length - 1].token : ''}
+              onUploaded={reload}
+            />
+          </CanRole>
         </>
       }
     >

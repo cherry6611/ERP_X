@@ -4,8 +4,11 @@ import { CanRole } from '@client/src/platform/auth';
 import { Badge } from '@client/src/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@client/src/components/ui/card';
 import { Switch } from '@client/src/components/ui/switch';
+import PageShell from '@client/src/components/PageShell';
+import { DataState } from '@client/src/components/DataState';
 import { adminApi } from '@client/src/api';
 import { useAsyncData } from '@client/src/hooks/useAsyncData';
+import { getApiErrorMessage } from '@client/src/utils/api-error-message';
 import type { AutomationConfigItem } from '@shared/api.interface';
 
 const AdminAutomationPage: React.FC = () => {
@@ -22,7 +25,7 @@ const AdminAutomationPage: React.FC = () => {
       toast.success(`任务「${item.taskName}」已${next ? '启用' : '停用'}`);
       await reload();
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : '更新失败');
+      toast.error(getApiErrorMessage(err, '更新失败'));
     } finally {
       setOperatingKey(null);
     }
@@ -31,33 +34,18 @@ const AdminAutomationPage: React.FC = () => {
   const items: AutomationConfigItem[] = data ?? [];
 
   return (
-    <div className="p-6 flex flex-col gap-6">
-      <div>
-        <h1 className="text-2xl font-semibold">自动化任务</h1>
-        <p className="text-sm text-muted-foreground mt-1">
-          定时任务的总开关管理：停用后任务到点不再执行业务逻辑
-        </p>
-      </div>
-
-      {loading ? (
-        <Card>
-          <CardContent className="py-10 text-center text-sm text-muted-foreground">
-            加载中...
-          </CardContent>
-        </Card>
-      ) : error ? (
-        <Card>
-          <CardContent className="py-10 text-center text-sm text-destructive">
-            {error}
-          </CardContent>
-        </Card>
-      ) : items.length === 0 ? (
-        <Card>
-          <CardContent className="py-10 text-center text-sm text-muted-foreground">
-            暂无自动化任务
-          </CardContent>
-        </Card>
-      ) : (
+    <PageShell
+      title="自动化任务"
+      description="定时任务的总开关管理：停用后任务到点不再执行业务逻辑"
+    >
+      <DataState
+        loading={loading}
+        error={error}
+        empty={!loading && !error && items.length === 0}
+        emptyText="暂无自动化任务"
+        onRetry={() => void reload()}
+        skeleton="card"
+      >
         <div className="flex flex-col gap-4">
           {items.map((item) => (
             <Card key={item.taskKey}>
@@ -94,8 +82,8 @@ const AdminAutomationPage: React.FC = () => {
             </Card>
           ))}
         </div>
-      )}
-    </div>
+      </DataState>
+    </PageShell>
   );
 };
 

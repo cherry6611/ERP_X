@@ -1,6 +1,10 @@
 import { logger } from '@client/src/platform/logger';
 import { axiosForBackend } from '@client/src/platform/request';
-import type { ApprovalNotifyPayload } from '@shared/api.interface';
+import type {
+  ApprovalNotifyPayload,
+  ListInboxMessagesResult,
+  MarkInboxMessageReadResult,
+} from '@shared/api.interface';
 
 export async function sendApprovalNotification(
   payload: ApprovalNotifyPayload
@@ -18,4 +22,24 @@ export async function sendApprovalNotification(
   } catch (error) {
     logger.error('审批通知发送失败', error);
   }
+}
+
+/** B8：当前用户站内信 */
+export async function listInbox(
+  unreadOnly = false
+): Promise<ListInboxMessagesResult> {
+  const resp = await axiosForBackend.get<ListInboxMessagesResult>(
+    '/api/notifications/inbox',
+    { params: unreadOnly ? { unreadOnly: '1' } : undefined }
+  );
+  return resp.data;
+}
+
+export async function markInboxRead(
+  id: string
+): Promise<MarkInboxMessageReadResult> {
+  const resp = await axiosForBackend.patch<MarkInboxMessageReadResult>(
+    `/api/notifications/inbox/${id}/read`
+  );
+  return resp.data;
 }

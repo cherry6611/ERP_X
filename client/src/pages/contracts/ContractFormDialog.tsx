@@ -33,6 +33,14 @@ import { Textarea } from '@client/src/components/ui/textarea';
 import { contractsApi, masterDataApi } from '@client/src/api';
 import { useAsyncData } from '@client/src/hooks/useAsyncData';
 import { BILLING_MODEL_LABELS } from '@client/src/utils/biz-labels';
+import {
+  coerceTaxRate,
+  resolveRateOptions,
+  resolveTaxEntity,
+} from '@client/src/utils/tax-rate-options';
+import { formatTaxSplitLine } from '@client/src/utils/tax-display';
+import { getApiErrorMessage } from '@client/src/utils/api-error-message';
+import { VAT_RATES } from '@shared/tax';
 import type { CreateContractDto, Customer } from '@shared/api.interface';
 
 const contractSchema = z.object({
@@ -40,7 +48,10 @@ const contractSchema = z.object({
   customerId: z.string().min(1, '请选择客户'),
   billingModel: z.string().min(1, '请选择计费模式'),
   amount: z.coerce.number().min(1, '合同金额必须大于 0'),
-  taxRate: z.coerce.number().min(0).max(100),
+  taxRate: z.coerce
+    .number()
+    .refine((value) => (VAT_RATES as readonly number[]).includes(value), '请选择合法税率'),
+  taxEntityId: z.string().optional(),
   signDate: z.string().optional(),
   startDate: z.string().optional(),
   endDate: z.string().optional(),
@@ -64,6 +75,10 @@ const ContractFormDialog: React.FC<ContractFormDialogProps> = ({
   onCreated,
 }) => {
   const { data: customers } = useAsyncData<Customer[]>(() => masterDataApi.listCustomers(), []);
+  const { data: taxEntities } = useAsyncData(
+    () => masterDataApi.listTaxEntities(),
+    []
+  );
 
   const form = useForm<ContractFormInput, unknown, ContractFormData>({
     resolver: zodResolver(contractSchema),
@@ -73,6 +88,7 @@ const ContractFormDialog: React.FC<ContractFormDialogProps> = ({
       billingModel: 'project',
       amount: 0,
       taxRate: 6,
+      taxEntityId: '',
       owner: '',
       paymentTerms: '',
       remark: '',
@@ -86,6 +102,7 @@ const ContractFormDialog: React.FC<ContractFormDialogProps> = ({
       billingModel: values.billingModel as CreateContractDto['billingModel'],
       amount: values.amount,
       taxRate: values.taxRate,
+      taxEntityId: values.taxEntityId || undefined,
       signDate: values.signDate,
       startDate: values.startDate,
       endDate: values.endDate,
@@ -100,7 +117,7 @@ const ContractFormDialog: React.FC<ContractFormDialogProps> = ({
       form.reset();
       onCreated(created.id);
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : '登记失败');
+      toast.error(getApiErrorMessage(err, '登记失败'));
     }
   });
 
@@ -136,7 +153,28 @@ const ContractFormDialog: React.FC<ContractFormDialogProps> = ({
                     <FormLabel>
                       客户 <span aria-hidden="true" className="text-destructive">*</span>
                     </FormLabel>
-                    <Select onValueChange={field.onChange} value={field.value}>
+                    <Select
+                      value={field.value}
+                      onValueChange={(value) => {
+                        field.onChange(value);
+                        // 修复 P0-1：切换客户时同步校正税率。
+                        // 客户可能绑定了小规模主体，此时 6% 是非法值，不校正会被后端拒 400。
+                        const entity = resolveTaxEntity({
+                          taxEntityId: form.getValues('taxEntityId'),
+                          taxEntities: taxEntities ?? [],
+                          customerTaxEntityId:
+                            (customers ?? []).find((row) => row.id === value)
+                              ?.taxEntityId ?? null,
+                        });
+                        form.setValue(
+                          'taxRate',
+                          coerceTaxRate(
+                            Number(form.getValues('taxRate') ?? 6),
+                            entity
+                          )
+                        );
+                      }}
+                    >
                       <FormControl>
                         <SelectTrigger>
                           <SelectValue placeholder="请选择客户" />
@@ -188,7 +226,8 @@ const ContractFormDialog: React.FC<ContractFormDialogProps> = ({
                 render={({ field }) => (
                   <FormItem className="flex-1">
                     <FormLabel>
-                      金额（元） <span aria-hidden="true" className="text-destructive">*</span>
+                      金额（含税）{' '}
+                      <span aria-hidden="true" className="text-destructive">*</span>
                     </FormLabel>
                     <FormControl>
                       <Input
@@ -207,27 +246,89 @@ const ContractFormDialog: React.FC<ContractFormDialogProps> = ({
               />
               <FormField
                 control={form.control}
-                name="taxRate"
+                name="taxEntityId"
                 render={({ field }) => (
-                  <FormItem className="w-36">
-                    <FormLabel>税率（%）</FormLabel>
-                    <FormControl>
-                      <Input
-                        type="number"
-                        min={0}
-                        max={100}
-                        value={String(field.value ?? '')}
-                        onChange={field.onChange}
-                        onBlur={field.onBlur}
-                        name={field.name}
-                        ref={field.ref}
-                      />
-                    </FormControl>
+                  <FormItem className="flex-1">
+                    <FormLabel>纳税主体</FormLabel>
+                    <Select
+                      value={field.value || '__default__'}
+                      onValueChange={(value) => {
+                        const nextId = value === '__default__' ? '' : value;
+                        field.onChange(nextId);
+                        const entity = (taxEntities ?? []).find(
+                          (row) => row.id === nextId
+                        );
+                        const current = Number(form.getValues('taxRate') ?? 6);
+                        form.setValue('taxRate', coerceTaxRate(current, entity));
+                      }}
+                    >
+                      <FormControl>
+                        <SelectTrigger>
+                          <SelectValue placeholder="默认主体" />
+                        </SelectTrigger>
+                      </FormControl>
+                      <SelectContent>
+                        <SelectItem value="__default__">系统默认</SelectItem>
+                        {(taxEntities ?? [])
+                          .filter((entity) => entity.status === 'active')
+                          .map((entity) => (
+                            <SelectItem key={entity.id} value={entity.id}>
+                              {entity.name}
+                            </SelectItem>
+                          ))}
+                      </SelectContent>
+                    </Select>
                     <FormMessage />
                   </FormItem>
                 )}
               />
+              <FormField
+                control={form.control}
+                name="taxRate"
+                render={({ field }) => {
+                  // 修复 P0-1：解析顺序必须与后端一致（显式主体 → 客户绑定主体 → 默认主体），
+                  // 否则客户绑定了小规模主体、用户主体留空时，下拉仍显示 6% 而提交被拒 400。
+                  const entity = resolveTaxEntity({
+                    taxEntityId: form.watch('taxEntityId'),
+                    taxEntities: taxEntities ?? [],
+                    customerTaxEntityId:
+                      (customers ?? []).find(
+                        (row) => row.id === form.watch('customerId')
+                      )?.taxEntityId ?? null,
+                  });
+                  const rates = resolveRateOptions(entity);
+                  return (
+                    <FormItem className="w-36">
+                      <FormLabel>税率（%）</FormLabel>
+                      <Select
+                        value={String(field.value)}
+                        onValueChange={(value) => field.onChange(Number(value))}
+                      >
+                        <FormControl>
+                          <SelectTrigger>
+                            <SelectValue placeholder="税率" />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          {rates.map((rate) => (
+                            <SelectItem key={rate} value={String(rate)}>
+                              {rate}%
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <FormMessage />
+                    </FormItem>
+                  );
+                }}
+              />
             </div>
+            <p className="text-xs text-muted-foreground -mt-2">
+              {formatTaxSplitLine(
+                Number(form.watch('amount') ?? 0),
+                Number(form.watch('taxRate') ?? 0)
+              )}
+            </p>
             <div className="flex gap-4">
               <FormField
                 control={form.control}

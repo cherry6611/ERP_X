@@ -7,6 +7,7 @@ import { Download, Plus } from 'lucide-react';
 import { Table, TableColumnsType } from 'antd';
 import { CanRole } from '@client/src/platform/auth';
 import DateField from '@client/src/components/erp/DateField';
+import { DataState } from '@client/src/components/DataState';
 import StatusBadge from '@client/src/components/erp/StatusBadge';
 import { Button } from '@client/src/components/ui/button';
 import {
@@ -35,11 +36,13 @@ import {
 import { Textarea } from '@/components/ui/textarea';
 import { financeApi, masterDataApi, projectsApi } from '@client/src/api';
 import { useAsyncData } from '@client/src/hooks/useAsyncData';
+import { confirmDanger } from '@client/src/utils/confirmDanger';
 import { formatMoney } from '@client/src/utils/format';
 import {
   exportRowsToXlsx,
   type ExcelSheetColumn,
 } from '@client/src/components/excel/excel-utils';
+import { getApiErrorMessage } from '@client/src/utils/api-error-message';
 import type {
   ApItem,
   ApWriteoffDto,
@@ -71,7 +74,7 @@ const AP_EXPORT_COLUMNS: ExcelSheetColumn<ApItem>[] = [
   { header: '应付编号', value: (row: ApItem) => row.code },
   { header: '供应商', value: (row: ApItem) => row.supplierName },
   { header: '项目', value: (row: ApItem) => row.projectName ?? '' },
-  { header: '应付金额', value: (row: ApItem) => row.amount },
+  { header: '应付金额（含税）', value: (row: ApItem) => row.amount },
   { header: '已付', value: (row: ApItem) => row.paidAmount },
   {
     header: '未付',
@@ -150,7 +153,10 @@ const ApTab: React.FC = () => {
     () => financeApi.listAps(undefined, statusFilter !== 'all' ? statusFilter : undefined),
     [statusFilter],
   );
-  const { data: payments } = useAsyncData<PaymentItem[]>(() => financeApi.listPayments(), []);
+  const { data: payments, reload: reloadPayments } = useAsyncData<PaymentItem[]>(
+    () => financeApi.listPayments(),
+    []
+  );
   const { data: suppliers } = useAsyncData<Supplier[]>(
     () => masterDataApi.listSuppliers(),
     [],
@@ -195,7 +201,7 @@ const ApTab: React.FC = () => {
       apForm.reset({ supplierId: '', amount: 0, remark: '' });
       await reload();
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : '登记失败');
+      toast.error(getApiErrorMessage(err, '登记失败'));
     }
   });
 
@@ -213,7 +219,7 @@ const ApTab: React.FC = () => {
       paymentForm.reset({ apId: '', amount: 0, method: 'bank', remark: '' });
       await reload();
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : '提交失败');
+      toast.error(getApiErrorMessage(err, '提交失败'));
     }
   });
 
@@ -230,7 +236,7 @@ const ApTab: React.FC = () => {
       writeoffForm.reset({ apId: '', paymentId: '', amount: 0 });
       await reload();
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : '核销失败');
+      toast.error(getApiErrorMessage(err, '核销失败'));
     }
   });
 
@@ -240,7 +246,7 @@ const ApTab: React.FC = () => {
       toast.success(action === 'approve' ? '付款已批准' : '付款已驳回');
       await reload();
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : '操作失败');
+      toast.error(getApiErrorMessage(err, '操作失败'));
     }
   };
 
@@ -259,7 +265,7 @@ const ApTab: React.FC = () => {
       .catch((err: unknown) => {
         if (!cancelled) {
           setSettlementPreview(null);
-          toast.error(err instanceof Error ? err.message : '获取结算明细失败');
+          toast.error(getApiErrorMessage(err, '获取结算明细失败'));
         }
       })
       .finally(() => {
@@ -292,7 +298,7 @@ const ApTab: React.FC = () => {
         setSettlementPreview(null);
         await reload();
       } catch (err) {
-        toast.error(err instanceof Error ? err.message : '生成失败');
+        toast.error(getApiErrorMessage(err, '生成失败'));
       } finally {
         setGenerating(false);
       }
@@ -311,7 +317,7 @@ const ApTab: React.FC = () => {
       render: (v: number) => formatMoney(v),
     },
     {
-      title: '金额(元)',
+      title: '金额（不含税）',
       dataIndex: 'amount',
       width: 120,
       align: 'right',
@@ -336,9 +342,9 @@ const ApTab: React.FC = () => {
     { title: '供应商', dataIndex: 'supplierName', width: 160 },
     { title: '项目', dataIndex: 'projectName', width: 160, render: (v) => v ?? '-' },
     {
-      title: '应付金额',
+      title: '应付金额（含税）',
       dataIndex: 'amount',
-      width: 120,
+      width: 140,
       align: 'right',
       render: (v: number) => formatMoney(v),
     },
@@ -388,19 +394,53 @@ const ApTab: React.FC = () => {
       key: 'action',
       fixed: 'right',
       width: 140,
-      render: (_, record) =>
-        record.status === 'pending' ? (
-          <CanRole roles={['admin']}>
-            <div className="flex gap-1">
-              <Button variant="ghost" size="sm" onClick={() => void approvePayment(record, 'approve')}>
-                批准
+      render: (_, record) => (
+        <CanRole roles={['admin']}>
+          <div className="flex gap-1">
+            {record.status === 'pending' ? (
+              <>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => void approvePayment(record, 'approve')}
+                >
+                  批准
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => void approvePayment(record, 'reject')}
+                >
+                  驳回
+                </Button>
+              </>
+            ) : null}
+            {record.status !== 'voided' && record.status !== 'rejected' ? (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => {
+                  void (async () => {
+                    const ok = await confirmDanger(
+                      `确认作废付款 ${record.code ?? record.id}？此操作不可恢复。`,
+                    );
+                    if (!ok) return;
+                    try {
+                      await financeApi.voidPayment(record.id);
+                      toast.success('付款已作废');
+                      await Promise.all([reload(), reloadPayments()]);
+                    } catch (err: unknown) {
+                      toast.error(getApiErrorMessage(err, '作废失败'));
+                    }
+                  })();
+                }}
+              >
+                作废
               </Button>
-              <Button variant="ghost" size="sm" onClick={() => void approvePayment(record, 'reject')}>
-                驳回
-              </Button>
-            </div>
-          </CanRole>
-        ) : null,
+            ) : null}
+          </div>
+        </CanRole>
+      ),
     },
   ];
 
@@ -451,44 +491,42 @@ const ApTab: React.FC = () => {
           导出 Excel
         </Button>
       </div>
-      {error ? (
-        <p className="text-sm text-destructive">
-          {error}
-          <Button variant="ghost" size="sm" className="ml-2" onClick={() => void reload()}>
-            重试
-          </Button>
-        </p>
-      ) : null}
-      <div className="flex flex-col gap-3">
-        <h3 className="text-base font-semibold">应付账款</h3>
-        <Table
-          columns={apColumns}
-          dataSource={aps ?? []}
-          loading={loading}
-          rowKey="id"
-          scroll={{ x: 1200, y: 400 }}
-          pagination={{
-            pageSize: 10,
-            showTotal: (t: number) => `共 ${t} 条`,
-          }}
-          locale={{ emptyText: '暂无应付，点击右上角「登记应付」创建' }}
-        />
-      </div>
-      <div className="flex flex-col gap-3">
-        <h3 className="text-base font-semibold">付款记录</h3>
-        <Table
-          columns={paymentColumns}
-          dataSource={payments ?? []}
-          rowKey="id"
-          scroll={{ x: 1000, y: 300 }}
-          pagination={{
-            pageSize: 10,
-            showTotal: (t: number) => `共 ${t} 条`,
-          }}
-          locale={{ emptyText: '暂无付款记录，点击右上角「付款申请」创建' }}
-          size="small"
-        />
-      </div>
+      <DataState
+        loading={loading}
+        error={error}
+        onRetry={() => void reload()}
+        skeleton="table"
+      >
+        <div className="flex flex-col gap-3">
+          <h3 className="text-base font-semibold">应付账款</h3>
+          <Table
+            columns={apColumns}
+            dataSource={aps ?? []}
+            rowKey="id"
+            scroll={{ x: 1200, y: 400 }}
+            pagination={{
+              pageSize: 10,
+              showTotal: (t: number) => `共 ${t} 条`,
+            }}
+            locale={{ emptyText: '暂无应付，点击右上角「登记应付」创建' }}
+          />
+        </div>
+        <div className="flex flex-col gap-3">
+          <h3 className="text-base font-semibold">付款记录</h3>
+          <Table
+            columns={paymentColumns}
+            dataSource={payments ?? []}
+            rowKey="id"
+            scroll={{ x: 1000, y: 300 }}
+            pagination={{
+              pageSize: 10,
+              showTotal: (t: number) => `共 ${t} 条`,
+            }}
+            locale={{ emptyText: '暂无付款记录，点击右上角「付款申请」创建' }}
+            size="small"
+          />
+        </div>
+      </DataState>
 
       <Dialog open={apOpen} onOpenChange={setApOpen}>
         <DialogContent className="max-w-md">
@@ -530,7 +568,7 @@ const ApTab: React.FC = () => {
                   render={({ field }) => (
                     <FormItem className="flex-1">
                       <FormLabel>
-                        应付金额（元）{' '}
+                        金额（含税）{' '}
                         <span aria-hidden="true" className="text-destructive">*</span>
                       </FormLabel>
                       <FormControl>
@@ -883,7 +921,7 @@ const ApTab: React.FC = () => {
               <div className="flex flex-col gap-2">
                 <h4 className="text-sm font-semibold">结算明细</h4>
                 {previewLoading ? (
-                  <p className="text-sm text-muted-foreground">明细加载中...</p>
+                  <DataState loading skeleton="table" />
                 ) : !settlementPreview ? (
                   <p className="text-sm text-muted-foreground">
                     请选择供应商与月份后查看结算明细

@@ -358,6 +358,20 @@ const EmployeePanel: React.FC = () => {
     }
   };
 
+  const toggleActive = async (emp: Employee) => {
+    const next: 'active' | 'inactive' =
+      emp.status === 'inactive' ? 'active' : 'inactive';
+    try {
+      await hrApi.setEmployeeStatus(emp.id, next);
+      toast.success(
+        next === 'inactive' ? `${emp.name} 已停用` : `${emp.name} 已启用`
+      );
+      await reload();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : '状态更新失败');
+    }
+  };
+
   const resetOffboardDialog = () => {
     setResignTarget(null);
     setResignDate(undefined);
@@ -439,6 +453,15 @@ const EmployeePanel: React.FC = () => {
             {record.status === 'probation' ? (
               <Button variant="ghost" size="sm" onClick={() => void doConfirm(record)}>
                 转正
+              </Button>
+            ) : null}
+            {record.status === 'active' || record.status === 'inactive' ? (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => void toggleActive(record)}
+              >
+                {record.status === 'inactive' ? '启用' : '停用'}
               </Button>
             ) : null}
             {record.status !== 'resigned' ? (

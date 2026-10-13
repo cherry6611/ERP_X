@@ -6,6 +6,7 @@ import { Button } from '@client/src/components/ui/button';
 import { financeApi } from '@client/src/api';
 import { useAsyncData } from '@client/src/hooks/useAsyncData';
 import { formatMoney } from '@client/src/utils/format';
+import { CHART_SEMANTIC_COLORS } from '@client/src/utils/chart-colors';
 import type { AgingBucket } from '@shared/api.interface';
 
 const AgingTab: React.FC = () => {
@@ -29,7 +30,7 @@ const AgingTab: React.FC = () => {
         type: 'bar',
         name: '应收金额',
         data: buckets.map((b) => b.amount),
-        itemStyle: { color: '#3b82f6' },
+        itemStyle: { color: CHART_SEMANTIC_COLORS.danger },
       },
     ],
   };

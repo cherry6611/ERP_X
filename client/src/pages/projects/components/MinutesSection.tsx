@@ -5,6 +5,7 @@ import { z } from 'zod';
 import { toast } from 'sonner';
 import { Loader2, Paperclip, Plus, Trash2 } from 'lucide-react';
 import { CanRole } from '@client/src/platform/auth';
+import { DataState } from '@client/src/components/DataState';
 import DateField from '@client/src/components/erp/DateField';
 import { AttachmentField } from '@client/src/components/attachments/AttachmentField';
 import { Badge } from '@client/src/components/ui/badge';
@@ -34,6 +35,7 @@ import {
 } from '@client/src/components/ui/select';
 import { Textarea } from '@client/src/components/ui/textarea';
 import { projectsApi } from '@client/src/api';
+import { getApiErrorMessage } from '@client/src/utils/api-error-message';
 import type {
   CreateProjectMinutesDto,
   ProjectMinutes,
@@ -84,7 +86,7 @@ const MinutesSection: React.FC<MinutesSectionProps> = ({ projectId, onChanged })
     try {
       setMinutes(await projectsApi.listMinutes(projectId));
     } catch (err) {
-      setError(err instanceof Error ? err.message : '加载周报/纪要失败');
+      setError(getApiErrorMessage(err, '加载周报/纪要失败'));
     } finally {
       setLoading(false);
     }
@@ -119,7 +121,7 @@ const MinutesSection: React.FC<MinutesSectionProps> = ({ projectId, onChanged })
       });
       await refresh();
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : '新增失败');
+      toast.error(getApiErrorMessage(err, '新增失败'));
     } finally {
       setSubmitting(false);
     }
@@ -132,7 +134,7 @@ const MinutesSection: React.FC<MinutesSectionProps> = ({ projectId, onChanged })
       toast.success('纪要已删除');
       await refresh();
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : '删除失败');
+      toast.error(getApiErrorMessage(err, '删除失败'));
     } finally {
       setDeletingId(null);
     }
@@ -149,63 +151,62 @@ const MinutesSection: React.FC<MinutesSectionProps> = ({ projectId, onChanged })
           </Button>
         </CanRole>
       </div>
-      {loading ? <p className="text-sm text-muted-foreground">加载中...</p> : null}
-      {error ? <p className="text-sm text-destructive">{error}</p> : null}
-      {!loading && !error ? (
-        minutes.length === 0 ? (
-          <p className="text-sm text-muted-foreground">暂无周报/纪要记录</p>
-        ) : (
-          <ul className="space-y-2" data-ai-section-type="card-list">
-            {minutes.map((item: ProjectMinutes) => {
-              const meta = MINUTES_TYPE_META[item.minutesType] ?? {
-                label: item.minutesType,
-                variant: 'secondary' as const,
-              };
-              return (
-                <li
-                  key={item.id}
-                  className="flex items-center gap-3 rounded-md border px-3 py-2"
+      <DataState
+        loading={loading}
+        error={error}
+        empty={!loading && !error && minutes.length === 0}
+        emptyText="暂无周报/纪要记录"
+      >
+        <ul className="space-y-2" data-ai-section-type="card-list">
+          {minutes.map((item: ProjectMinutes) => {
+            const meta = MINUTES_TYPE_META[item.minutesType] ?? {
+              label: item.minutesType,
+              variant: 'secondary' as const,
+            };
+            return (
+              <li
+                key={item.id}
+                className="flex items-center gap-3 rounded-md border px-3 py-2"
+              >
+                <Badge variant={meta.variant}>{meta.label}</Badge>
+                <span className="shrink-0 text-sm text-muted-foreground">
+                  {item.meetingDate}
+                </span>
+                <span className="shrink-0 text-sm font-medium">{item.title}</span>
+                <span className="min-w-0 flex-1 truncate text-sm text-muted-foreground">
+                  {item.content ?? '暂无内容'}
+                </span>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  aria-label={`查看附件 ${item.title}`}
+                  onClick={() => setAttachTarget(item)}
                 >
-                  <Badge variant={meta.variant}>{meta.label}</Badge>
-                  <span className="shrink-0 text-sm text-muted-foreground">
-                    {item.meetingDate}
-                  </span>
-                  <span className="shrink-0 text-sm font-medium">{item.title}</span>
-                  <span className="min-w-0 flex-1 truncate text-sm text-muted-foreground">
-                    {item.content ?? '暂无内容'}
-                  </span>
+                  <Paperclip className="mr-1 h-4 w-4" />
+                  附件
+                </Button>
+                <CanRole roles={['admin']}>
                   <Button
                     type="button"
                     variant="ghost"
-                    size="sm"
-                    aria-label={`查看附件 ${item.title}`}
-                    onClick={() => setAttachTarget(item)}
+                    size="icon"
+                    aria-label={`删除纪要 ${item.title}`}
+                    disabled={deletingId === item.id}
+                    onClick={() => void onDeleteMinutes(item)}
                   >
-                    <Paperclip className="mr-1 h-4 w-4" />
-                    附件
+                    {deletingId === item.id ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <Trash2 className="h-4 w-4 text-destructive" />
+                    )}
                   </Button>
-                  <CanRole roles={['admin']}>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon"
-                      aria-label={`删除纪要 ${item.title}`}
-                      disabled={deletingId === item.id}
-                      onClick={() => void onDeleteMinutes(item)}
-                    >
-                      {deletingId === item.id ? (
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                      ) : (
-                        <Trash2 className="h-4 w-4 text-destructive" />
-                      )}
-                    </Button>
-                  </CanRole>
-                </li>
-              );
-            })}
-          </ul>
-        )
-      ) : null}
+                </CanRole>
+              </li>
+            );
+          })}
+        </ul>
+      </DataState>
 
       <Dialog open={addOpen} onOpenChange={setAddOpen}>
         <DialogContent className="max-w-md">

@@ -54,7 +54,7 @@ interface FeishuSyncRecordsDialogProps {
 const SyncStatusBadge: React.FC<{ status: string }> = ({ status }) => {
   if (status === 'success') {
     return (
-      <Badge className="border-transparent bg-emerald-100 text-emerald-700 hover:bg-emerald-100">
+      <Badge className="border-transparent bg-success/10 text-success hover:bg-success/10">
         成功
       </Badge>
     );
