@@ -2,7 +2,12 @@
   "extends": "./tsconfig.node.json",
   "compilerOptions": {
     "types": ["jest", "node"],
-    "noEmit": true
+    "noEmit": true,
+    "paths": {
+      "@server/*": ["server/*"],
+      "@shared/*": ["shared/*"],
+      "@client/*": ["client/*"]
+    }
   },
   "include": [
     "server/**/*.ts",

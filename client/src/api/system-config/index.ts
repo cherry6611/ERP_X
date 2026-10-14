@@ -83,3 +83,19 @@ export async function updateRetentionPolicy(
   ensureNotForbidden(resp);
   return resp.data;
 }
+
+/**
+ * 前端字典快照（登录即可读；只返回启用项，不含 remark 等内部字段）。
+ *
+ * B-05：这是"字典作为标签唯一来源"的取数入口 —— `biz-labels` 同步读取
+ * 这份快照，避免每个调用点都变成异步。
+ */
+export async function getDictionaryOptions(
+  types?: string[],
+): Promise<DictionaryOptionsResult> {
+  const resp = await axiosForBackend.get<DictionaryOptionsResult>(
+    '/api/system/dictionary/options',
+    { params: types && types.length > 0 ? { types: types.join(',') } : undefined },
+  );
+  return resp.data;
+}

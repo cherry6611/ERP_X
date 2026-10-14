@@ -15,6 +15,9 @@ module.exports = {
   moduleNameMapper: {
     '^@server/(.*)$': '<rootDir>/server/$1',
     '^@shared/(.*)$': '<rootDir>/shared/$1',
+    // B-05：前端纯逻辑模块（不依赖 React/DOM）也纳入单测范围。
+    // 否则「字典标签静默退化成英文 key」这类问题只能靠人工发现。
+    '^@client/(.*)$': '<rootDir>/client/$1',
   },
   /**
    * 覆盖率统计范围（B-11）：只统计「确有测试覆盖」的模块。
