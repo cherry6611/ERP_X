@@ -6,7 +6,7 @@ import { toast } from 'sonner';
 import { Plus } from 'lucide-react';
 import { Table, TableColumnsType } from 'antd';
 import { DataState } from '@client/src/components/DataState';
-import { CanCapability } from '@client/src/platform/auth';
+import { CanCapability, CanCapabilityWrite } from '@client/src/platform/auth';
 import { Badge } from '@client/src/components/ui/badge';
 import { Button } from '@client/src/components/ui/button';
 import {
@@ -132,7 +132,7 @@ const RevenuesTab: React.FC = () => {
         row.status === 'reversed' ? (
           '-'
         ) : (
-          <CanCapability capability="finance_write">
+          <CanCapabilityWrite capability="finance_write">
             <Button
               type="button"
               variant="ghost"
@@ -141,7 +141,7 @@ const RevenuesTab: React.FC = () => {
             >
               红冲
             </Button>
-          </CanCapability>
+          </CanCapabilityWrite>
         ),
     },
   ];
@@ -183,12 +183,12 @@ const RevenuesTab: React.FC = () => {
         </div>
         {/* 修复 P0-4：后端 POST /api/revenues 是 @CanRole(['admin'])，
             未包裹时普通用户（如 finance_viewer）看得见、点得动，提交后 403 */}
-        <CanCapability capability="finance_write">
+        <CanCapabilityWrite capability="finance_write">
           <Button onClick={() => setCreateOpen(true)}>
             <Plus className="h-4 w-4" />
             确认收入
           </Button>
-        </CanCapability>
+        </CanCapabilityWrite>
       </div>
       <DataState
         loading={loading}

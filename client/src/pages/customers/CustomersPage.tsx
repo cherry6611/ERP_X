@@ -9,7 +9,7 @@ import PageShell from '@client/src/components/PageShell';
 import { DataState } from '@client/src/components/DataState';
 import StatusBadge from '@client/src/components/erp/StatusBadge';
 import TaxEntityBanner from '@client/src/components/erp/TaxEntityBanner';
-import { CanCapability } from '@client/src/platform/auth';
+import { CanCapability, CanCapabilityWrite } from '@client/src/platform/auth';
 import {
   coerceTaxRate,
   resolveRateOptions,
@@ -344,7 +344,7 @@ const CustomersPage: React.FC = () => {
       width: 260,
       render: (_, record) => (
         <div className="flex gap-1">
-          <CanCapability capability="crm_write">
+          <CanCapabilityWrite capability="crm_write">
             <Button size="sm" onClick={() => openEdit(record)}>
               编辑
             </Button>
@@ -355,7 +355,7 @@ const CustomersPage: React.FC = () => {
             >
               {record.status === 'inactive' ? '启用' : '停用'}
             </Button>
-          </CanCapability>
+          </CanCapabilityWrite>
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button variant="ghost" size="icon" aria-label={`${record.name} 的更多操作`}>
@@ -363,11 +363,11 @@ const CustomersPage: React.FC = () => {
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
-              <CanCapability capability="crm_write">
+              <CanCapabilityWrite capability="crm_write">
                 <DropdownMenuItem onClick={() => setContactsCustomer(record)}>
                   联系人
                 </DropdownMenuItem>
-              </CanCapability>
+              </CanCapabilityWrite>
               <DropdownMenuItem onClick={() => setCreditCustomer(record)}>信用</DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
@@ -390,22 +390,22 @@ const CustomersPage: React.FC = () => {
         {debouncing ? (
           <span className="text-xs text-muted-foreground">筛选中…</span>
         ) : null}
-        <CanCapability capability="crm_write">
+        <CanCapabilityWrite capability="crm_write">
           <Button onClick={openCreate}>
             <Plus className="h-4 w-4" />
             新建客户
           </Button>
-        </CanCapability>
+        </CanCapabilityWrite>
         <Button variant="outline" onClick={handleExport}>
           <Download className="h-4 w-4" />
           导出 Excel
         </Button>
-        <CanCapability capability="crm_write">
+        <CanCapabilityWrite capability="crm_write">
           <Button variant="outline" onClick={() => setImportOpen(true)}>
             <Upload className="h-4 w-4" />
             导入 Excel
           </Button>
-        </CanCapability>
+        </CanCapabilityWrite>
       </div>
       <DataState
         loading={loading}

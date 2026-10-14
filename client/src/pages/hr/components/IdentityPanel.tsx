@@ -2,7 +2,7 @@ import React, { useCallback, useMemo, useState } from 'react';
 import { toast } from 'sonner';
 import { Table, type TableColumnsType } from 'antd';
 import { Link2, Plus, RefreshCw, Shield, UserX } from 'lucide-react';
-import { CanCapability } from '@client/src/platform/auth';
+import { CanCapability, CanCapabilityWrite } from '@client/src/platform/auth';
 import * as identityApi from '@client/src/api/identity';
 import type { IdentityUser } from '@client/src/api/identity';
 import { Button } from '@client/src/components/ui/button';
@@ -246,7 +246,7 @@ const IdentityPanel: React.FC = () => {
   const onSearch = useCallback(() => reload(), [reload]);
 
   return (
-    <CanCapability capability="identity" fallback={<p className="text-sm text-muted-foreground">无身份管理权限</p>}>
+    <CanCapabilityWrite capability="identity" fallback={<p className="text-sm text-muted-foreground">无身份管理权限</p>}>
       <div className="space-y-3">
         <div className="flex flex-wrap items-end gap-2">
           <div className="space-y-1">
@@ -399,7 +399,7 @@ const IdentityPanel: React.FC = () => {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-    </CanCapability>
+    </CanCapabilityWrite>
   );
 };
 

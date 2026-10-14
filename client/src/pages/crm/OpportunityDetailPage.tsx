@@ -3,7 +3,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import { toast } from 'sonner';
 import { ArrowLeft, Plus, Star } from 'lucide-react';
 import { Table, TableColumnsType } from 'antd';
-import { CanCapability } from '@client/src/platform/auth';
+import { CanCapability, CanCapabilityWrite } from '@client/src/platform/auth';
 import { DataState } from '@client/src/components/DataState';
 import PageShell from '@client/src/components/PageShell';
 import { usePageEntityName } from '@client/src/components/page-meta';
@@ -214,7 +214,7 @@ const OpportunityDetailPage: React.FC = () => {
               编辑
             </Button>
           ) : null}
-          <CanCapability capability="crm_write">
+          <CanCapabilityWrite capability="crm_write">
             {!row.isWon && row.status !== 'void' ? (
               <Button variant="ghost" size="sm" onClick={() => void setWon(row.id)}>
                 设为成交
@@ -230,7 +230,7 @@ const OpportunityDetailPage: React.FC = () => {
                 作废
               </Button>
             ) : null}
-          </CanCapability>
+          </CanCapabilityWrite>
         </div>
       ),
     },
@@ -306,7 +306,7 @@ const OpportunityDetailPage: React.FC = () => {
                   </div>
                 </div>
 
-                <CanCapability capability="crm_write">
+                <CanCapabilityWrite capability="crm_write">
                   <div className="rounded-md border bg-muted/30 p-4">
                     <SectionTitle description="更新商机阶段、金额与赢单率">
                       阶段推进
@@ -360,7 +360,7 @@ const OpportunityDetailPage: React.FC = () => {
                       ) : null}
                     </div>
                   </div>
-                </CanCapability>
+                </CanCapabilityWrite>
               </CardContent>
             </Card>
 

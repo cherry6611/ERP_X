@@ -6,7 +6,7 @@ import { z } from 'zod';
 import { toast } from 'sonner';
 import { Plus } from 'lucide-react';
 import { Table, TableColumnsType } from 'antd';
-import { CanCapability } from '@client/src/platform/auth';
+import { CanCapability, CanCapabilityWrite } from '@client/src/platform/auth';
 import PurStatusBadge, {
   PUR_REQUEST_STATUS_LABELS,
   PUR_REQUEST_TYPE_LABELS,
@@ -202,7 +202,7 @@ const PurRequestPanel: React.FC = () => {
           >
             详情
           </Button>
-          <CanCapability capability="pur_asset">
+          <CanCapabilityWrite capability="pur_asset">
             <div className="flex gap-1">
               {record.status === 'pending' ? (
                 <>
@@ -220,7 +220,7 @@ const PurRequestPanel: React.FC = () => {
                 </>
               ) : null}
             </div>
-          </CanCapability>
+          </CanCapabilityWrite>
         </div>
       ),
     },

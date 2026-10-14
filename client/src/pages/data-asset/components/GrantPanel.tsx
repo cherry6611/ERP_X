@@ -6,7 +6,7 @@ import { z } from 'zod';
 import { toast } from 'sonner';
 import { AlertTriangle, Plus } from 'lucide-react';
 import { Table, TableColumnsType } from 'antd';
-import { CanCapability } from '@client/src/platform/auth';
+import { CanCapability, CanCapabilityWrite } from '@client/src/platform/auth';
 import DateField from '@client/src/components/erp/DateField';
 import { SectionTitle } from '@client/src/components/SectionTitle';
 import { Button } from '@client/src/components/ui/button';
@@ -218,11 +218,11 @@ const GrantPanel: React.FC = () => {
             详情
           </Button>
           {record.status === 'active' ? (
-            <CanCapability capability="projects_write">
+            <CanCapabilityWrite capability="projects_write">
               <Button variant="ghost" size="sm" onClick={() => void doExpire(record)}>
                 失效
               </Button>
-            </CanCapability>
+            </CanCapabilityWrite>
           ) : null}
         </div>
       ),
@@ -296,7 +296,7 @@ const GrantPanel: React.FC = () => {
               </SelectContent>
             </Select>
           </div>
-          <CanCapability capability="projects_write">
+          <CanCapabilityWrite capability="projects_write">
             <Button
               onClick={() => {
                 form.reset(EMPTY_FORM);
@@ -306,7 +306,7 @@ const GrantPanel: React.FC = () => {
               <Plus className="h-4 w-4" />
               新增授权
             </Button>
-          </CanCapability>
+          </CanCapabilityWrite>
         </div>
         {error ? (
           <p className="text-sm text-destructive">

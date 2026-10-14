@@ -84,18 +84,10 @@ export function RequireCapability({
  * 为什么需要单独的写入版本：MATRIX 中"可读"不等于"可写"
  * （例如 finance_viewer 对 finance 是 `r`）。仅用 `CanCapability` 显示写按钮
  * 会让只读角色看到点了必然 403 的按钮（需求书 B-01 验收标准②）。
+ *
+ * ⚠️ 实现已**上移到 `platform/auth.tsx`** 并从这里 re-export：
+ * 写语义判定依赖 `useAuth().hasWriteCapability`，放在 auth 旁可与其
+ * 读语义版本 `CanCapability` 并列对照，避免两处各写一份判定逻辑而慢慢分叉。
+ * 保留本 re-export 是为了兼容既有 `@client/src/platform/RequireCapability` 引用。
  */
-export function CanCapabilityWrite({
-  children,
-  capability,
-  fallback = null,
-}: {
-  children: ReactNode;
-  capability: Capability;
-  fallback?: ReactNode;
-}) {
-  const { user, loading } = useAuth();
-  if (loading) return null;
-  if (hasWriteCapability(user?.roles ?? [], capability)) return children;
-  return fallback;
-}
+export { CanCapabilityWrite } from './auth';

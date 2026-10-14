@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 import { Plus } from 'lucide-react';
 import { Table, TableColumnsType } from 'antd';
-import { CanCapability } from '@client/src/platform/auth';
+import { CanCapability, CanCapabilityWrite } from '@client/src/platform/auth';
 import PageShell from '@client/src/components/PageShell';
 import { Button } from '@client/src/components/ui/button';
 import { Label } from '@client/src/components/ui/label';
@@ -179,7 +179,7 @@ const AdminRentPage: React.FC = () => {
         <div className="flex gap-1">
           {record.status === 'draft' ? (
             <>
-              <CanCapability capability="admin_ops">
+              <CanCapabilityWrite capability="admin_ops">
                 <Button
                   variant="ghost"
                   size="sm"
@@ -188,8 +188,8 @@ const AdminRentPage: React.FC = () => {
                 >
                   编辑
                 </Button>
-              </CanCapability>
-              <CanCapability capability="admin_ops">
+              </CanCapabilityWrite>
+              <CanCapabilityWrite capability="admin_ops">
                 <Button
                   variant="ghost"
                   size="sm"
@@ -199,11 +199,11 @@ const AdminRentPage: React.FC = () => {
                 >
                   生效
                 </Button>
-              </CanCapability>
+              </CanCapabilityWrite>
             </>
           ) : null}
           {record.status === 'active' ? (
-            <CanCapability capability="admin_ops">
+            <CanCapabilityWrite capability="admin_ops">
               <Button
                 variant="ghost"
                 size="sm"
@@ -214,7 +214,7 @@ const AdminRentPage: React.FC = () => {
               >
                 终止
               </Button>
-            </CanCapability>
+            </CanCapabilityWrite>
           ) : null}
         </div>
       ),
@@ -226,12 +226,12 @@ const AdminRentPage: React.FC = () => {
       title="租房合同"
       description="房产租赁合同登记、生效与终止管理"
       actions={
-        <CanCapability capability="admin_ops">
+        <CanCapabilityWrite capability="admin_ops">
           <Button onClick={openCreate} aria-label="新建租房合同">
             <Plus className="size-4" aria-hidden="true" />
             新建合同
           </Button>
-        </CanCapability>
+        </CanCapabilityWrite>
       }
     >
       <RentStatsCards stats={stats} loading={statsLoading} />

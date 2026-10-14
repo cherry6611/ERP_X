@@ -7,7 +7,7 @@ import { Paperclip, Plus } from 'lucide-react';
 import { Table, TableColumnsType } from 'antd';
 import { AttachmentField } from '@client/src/components/attachments/AttachmentField';
 import DateField from '@client/src/components/erp/DateField';
-import { CanCapability } from '@client/src/platform/auth';
+import { CanCapability, CanCapabilityWrite } from '@client/src/platform/auth';
 import { Button } from '@/components/ui/button';
 import {
   Card,
@@ -145,7 +145,7 @@ const CostSection: React.FC<CostSectionProps> = ({ projectId, onChanged }) => {
             凭证
           </Button>
           {Number(record.amount) > 0 ? (
-            <CanCapability capability="projects_write">
+            <CanCapabilityWrite capability="projects_write">
               <Button
                 variant="ghost"
                 size="sm"
@@ -172,7 +172,7 @@ const CostSection: React.FC<CostSectionProps> = ({ projectId, onChanged }) => {
               >
                 红冲
               </Button>
-            </CanCapability>
+            </CanCapabilityWrite>
           ) : null}
         </div>
       ),
@@ -188,12 +188,12 @@ const CostSection: React.FC<CostSectionProps> = ({ projectId, onChanged }) => {
           <CardTitle className="text-base font-semibold">成本</CardTitle>
           <CardDescription>成本合计 {formatMoney(totalCost)}</CardDescription>
         </div>
-        <CanCapability capability="projects_write">
+        <CanCapabilityWrite capability="projects_write">
           <Button onClick={() => setCreateOpen(true)}>
             <Plus className="h-4 w-4" />
             登记成本
           </Button>
-        </CanCapability>
+        </CanCapabilityWrite>
       </CardHeader>
       <CardContent className="flex flex-col gap-4">
         <div className="flex flex-wrap gap-2">

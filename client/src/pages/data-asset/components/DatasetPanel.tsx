@@ -5,7 +5,7 @@ import { z } from 'zod';
 import { toast } from 'sonner';
 import { Plus } from 'lucide-react';
 import { Table, TableColumnsType } from 'antd';
-import { CanCapability } from '@client/src/platform/auth';
+import { CanCapability, CanCapabilityWrite } from '@client/src/platform/auth';
 import { Button } from '@client/src/components/ui/button';
 import {
   Dialog,
@@ -188,7 +188,7 @@ const DatasetPanel: React.FC = () => {
       width: 180,
       render: (_: unknown, record: DatasetItem) => (
         <div className="flex gap-1">
-          <CanCapability capability="crm_write">
+          <CanCapabilityWrite capability="crm_write">
             <Button variant="ghost" size="sm" onClick={() => openEdit(record)}>
               编辑
             </Button>
@@ -209,7 +209,7 @@ const DatasetPanel: React.FC = () => {
                 上线
               </Button>
             )}
-          </CanCapability>
+          </CanCapabilityWrite>
         </div>
       ),
     },
@@ -240,12 +240,12 @@ const DatasetPanel: React.FC = () => {
             </SelectContent>
           </Select>
         </div>
-        <CanCapability capability="crm_write">
+        <CanCapabilityWrite capability="crm_write">
           <Button onClick={openCreate}>
             <Plus className="h-4 w-4" />
             新建数据集
           </Button>
-        </CanCapability>
+        </CanCapabilityWrite>
       </div>
       {error ? (
         <p className="text-sm text-destructive">

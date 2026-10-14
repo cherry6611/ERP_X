@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { toast } from 'sonner';
 import { Plus } from 'lucide-react';
 import { Table, TableColumnsType } from 'antd';
-import { CanCapability } from '@client/src/platform/auth';
+import { CanCapability, CanCapabilityWrite } from '@client/src/platform/auth';
 import { UserDisplay } from '@client/src/components/business-ui/user-display';
 import { Button } from '@client/src/components/ui/button';
 import { Label } from '@client/src/components/ui/label';
@@ -157,7 +157,7 @@ const AdminAssetsPage: React.FC = () => {
       width: 140,
       render: (_v: unknown, record) => (
         <div className="flex gap-1">
-          <CanCapability capability="admin_ops">
+          <CanCapabilityWrite capability="admin_ops">
             <Button
               variant="ghost"
               size="sm"
@@ -166,8 +166,8 @@ const AdminAssetsPage: React.FC = () => {
             >
               编辑
             </Button>
-          </CanCapability>
-          <CanCapability capability="admin_ops">
+          </CanCapabilityWrite>
+          <CanCapabilityWrite capability="admin_ops">
             <Button
               variant="ghost"
               size="sm"
@@ -178,7 +178,7 @@ const AdminAssetsPage: React.FC = () => {
             >
               删除
             </Button>
-          </CanCapability>
+          </CanCapabilityWrite>
         </div>
       ),
     },
@@ -189,12 +189,12 @@ const AdminAssetsPage: React.FC = () => {
       title="行政资产"
       description="办公设备、家具等固定资产登记与状态管理"
       actions={
-        <CanCapability capability="admin_ops">
+        <CanCapabilityWrite capability="admin_ops">
           <Button onClick={openCreate} aria-label="新建资产">
             <Plus className="size-4" aria-hidden="true" />
             新建资产
           </Button>
-        </CanCapability>
+        </CanCapabilityWrite>
       }
     >
       <div className="flex flex-wrap items-end gap-4">

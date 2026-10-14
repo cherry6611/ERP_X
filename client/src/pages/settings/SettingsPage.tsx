@@ -19,7 +19,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@client/src/components/ui/select';
-import { CanCapability } from '@client/src/platform/auth';
+import { CanCapability, CanCapabilityWrite } from '@client/src/platform/auth';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@client/src/components/ui/tabs';
 import DictionarySettings from './DictionarySettings';
 import ParameterSettings from './ParameterSettings';
@@ -160,7 +160,7 @@ export default function SettingsPage() {
         </CardContent>
       </Card>
 
-      <CanCapability capability="settings_brand">
+      <CanCapabilityWrite capability="settings_brand">
         <Card>
           <CardHeader>
             <SectionTitle>品牌</SectionTitle>
@@ -274,9 +274,9 @@ export default function SettingsPage() {
             </Button>
           </CardContent>
         </Card>
-      </CanCapability>
+      </CanCapabilityWrite>
 
-      <CanCapability capability="settings_feishu">
+      <CanCapabilityWrite capability="settings_feishu">
         <Card>
           <CardHeader>
             <SectionTitle>飞书云空间 / 知识库</SectionTitle>
@@ -370,7 +370,7 @@ export default function SettingsPage() {
             </Button>
           </CardContent>
         </Card>
-      </CanCapability>
+      </CanCapabilityWrite>
 
       <Card>
         <CardHeader>

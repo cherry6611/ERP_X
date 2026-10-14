@@ -5,7 +5,7 @@ import { z } from 'zod';
 import { toast } from 'sonner';
 import { Plus } from 'lucide-react';
 import { Table, TableColumnsType } from 'antd';
-import { CanCapability } from '@client/src/platform/auth';
+import { CanCapability, CanCapabilityWrite } from '@client/src/platform/auth';
 import { DataState } from '@client/src/components/DataState';
 import { SectionTitle } from '@client/src/components/SectionTitle';
 import StatusBadge from '@client/src/components/erp/StatusBadge';
@@ -161,7 +161,7 @@ const ChangeSection: React.FC<ChangeSectionProps> = ({ projectId, onChanged }) =
       width: 140,
       render: (_, record) =>
         record.status === 'pending' ? (
-          <CanCapability capability="projects_write">
+          <CanCapabilityWrite capability="projects_write">
             <div className="flex gap-1">
               <Button variant="ghost" size="sm" onClick={() => void approveChange(record, 'approve')}>
                 批准
@@ -170,7 +170,7 @@ const ChangeSection: React.FC<ChangeSectionProps> = ({ projectId, onChanged }) =
                 驳回
               </Button>
             </div>
-          </CanCapability>
+          </CanCapabilityWrite>
         ) : null,
     },
   ];

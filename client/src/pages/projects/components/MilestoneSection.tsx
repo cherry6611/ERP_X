@@ -6,7 +6,7 @@ import { z } from 'zod';
 import { toast } from 'sonner';
 import { Plus } from 'lucide-react';
 import { Table, TableColumnsType } from 'antd';
-import { CanCapability } from '@client/src/platform/auth';
+import { CanCapability, CanCapabilityWrite } from '@client/src/platform/auth';
 import { DataState } from '@client/src/components/DataState';
 import { SectionTitle } from '@client/src/components/SectionTitle';
 import StatusBadge from '@client/src/components/erp/StatusBadge';
@@ -200,7 +200,7 @@ const MilestoneSection: React.FC<MilestoneSectionProps> = ({ projectId, onChange
       fixed: 'right',
       width: 140,
       render: (_, record) => (
-        <CanCapability capability="projects_write">
+        <CanCapabilityWrite capability="projects_write">
           <div className="flex gap-1">
             <Button variant="ghost" size="sm" onClick={() => openEditMilestone(record)}>
               编辑
@@ -211,7 +211,7 @@ const MilestoneSection: React.FC<MilestoneSectionProps> = ({ projectId, onChange
               </Button>
             ) : null}
           </div>
-        </CanCapability>
+        </CanCapabilityWrite>
       ),
     },
   ];
@@ -220,12 +220,12 @@ const MilestoneSection: React.FC<MilestoneSectionProps> = ({ projectId, onChange
     <div className="flex flex-col gap-3">
       <div className="flex items-center justify-between">
         <SectionTitle>项目里程碑</SectionTitle>
-        <CanCapability capability="projects_write">
+        <CanCapabilityWrite capability="projects_write">
           <Button size="sm" variant="outline" onClick={() => setAddOpen(true)}>
             <Plus className="h-4 w-4" />
             添加里程碑
           </Button>
-        </CanCapability>
+        </CanCapabilityWrite>
       </div>
       <DataState loading={loading} error={error} skeleton="table">
         <Table

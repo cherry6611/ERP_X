@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { z } from 'zod';
 import { toast } from 'sonner';
 import { Table, TableColumnsType } from 'antd';
-import { CanCapability } from '@client/src/platform/auth';
+import { CanCapability, CanCapabilityWrite } from '@client/src/platform/auth';
 import PageShell from '@client/src/components/PageShell';
 import { DataState } from '@client/src/components/DataState';
 import { Button } from '@client/src/components/ui/button';
@@ -205,7 +205,7 @@ const TaxEntitiesPage: React.FC = () => {
       key: 'action',
       width: 260,
       render: (_value, row) => (
-        <CanCapability capability="tax_entity">
+        <CanCapabilityWrite capability="tax_entity">
           <div className="flex gap-2">
             <Button variant="outline" size="sm" onClick={() => openEdit(row)}>
               编辑
@@ -232,7 +232,7 @@ const TaxEntitiesPage: React.FC = () => {
               {row.status === 'active' ? '停用' : '启用'}
             </Button>
           </div>
-        </CanCapability>
+        </CanCapabilityWrite>
       ),
     },
   ];
@@ -242,9 +242,9 @@ const TaxEntitiesPage: React.FC = () => {
   return (
     <PageShell title="纳税主体" description="维护开票主体。主体由人工创建，系统不预置。">
       <div className="flex justify-end">
-        <CanCapability capability="tax_entity">
+        <CanCapabilityWrite capability="tax_entity">
           <Button onClick={openCreate}>新建主体</Button>
-        </CanCapability>
+        </CanCapabilityWrite>
       </div>
       <DataState
         loading={loading}

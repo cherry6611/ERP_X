@@ -5,7 +5,7 @@ import { z } from 'zod';
 import { toast } from 'sonner';
 import { Plus } from 'lucide-react';
 import { Table, TableColumnsType } from 'antd';
-import { CanCapability } from '@client/src/platform/auth';
+import { CanCapability, CanCapabilityWrite } from '@client/src/platform/auth';
 import HrStatusBadge, { PAYROLL_STATUS_LABELS } from './HrStatusBadge';
 import { Button } from '@client/src/components/ui/button';
 import {
@@ -222,7 +222,7 @@ const PayrollPanel: React.FC = () => {
         <div className="flex items-center gap-1">
           {/* C-06：工资条打印（裁剪后随工资发放，或作为个人留存凭证） */}
           <PayslipPrintButton payroll={record} stopPropagation />
-          <CanCapability capability="hr_write">
+          <CanCapabilityWrite capability="hr_write">
             <div className="flex gap-1">
               {record.status === 'draft' ? (
                 <Button variant="ghost" size="sm" onClick={() => void doAction(record, 'submit')}>
@@ -245,7 +245,7 @@ const PayrollPanel: React.FC = () => {
                 </>
               ) : null}
             </div>
-          </CanCapability>
+          </CanCapabilityWrite>
         </div>
       ),
     },
@@ -282,12 +282,12 @@ const PayrollPanel: React.FC = () => {
             </Select>
           </div>
         </div>
-        <CanCapability capability="hr_write">
+        <CanCapabilityWrite capability="hr_write">
           <Button onClick={() => setCreateOpen(true)}>
             <Plus className="h-4 w-4" />
             新建工资单
           </Button>
-        </CanCapability>
+        </CanCapabilityWrite>
       </div>
       {error ? (
         <p className="text-sm text-destructive">

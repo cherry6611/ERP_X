@@ -40,8 +40,7 @@ const ROOT = resolve(fileURLToPath(new URL('.', import.meta.url)), '..');
  * 每一条都必须是**具体理由**，不是"暂不迁移"。新增条目请在 PR 说明里
  * 一并给出"为什么不能用能力码表达"。
  */
-const INTENTIONAL = new Map([
-  [
+const INTENTIONAL = new Map([  [
     'client/src/components/attachments/AttachmentField.tsx',
     '附件接口登录即可用（员工自助上传）；改用写能力会收窄后端本来允许的操作',
   ],
@@ -62,6 +61,48 @@ const INTENTIONAL = new Map([
     '该文件的 CanRole 块只包读取入口，未推导出对应写能力',
   ],
 ]);
+
+/* ---------- 读写语义判定 ---------- */
+
+/**
+ * "读写同码"的能力：矩阵中只有 admin 有 `rw`，但**其他角色有 `r`**，
+ * 对应 `route-capability.ts` 里 `write: null` 的规则（写接口沿用读能力码）。
+ *
+ * 这些码在 `hasCapability` 下对只读角色为 true，因此写按钮必须用
+ * `CanCapabilityWrite`，否则会漏出来给点不动的人。
+ * 实测 `tax_entity` / `pur_asset` 存在此差异（`finance_viewer` / `project_manager`）。
+ */
+const WRITE_ONLY_CAPABILITIES = new Set([
+  'tax_entity',
+  'pur_asset',
+  'admin_ops',
+  'audit',
+  'identity',
+  'settings_brand',
+  'settings_feishu',
+  'settings_appearance',
+]);
+
+const isWriteCapability = (capability) =>
+  /_write$/.test(capability) || WRITE_ONLY_CAPABILITIES.has(capability);
+
+/**
+ * 去掉注释后再做模式匹配。
+ *
+ * 为什么必须去注释：本脚本检查的是**代码**里的能力码用法，而
+ * `platform/auth.tsx` 的文档注释里正当地举个反例
+ * （`<CanCapability capability="finance_wirte">` 说明拼错会怎样）。
+ * 不剥注释就会把"解释性文字"当成"违规用法"——
+ * 那样开发者只能删掉有价值的注释来让 CI 变绿。
+ *
+ * 实现：把注释内容替换为**等长空格**（保留换行），
+ * 这样匹配结果的**行号与原文一致**，报错位置仍然准确。
+ */
+function stripComments(text) {
+  return text
+    .replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, ' '))
+    .replace(/\/\/[^\n]*/g, (m) => m.replace(/[^\n]/g, ' '));
+}
 
 function walk(dir, out = []) {
   for (const entry of readdirSync(dir)) {
@@ -98,7 +139,8 @@ const clientFiles = walk(join(ROOT, 'client/src'));
 
 for (const file of clientFiles) {
   const rel = relative(ROOT, file).replace(/\\/g, '/');
-  const text = readFileSync(file, 'utf8');
+  const raw = readFileSync(file, 'utf8');
+  const text = stripComments(raw);
 
   /* ① <CanRole> 使用 */
   const canRoleCount = [...text.matchAll(/<CanRole\b/g)].length;
@@ -122,14 +164,25 @@ for (const file of clientFiles) {
 
   /* ② <CanCapability capability="x"> 的能力码必须在册 */
   for (const m of text.matchAll(
-    /<CanCapability\b[^>]*?capability=(?:"([^"]+)"|\{'([^']+)'\})/g
+    /<(CanCapability|CanCapabilityWrite)\b[^>]*?capability=(?:"([^"]+)"|\{'([^']+)'\})/g
   )) {
-    const capability = m[1] ?? m[2];
+    const component = m[1];
+    const capability = m[2] ?? m[3];
     if (!knownCapabilities.has(capability)) {
       failures.push(
-        `${rel}: <CanCapability capability="${capability}"> 的能力码不在 ` +
+        `${rel}: <${component} capability="${capability}"> 的能力码不在 ` +
           `shared/rbac.ts 的 Capability 联合类型中 —— ` +
           `这不会报错，只会让该元素**永久隐藏**，属静默失效`
+      );
+      continue;
+    }
+    // ③ 读写组件选错：写语义的能力码必须用 CanCapabilityWrite
+    if (component === 'CanCapability' && isWriteCapability(capability)) {
+      failures.push(
+        `${rel}: <CanCapability capability="${capability}"> 用于**写语义**能力码 —— ` +
+          `CanCapability 走 hasCapability（矩阵中 r 或 rw 都通过），` +
+          `只读角色会看到点了必然被拒的按钮（B-01 验收标准②）。` +
+          `请改用 <CanCapabilityWrite>`
       );
     }
   }

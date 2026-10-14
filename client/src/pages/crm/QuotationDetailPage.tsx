@@ -2,7 +2,7 @@ import React, { useCallback } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { toast } from 'sonner';
 import { ArrowLeft } from 'lucide-react';
-import { CanCapability } from '@client/src/platform/auth';
+import { CanCapability, CanCapabilityWrite } from '@client/src/platform/auth';
 import { DataState } from '@client/src/components/DataState';
 import PageShell from '@client/src/components/PageShell';
 import { usePageEntityName } from '@client/src/components/page-meta';
@@ -275,7 +275,7 @@ const QuotationDetailPage: React.FC = () => {
                       编辑
                     </Button>
                   )}
-                  <CanCapability capability="crm_write">
+                  <CanCapabilityWrite capability="crm_write">
                     {data.status === 'draft' ? (
                       <>
                         <Button onClick={() => void runAction('submit')}>
@@ -323,7 +323,7 @@ const QuotationDetailPage: React.FC = () => {
                         设为最终成交
                       </Button>
                     ) : null}
-                  </CanCapability>
+                  </CanCapabilityWrite>
                 </div>
               </CardContent>
             </Card>

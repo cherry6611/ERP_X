@@ -5,7 +5,7 @@ import { z } from 'zod';
 import { toast } from 'sonner';
 import { Plus } from 'lucide-react';
 import { Table, TableColumnsType } from 'antd';
-import { CanCapability } from '@client/src/platform/auth';
+import { CanCapability, CanCapabilityWrite } from '@client/src/platform/auth';
 import { confirmDanger } from '@client/src/utils/confirmDanger';
 import { getApiErrorMessage } from '@client/src/utils/api-error-message';
 import { AccountStatusBadge, ACCOUNT_TYPE_LABELS } from './VoucherBadges';
@@ -195,12 +195,12 @@ const AccountPanel: React.FC = () => {
             <span className="text-xs text-muted-foreground">筛选中…</span>
           ) : null}
         </div>
-        <CanCapability capability="finance_write">
+        <CanCapabilityWrite capability="finance_write">
           <Button onClick={openCreate}>
             <Plus className="h-4 w-4" />
             新增科目
           </Button>
-        </CanCapability>
+        </CanCapabilityWrite>
       </div>
       {error ? (
         <p className="text-sm text-destructive">

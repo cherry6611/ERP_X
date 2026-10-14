@@ -5,7 +5,7 @@ import { z } from 'zod';
 import { toast } from 'sonner';
 import { Plus } from 'lucide-react';
 import { Table, TableColumnsType } from 'antd';
-import { CanCapability } from '@client/src/platform/auth';
+import { CanCapability, CanCapabilityWrite } from '@client/src/platform/auth';
 import DateField from '@client/src/components/erp/DateField';
 import StatusBadge from '@client/src/components/erp/StatusBadge';
 import TaxEntityBanner from '@client/src/components/erp/TaxEntityBanner';
@@ -219,7 +219,7 @@ const InvoiceSection: React.FC<InvoiceSectionProps> = ({ projectId, onChanged })
             {formatMoney(recognizedRevenue)}
           </CardDescription>
         </div>
-        <CanCapability capability="finance_write">
+        <CanCapabilityWrite capability="finance_write">
           <Button
             onClick={() => {
               // 修复 P0-2：打开弹窗时按合同主体校正默认税率，避免 6% 撞小规模主体白名单
@@ -237,7 +237,7 @@ const InvoiceSection: React.FC<InvoiceSectionProps> = ({ projectId, onChanged })
             <Plus className="h-4 w-4" />
             开票
           </Button>
-        </CanCapability>
+        </CanCapabilityWrite>
       </CardHeader>
       <CardContent>
         {error ? (

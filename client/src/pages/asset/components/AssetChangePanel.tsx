@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { toast } from 'sonner';
 import { Table, TableColumnsType } from 'antd';
-import { CanCapability } from '@client/src/platform/auth';
+import { CanCapability, CanCapabilityWrite } from '@client/src/platform/auth';
 import {
   AssetChangeStatusBadge,
   ASSET_CHANGE_STATUS_LABELS,
@@ -98,7 +98,7 @@ const AssetChangePanel: React.FC = () => {
       render: (_: unknown, record: AssetChangeItem) => (
         <div className="flex gap-1">
           {record.status === 'pending' ? (
-            <CanCapability capability="pur_asset">
+            <CanCapabilityWrite capability="pur_asset">
               <Button
                 variant="ghost"
                 size="sm"
@@ -116,7 +116,7 @@ const AssetChangePanel: React.FC = () => {
               >
                 驳回
               </Button>
-            </CanCapability>
+            </CanCapabilityWrite>
           ) : null}
         </div>
       ),

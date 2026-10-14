@@ -5,7 +5,7 @@ import { z } from 'zod';
 import { toast } from 'sonner';
 import { Plus } from 'lucide-react';
 import { Table, TableColumnsType } from 'antd';
-import { CanCapability } from '@client/src/platform/auth';
+import { CanCapability, CanCapabilityWrite } from '@client/src/platform/auth';
 import { DataState } from '@client/src/components/DataState';
 import { SectionTitle } from '@client/src/components/SectionTitle';
 import StatusBadge from '@client/src/components/erp/StatusBadge';
@@ -272,11 +272,11 @@ const ContractDetailDialog: React.FC<ContractDetailDialogProps> = ({
       width: 90,
       render: (_, record) =>
         record.status === 'pending' ? (
-          <CanCapability capability="crm_write">
+          <CanCapabilityWrite capability="crm_write">
             <Button variant="ghost" size="sm" onClick={() => void reachMilestone(record)}>
               达成
             </Button>
-          </CanCapability>
+          </CanCapabilityWrite>
         ) : null,
     },
   ];
@@ -390,7 +390,7 @@ const ContractDetailDialog: React.FC<ContractDetailDialogProps> = ({
               </div>
             </div>
 
-            <CanCapability capability="crm_write">
+            <CanCapabilityWrite capability="crm_write">
               <div className="flex flex-wrap gap-2">
                 {actions.map(({ action, label }) => (
                   <Button
@@ -406,13 +406,13 @@ const ContractDetailDialog: React.FC<ContractDetailDialogProps> = ({
                   登记变更
                 </Button>
               </div>
-            </CanCapability>
+            </CanCapabilityWrite>
 
             <div className="flex flex-col gap-3">
               <div className="flex items-center justify-between">
                 <SectionTitle>合同明细</SectionTitle>
                 {detail.status === 'draft' ? (
-                  <CanCapability capability="crm_write">
+                  <CanCapabilityWrite capability="crm_write">
                     <div className="flex gap-2">
                       <Button
                         size="sm"
@@ -453,7 +453,7 @@ const ContractDetailDialog: React.FC<ContractDetailDialogProps> = ({
                         从报价导入
                       </Button>
                     </div>
-                  </CanCapability>
+                  </CanCapabilityWrite>
                 ) : null}
               </div>
               <Table
@@ -496,7 +496,7 @@ const ContractDetailDialog: React.FC<ContractDetailDialogProps> = ({
                     width: 80,
                     render: (_value, row: ContractItem) =>
                       detail.status === 'draft' ? (
-                        <CanCapability capability="crm_write">
+                        <CanCapabilityWrite capability="crm_write">
                           <Button
                             size="sm"
                             variant="ghost"
@@ -523,7 +523,7 @@ const ContractDetailDialog: React.FC<ContractDetailDialogProps> = ({
                           >
                             删除
                           </Button>
-                        </CanCapability>
+                        </CanCapabilityWrite>
                       ) : null,
                   },
                 ]}
@@ -534,12 +534,12 @@ const ContractDetailDialog: React.FC<ContractDetailDialogProps> = ({
             <div className="flex flex-col gap-3">
               <div className="flex items-center justify-between">
                 <SectionTitle>合同里程碑</SectionTitle>
-                <CanCapability capability="crm_write">
+                <CanCapabilityWrite capability="crm_write">
                   <Button size="sm" variant="outline" onClick={() => setMilestoneOpen(true)}>
                     <Plus className="h-4 w-4" />
                     添加里程碑
                   </Button>
-                </CanCapability>
+                </CanCapabilityWrite>
               </div>
               <Table
                 columns={milestoneColumns}
@@ -558,12 +558,12 @@ const ContractDetailDialog: React.FC<ContractDetailDialogProps> = ({
                     Call-off 下单（累计 {formatMoney(detail.billable.calloffTotal)} / 上限{' '}
                     {formatMoney(detail.amount)}）
                   </SectionTitle>
-                  <CanCapability capability="crm_write">
+                  <CanCapabilityWrite capability="crm_write">
                     <Button size="sm" variant="outline" onClick={() => setCalloffOpen(true)}>
                       <Plus className="h-4 w-4" />
                       框架下单
                     </Button>
-                  </CanCapability>
+                  </CanCapabilityWrite>
                 </div>
                 <Table
                   columns={calloffColumns}

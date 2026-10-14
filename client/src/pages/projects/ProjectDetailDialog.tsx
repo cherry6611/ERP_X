@@ -3,7 +3,7 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { useForm } from 'react-hook-form';
 import { z } from 'zod';
 import { toast } from 'sonner';
-import { CanCapability } from '@client/src/platform/auth';
+import { CanCapability, CanCapabilityWrite } from '@client/src/platform/auth';
 import { DataState } from '@client/src/components/DataState';
 import StatusBadge from '@client/src/components/erp/StatusBadge';
 import { Button } from '@client/src/components/ui/button';
@@ -209,7 +209,7 @@ const ProjectDetailDialog: React.FC<ProjectDetailDialogProps> = ({
 
             {detail.status !== 'closed' ? (
               <div className="flex flex-wrap gap-2">
-                <CanCapability capability="projects_write">
+                <CanCapabilityWrite capability="projects_write">
                   {actions.map(({ action, label }) => (
                     <Button key={action} size="sm" onClick={() => void doAction(action)}>
                       {label}
@@ -218,7 +218,7 @@ const ProjectDetailDialog: React.FC<ProjectDetailDialogProps> = ({
                   <Button size="sm" variant="outline" onClick={openProgress}>
                     更新进度
                   </Button>
-                </CanCapability>
+                </CanCapabilityWrite>
               </div>
             ) : null}
 

@@ -6,7 +6,7 @@ import { z } from 'zod';
 import { toast } from 'sonner';
 import { Download, History, MoreHorizontal, Plus, Upload } from 'lucide-react';
 import { Table, TableColumnsType } from 'antd';
-import { CanCapability } from '@client/src/platform/auth';
+import { CanCapability, CanCapabilityWrite } from '@client/src/platform/auth';
 import PageShell from '@client/src/components/PageShell';
 import { DataState } from '@client/src/components/DataState';
 import StatusBadge from '@client/src/components/erp/StatusBadge';
@@ -282,11 +282,11 @@ const ContractsPage: React.FC = () => {
                 找相似
               </DropdownMenuItem>
               {TRANSFERABLE_STATUSES.includes(record.status) ? (
-                <CanCapability capability="projects_write">
+                <CanCapabilityWrite capability="projects_write">
                   <DropdownMenuItem onClick={() => setTransferTarget(record)}>
                     转项目
                   </DropdownMenuItem>
-                </CanCapability>
+                </CanCapabilityWrite>
               ) : null}
             </DropdownMenuContent>
           </DropdownMenu>
@@ -335,7 +335,7 @@ const ContractsPage: React.FC = () => {
           <Download className="h-4 w-4" />
           导出 Excel
         </Button>
-        <CanCapability capability="projects_write">
+        <CanCapabilityWrite capability="projects_write">
           <Button
             variant="outline"
             disabled={syncing}
@@ -345,7 +345,7 @@ const ContractsPage: React.FC = () => {
             <Upload className="h-4 w-4" />
             {syncing ? '同步中…' : '同步到多维表格'}
           </Button>
-        </CanCapability>
+        </CanCapabilityWrite>
         <Button
           variant="outline"
           onClick={() => setRecordsOpen(true)}
@@ -354,12 +354,12 @@ const ContractsPage: React.FC = () => {
           <History className="h-4 w-4" />
           同步记录
         </Button>
-        <CanCapability capability="projects_write">
+        <CanCapabilityWrite capability="projects_write">
           <Button onClick={() => navigate('/contracts/new')}>
             <Plus className="h-4 w-4" />
             登记合同
           </Button>
-        </CanCapability>
+        </CanCapabilityWrite>
       </div>
       <DataState
         loading={loading}

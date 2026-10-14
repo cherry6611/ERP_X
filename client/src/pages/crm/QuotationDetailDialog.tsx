@@ -1,6 +1,6 @@
 import React, { useMemo } from 'react';
 import { toast } from 'sonner';
-import { CanCapability } from '@client/src/platform/auth';
+import { CanCapability, CanCapabilityWrite } from '@client/src/platform/auth';
 import StatusBadge from '@client/src/components/erp/StatusBadge';
 import { AttachmentField } from '@client/src/components/attachments/AttachmentField';
 import {
@@ -188,7 +188,7 @@ const QuotationDetailDialog: React.FC<QuotationDetailDialogProps> = ({
           </div>
         </div>
         <DialogFooter>
-          <CanCapability capability="crm_write">
+          <CanCapabilityWrite capability="crm_write">
             {quotation.status === 'draft' ? (
               <>
                 <Button onClick={() => void runAction('submit')}>提交审批</Button>
@@ -213,7 +213,7 @@ const QuotationDetailDialog: React.FC<QuotationDetailDialogProps> = ({
                 </Button>
               </>
             ) : null}
-          </CanCapability>
+          </CanCapabilityWrite>
         </DialogFooter>
           </>
         ) : null}

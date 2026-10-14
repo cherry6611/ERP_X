@@ -6,7 +6,7 @@ import { z } from 'zod';
 import { toast } from 'sonner';
 import { Download, FileInput, FilePlus, Plus } from 'lucide-react';
 import { Table, TableColumnsType } from 'antd';
-import { CanCapability } from '@client/src/platform/auth';
+import { CanCapability, CanCapabilityWrite } from '@client/src/platform/auth';
 import { DataState } from '@client/src/components/DataState';
 import FilterBar from '@client/src/components/erp/FilterBar';
 import StatCard from '@client/src/components/erp/StatCard';
@@ -394,14 +394,14 @@ const InvoicesTab: React.FC = () => {
             详情
           </Button>
           {record.direction === 'sales' ? (
-            <CanCapability capability="finance_write">
+            <CanCapabilityWrite capability="finance_write">
               <Button variant="ghost" size="sm" onClick={() => openLinkDialog(record)}>
                 关联应收
               </Button>
-            </CanCapability>
+            </CanCapabilityWrite>
           ) : null}
           {record.status === 'issued' ? (
-            <CanCapability capability="finance_write">
+            <CanCapabilityWrite capability="finance_write">
               <Button
                 variant="ghost"
                 size="sm"
@@ -410,7 +410,7 @@ const InvoicesTab: React.FC = () => {
               >
                 作废
               </Button>
-            </CanCapability>
+            </CanCapabilityWrite>
           ) : null}
         </div>
       ),
@@ -456,12 +456,12 @@ const InvoicesTab: React.FC = () => {
             <Download className="h-4 w-4" />
             导出 CSV
           </Button>
-          <CanCapability capability="finance_write">
+          <CanCapabilityWrite capability="finance_write">
             <Button onClick={() => navigate('/finance/invoices/new')}>
               <Plus className="h-4 w-4" />
               发票登记
             </Button>
-          </CanCapability>
+          </CanCapabilityWrite>
         </div>
       </div>
       <DataState

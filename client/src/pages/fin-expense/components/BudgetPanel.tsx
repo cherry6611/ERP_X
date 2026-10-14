@@ -5,7 +5,7 @@ import { z } from 'zod';
 import { toast } from 'sonner';
 import { Pencil, Plus } from 'lucide-react';
 import { Table, TableColumnsType } from 'antd';
-import { CanCapability } from '@client/src/platform/auth';
+import { CanCapability, CanCapabilityWrite } from '@client/src/platform/auth';
 import { Button } from '@client/src/components/ui/button';
 import {
   Dialog,
@@ -241,7 +241,7 @@ const BudgetPanel: React.FC = () => {
       fixed: 'right',
       width: 90,
       render: (_v: unknown, record) => (
-        <CanCapability capability="finance_write">
+        <CanCapabilityWrite capability="finance_write">
           <Button
             variant="ghost"
             size="sm"
@@ -251,7 +251,7 @@ const BudgetPanel: React.FC = () => {
             <Pencil className="mr-1 h-3.5 w-3.5" />
             编辑
           </Button>
-        </CanCapability>
+        </CanCapabilityWrite>
       ),
     },
   ];
@@ -316,12 +316,12 @@ const BudgetPanel: React.FC = () => {
             </SelectContent>
           </Select>
         </div>
-        <CanCapability capability="finance_write">
+        <CanCapabilityWrite capability="finance_write">
           <Button onClick={openCreate} data-ai-section-type="button">
             <Plus className="mr-1 h-4 w-4" />
             新增预算
           </Button>
-        </CanCapability>
+        </CanCapabilityWrite>
       </div>
 
       {error ? (

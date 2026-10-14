@@ -6,7 +6,7 @@ import { z } from 'zod';
 import { toast } from 'sonner';
 import { Plus } from 'lucide-react';
 import { Table, TableColumnsType } from 'antd';
-import { CanCapability } from '@client/src/platform/auth';
+import { CanCapability, CanCapabilityWrite } from '@client/src/platform/auth';
 import { SectionTitle } from '@client/src/components/SectionTitle';
 import DateField from '@client/src/components/erp/DateField';
 import HrStatusBadge, {
@@ -337,7 +337,7 @@ const AttendancePanel: React.FC = () => {
       width: 130,
       render: (_: unknown, record: AttendanceAmendment) =>
         record.status === 'pending' ? (
-          <CanCapability capability="hr_write">
+          <CanCapabilityWrite capability="hr_write">
             <div className="flex gap-1">
               <Button
                 variant="ghost"
@@ -355,7 +355,7 @@ const AttendancePanel: React.FC = () => {
                 驳回
               </Button>
             </div>
-          </CanCapability>
+          </CanCapabilityWrite>
         ) : null,
     },
   ];
@@ -389,7 +389,7 @@ const AttendancePanel: React.FC = () => {
             详情
           </Button>
           {record.status === 'pending' ? (
-            <CanCapability capability="hr_write">
+            <CanCapabilityWrite capability="hr_write">
               <div className="flex gap-1">
                 <Button
                   variant="ghost"
@@ -407,7 +407,7 @@ const AttendancePanel: React.FC = () => {
                   驳回
                 </Button>
               </div>
-            </CanCapability>
+            </CanCapabilityWrite>
           ) : null}
         </div>
       ),
@@ -457,12 +457,12 @@ const AttendancePanel: React.FC = () => {
               </Select>
             </div>
           </div>
-          <CanCapability capability="hr_write">
+          <CanCapabilityWrite capability="hr_write">
             <Button onClick={() => setAttOpen(true)}>
               <Plus className="h-4 w-4" />
               登记考勤
             </Button>
-          </CanCapability>
+          </CanCapabilityWrite>
         </div>
         {attError ? (
           <p className="text-sm text-destructive">
@@ -628,7 +628,7 @@ const AttendancePanel: React.FC = () => {
               />
             </div>
           </div>
-          <CanCapability capability="hr_write">
+          <CanCapabilityWrite capability="hr_write">
             <div className="flex items-center gap-2">
               <Button
                 variant="outline"
@@ -642,13 +642,13 @@ const AttendancePanel: React.FC = () => {
                 额度设置
               </Button>
             </div>
-          </CanCapability>
+          </CanCapabilityWrite>
         </div>
-        <CanCapability capability="hr_write">
+        <CanCapabilityWrite capability="hr_write">
           <p className="text-sm text-muted-foreground">
             年假初始化按司龄：&lt;1年5天、1-3年8天、3-5年10天、5-10年12天、≥10年15天；仅补未设置员工
           </p>
-        </CanCapability>
+        </CanCapabilityWrite>
         {balError ? (
           <p className="text-sm text-destructive">
             {balError}

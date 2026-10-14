@@ -5,7 +5,7 @@ import { z } from 'zod';
 import { toast } from 'sonner';
 import { Plus } from 'lucide-react';
 import { Table, TableColumnsType } from 'antd';
-import { CanCapability } from '@client/src/platform/auth';
+import { CanCapability, CanCapabilityWrite } from '@client/src/platform/auth';
 import { DataState } from '@client/src/components/DataState';
 import { Badge } from '@client/src/components/ui/badge';
 import { Button } from '@client/src/components/ui/button';
@@ -122,12 +122,12 @@ const AdjustmentsTab: React.FC = () => {
     <div className="flex flex-col gap-4">
       <div className="flex items-center justify-between">
         <p className="text-sm text-muted-foreground">折让、冲销、补提等收入调整记录</p>
-        <CanCapability capability="finance_write">
+        <CanCapabilityWrite capability="finance_write">
           <Button onClick={() => setCreateOpen(true)}>
             <Plus className="h-4 w-4" />
             登记调整
           </Button>
-        </CanCapability>
+        </CanCapabilityWrite>
       </div>
       <DataState
         loading={loading}

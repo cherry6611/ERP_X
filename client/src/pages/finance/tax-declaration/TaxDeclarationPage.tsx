@@ -51,7 +51,7 @@ import {
   type ExcelSheetColumn,
 } from '@client/src/components/excel/excel-utils';
 import { useAsyncData } from '@client/src/hooks/useAsyncData';
-import { CanCapability } from '@client/src/platform/auth';
+import { CanCapability, CanCapabilityWrite } from '@client/src/platform/auth';
 import * as financeReportsApi from '@client/src/api/finance-reports';
 import * as masterDataApi from '@client/src/api/master-data';
 import { cn } from '@client/src/lib/utils';
@@ -217,7 +217,7 @@ const TaxDeclarationPage: React.FC = () => {
           <Download className="size-4" />
           导出 Excel
         </Button>
-        <CanCapability capability="finance_write">
+        <CanCapabilityWrite capability="finance_write">
           <Button
             type="button"
             size="sm"
@@ -227,7 +227,7 @@ const TaxDeclarationPage: React.FC = () => {
             <FileCheck2 className="size-4" />
             {data?.status === 'confirmed' ? '底稿已确认' : '确认底稿'}
           </Button>
-        </CanCapability>
+        </CanCapabilityWrite>
       </FilterBar>
 
       {data?.status === 'confirmed' ? (

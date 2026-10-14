@@ -5,7 +5,7 @@ import { z } from 'zod';
 import { toast } from 'sonner';
 import { Plus, Users } from 'lucide-react';
 import { Table, TableColumnsType } from 'antd';
-import { CanCapability } from '@client/src/platform/auth';
+import { CanCapability, CanCapabilityWrite } from '@client/src/platform/auth';
 import HrStatusBadge, { CANDIDATE_STAGE_LABELS, RECRUIT_STATUS_LABELS } from './HrStatusBadge';
 import { SectionTitle } from '@client/src/components/SectionTitle';
 import { Button } from '@client/src/components/ui/button';
@@ -197,7 +197,7 @@ const RecruitPanel: React.FC = () => {
       render: (_: unknown, record: Candidate) => (
         <div className="flex gap-1">
           {record.stage === 'pending' ? (
-            <CanCapability capability="hr_write">
+            <CanCapabilityWrite capability="hr_write">
               <Button
                 variant="ghost"
                 size="sm"
@@ -205,10 +205,10 @@ const RecruitPanel: React.FC = () => {
               >
                 安排面试
               </Button>
-            </CanCapability>
+            </CanCapabilityWrite>
           ) : null}
           {record.stage === 'interview' ? (
-            <CanCapability capability="hr_write">
+            <CanCapabilityWrite capability="hr_write">
               <Button
                 variant="ghost"
                 size="sm"
@@ -216,10 +216,10 @@ const RecruitPanel: React.FC = () => {
               >
                 发 offer
               </Button>
-            </CanCapability>
+            </CanCapabilityWrite>
           ) : null}
           {record.stage === 'offer' ? (
-            <CanCapability capability="hr_write">
+            <CanCapabilityWrite capability="hr_write">
               <Button
                 variant="ghost"
                 size="sm"
@@ -227,10 +227,10 @@ const RecruitPanel: React.FC = () => {
               >
                 确认入职
               </Button>
-            </CanCapability>
+            </CanCapabilityWrite>
           ) : null}
           {record.stage !== 'hired' && record.stage !== 'rejected' ? (
-            <CanCapability capability="hr_write">
+            <CanCapabilityWrite capability="hr_write">
               <Button
                 variant="ghost"
                 size="sm"
@@ -239,7 +239,7 @@ const RecruitPanel: React.FC = () => {
               >
                 淘汰
               </Button>
-            </CanCapability>
+            </CanCapabilityWrite>
           ) : null}
         </div>
       ),
@@ -251,12 +251,12 @@ const RecruitPanel: React.FC = () => {
       <section className="flex flex-col gap-4">
         <div className="flex items-center justify-between gap-3">
           <SectionTitle>招聘需求</SectionTitle>
-          <CanCapability capability="hr_write">
+          <CanCapabilityWrite capability="hr_write">
             <Button onClick={() => setReqOpen(true)}>
               <Plus className="h-4 w-4" />
               新建需求
             </Button>
-          </CanCapability>
+          </CanCapabilityWrite>
         </div>
         {reqError ? (
           <p className="text-sm text-destructive">
@@ -290,12 +290,12 @@ const RecruitPanel: React.FC = () => {
               </span>
             ) : null}
           </SectionTitle>
-          <CanCapability capability="hr_write">
+          <CanCapabilityWrite capability="hr_write">
             <Button disabled={!selectedReq} onClick={() => setCandidateOpen(true)}>
               <Plus className="h-4 w-4" />
               添加候选人
             </Button>
-          </CanCapability>
+          </CanCapabilityWrite>
         </div>
         {selectedReq ? (
           <>

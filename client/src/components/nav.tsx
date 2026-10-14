@@ -1,4 +1,5 @@
 import type { ComponentType } from 'react';
+import type { Capability } from '@shared/rbac';
 import {
   BookOpen,
   BookOpenCheck,
@@ -36,8 +37,15 @@ export interface NavItem {
   label: string;
   path: string;
   icon: ComponentType<{ className?: string }>;
-  /** 对应 shared/rbac Capability；缺省则始终可见 */
-  capability?: string;
+  /**
+   * B-01：对应 `shared/rbac` 的 `Capability`；缺省则始终可见。
+   *
+   * 类型**收窄为 `Capability`**（原为 `string`）：导航项写错能力码时，
+   * `hasCapability` 返回 false，该菜单项**静默消失** —— 不报错、无告警，
+   * 只是"这个功能不见了"。收窄后拼错会在编译期失败。
+   * （实测当前 11 个取值全部在册。）
+   */
+  capability?: Capability;
 }
 
 export const NAV_GROUPS: { title: string; items: NavItem[] }[] = [

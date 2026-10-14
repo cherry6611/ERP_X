@@ -5,7 +5,7 @@ import { z } from 'zod';
 import { toast } from 'sonner';
 import { Plus } from 'lucide-react';
 import { Table, TableColumnsType } from 'antd';
-import { CanCapability } from '@client/src/platform/auth';
+import { CanCapability, CanCapabilityWrite } from '@client/src/platform/auth';
 import DateField from '@client/src/components/erp/DateField';
 import StatusBadge from '@client/src/components/erp/StatusBadge';
 import { Button } from '@/components/ui/button';
@@ -407,7 +407,7 @@ const ArApSection: React.FC<ArApSectionProps> = ({ projectId, onChanged }) => {
           <div className="flex flex-wrap items-center justify-between gap-2">
             <h4 className="text-sm font-semibold">应收 / 回款</h4>
             <div className="flex items-center gap-2">
-              <CanCapability capability="finance_write">
+              <CanCapabilityWrite capability="finance_write">
                 <Button
                   variant="outline"
                   size="sm"
@@ -417,8 +417,8 @@ const ArApSection: React.FC<ArApSectionProps> = ({ projectId, onChanged }) => {
                   <Plus className="h-4 w-4" />
                   登记应收
                 </Button>
-              </CanCapability>
-              <CanCapability capability="finance_write">
+              </CanCapabilityWrite>
+              <CanCapabilityWrite capability="finance_write">
                 <Button
                   variant="outline"
                   size="sm"
@@ -428,7 +428,7 @@ const ArApSection: React.FC<ArApSectionProps> = ({ projectId, onChanged }) => {
                   <Plus className="h-4 w-4" />
                   登记回款
                 </Button>
-              </CanCapability>
+              </CanCapabilityWrite>
             </div>
           </div>
           <Table
@@ -454,13 +454,13 @@ const ArApSection: React.FC<ArApSectionProps> = ({ projectId, onChanged }) => {
           <div className="flex flex-wrap items-center justify-between gap-2">
             <h4 className="text-sm font-semibold">应付 / 付款</h4>
             <div className="flex items-center gap-2">
-              <CanCapability capability="finance_write">
+              <CanCapabilityWrite capability="finance_write">
                 <Button variant="outline" size="sm" onClick={() => setApOpen(true)}>
                   <Plus className="h-4 w-4" />
                   登记应付
                 </Button>
-              </CanCapability>
-              <CanCapability capability="finance_write">
+              </CanCapabilityWrite>
+              <CanCapabilityWrite capability="finance_write">
                 <Button
                   variant="outline"
                   size="sm"
@@ -470,7 +470,7 @@ const ArApSection: React.FC<ArApSectionProps> = ({ projectId, onChanged }) => {
                   <Plus className="h-4 w-4" />
                   登记付款
                 </Button>
-              </CanCapability>
+              </CanCapabilityWrite>
             </div>
           </div>
           <Table

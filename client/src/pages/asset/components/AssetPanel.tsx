@@ -5,7 +5,7 @@ import { z } from 'zod';
 import { toast } from 'sonner';
 import { Plus } from 'lucide-react';
 import { Table, TableColumnsType } from 'antd';
-import { CanCapability } from '@client/src/platform/auth';
+import { CanCapability, CanCapabilityWrite } from '@client/src/platform/auth';
 import {
   AssetStatusBadge,
   ASSET_CATEGORY_LABELS,
@@ -381,12 +381,12 @@ const AssetPanel: React.FC = () => {
             </Select>
           </div>
         </div>
-        <CanCapability capability="pur_asset">
+        <CanCapabilityWrite capability="pur_asset">
           <Button onClick={() => setCreateOpen(true)} data-ai-section-type="button">
             <Plus className="mr-1 h-4 w-4" />
             新增资产
           </Button>
-        </CanCapability>
+        </CanCapabilityWrite>
       </div>
 
       {error ? (

@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { toast } from 'sonner';
 import { Table, TableColumnsType } from 'antd';
-import { CanCapability } from '@client/src/platform/auth';
+import { CanCapability, CanCapabilityWrite } from '@client/src/platform/auth';
 import {
   Dialog,
   DialogContent,
@@ -93,7 +93,7 @@ const PeriodPanel: React.FC = () => {
       render: (_: unknown, record: PeriodStatus) => {
         if (record.closed) {
           return (
-            <CanCapability capability="finance_write">
+            <CanCapabilityWrite capability="finance_write">
               <Button
                 size="sm"
                 variant="outline"
@@ -115,7 +115,7 @@ const PeriodPanel: React.FC = () => {
               >
                 反结账
               </Button>
-            </CanCapability>
+            </CanCapabilityWrite>
           );
         }
         const reason = getCloseDisabledReason(record);
@@ -124,7 +124,7 @@ const PeriodPanel: React.FC = () => {
             {reason ? (
               <span className="text-xs text-muted-foreground">{reason}，无法结账</span>
             ) : null}
-            <CanCapability capability="finance_write">
+            <CanCapabilityWrite capability="finance_write">
               <Button
                 size="sm"
                 variant="outline"
@@ -133,7 +133,7 @@ const PeriodPanel: React.FC = () => {
               >
                 结账
               </Button>
-            </CanCapability>
+            </CanCapabilityWrite>
           </div>
         );
       },

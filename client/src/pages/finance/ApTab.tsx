@@ -5,7 +5,7 @@ import { z } from 'zod';
 import { toast } from 'sonner';
 import { Download, Plus } from 'lucide-react';
 import { Table, TableColumnsType } from 'antd';
-import { CanCapability } from '@client/src/platform/auth';
+import { CanCapability, CanCapabilityWrite } from '@client/src/platform/auth';
 import DateField from '@client/src/components/erp/DateField';
 import { DataState } from '@client/src/components/DataState';
 import { SectionTitle } from '@client/src/components/SectionTitle';
@@ -441,7 +441,7 @@ const ApTab: React.FC = () => {
               sourceNote: '数据来源：应付付款台账',
             })}
           />
-          <CanCapability capability="finance_write">
+          <CanCapabilityWrite capability="finance_write">
             <div className="flex gap-1">
               {record.status === 'pending' ? (
                 <>
@@ -485,7 +485,7 @@ const ApTab: React.FC = () => {
                 </Button>
               ) : null}
             </div>
-          </CanCapability>
+          </CanCapabilityWrite>
         </div>
       ),
     },
@@ -510,29 +510,29 @@ const ApTab: React.FC = () => {
             </SelectContent>
           </Select>
         </div>
-        <CanCapability capability="finance_write">
+        <CanCapabilityWrite capability="finance_write">
           <Button onClick={() => setApOpen(true)}>
             <Plus className="h-4 w-4" />
             登记应付
           </Button>
-        </CanCapability>
-        <CanCapability capability="finance_write">
+        </CanCapabilityWrite>
+        <CanCapabilityWrite capability="finance_write">
           <Button variant="outline" onClick={() => setPaymentOpen(true)}>
             <Plus className="h-4 w-4" />
             付款申请
           </Button>
-        </CanCapability>
-        <CanCapability capability="finance_write">
+        </CanCapabilityWrite>
+        <CanCapabilityWrite capability="finance_write">
           <Button variant="outline" onClick={() => setWriteoffOpen(true)}>
             付款核销
           </Button>
-        </CanCapability>
-        <CanCapability capability="finance_write">
+        </CanCapabilityWrite>
+        <CanCapabilityWrite capability="finance_write">
           <Button onClick={() => setVendorSettlementOpen(true)}>
             <Plus className="h-4 w-4" />
             外协结算
           </Button>
-        </CanCapability>
+        </CanCapabilityWrite>
         <Button variant="outline" onClick={handleExport}>
           <Download className="h-4 w-4" />
           导出 Excel

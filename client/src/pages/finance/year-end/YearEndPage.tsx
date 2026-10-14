@@ -45,7 +45,7 @@ import {
   TableRow,
 } from '@client/src/components/ui/table';
 import { useAsyncData } from '@client/src/hooks/useAsyncData';
-import { CanCapability } from '@client/src/platform/auth';
+import { CanCapability, CanCapabilityWrite } from '@client/src/platform/auth';
 import * as financeReportsApi from '@client/src/api/finance-reports';
 import * as masterDataApi from '@client/src/api/master-data';
 import { cn } from '@client/src/lib/utils';
@@ -213,7 +213,7 @@ const YearEndPage: React.FC = () => {
           <RefreshCw className={cn('size-4', preview.loading && 'animate-spin')} />
           刷新预览
         </Button>
-        <CanCapability capability="finance_write">
+        <CanCapabilityWrite capability="finance_write">
           <Button
             type="button"
             size="sm"
@@ -223,7 +223,7 @@ const YearEndPage: React.FC = () => {
             <PlayCircle className="size-4" />
             {carrying ? '结转中…' : '执行年结结转'}
           </Button>
-        </CanCapability>
+        </CanCapabilityWrite>
         <span className="ml-auto text-xs text-muted-foreground">
           当前口径：{period} · {entityName}
         </span>
@@ -420,7 +420,7 @@ const YearEndPage: React.FC = () => {
                     </TableCell>
                     <TableCell>
                       {row.status === 'closed' ? (
-                        <CanCapability capability="finance_write">
+                        <CanCapabilityWrite capability="finance_write">
                           <Button
                             type="button"
                             variant="outline"
@@ -439,7 +439,7 @@ const YearEndPage: React.FC = () => {
                             <RotateCcw className="size-3" />
                             反年结
                           </Button>
-                        </CanCapability>
+                        </CanCapabilityWrite>
                       ) : (
                         <span className="text-xs text-muted-foreground">-</span>
                       )}
@@ -487,7 +487,7 @@ const YearEndPage: React.FC = () => {
                     {row.reason ? ` · 原因：${row.reason}` : ''}
                   </p>
                 </div>
-                <CanCapability capability="finance_write">
+                <CanCapabilityWrite capability="finance_write">
                   <Button
                     type="button"
                     variant="ghost"
@@ -499,7 +499,7 @@ const YearEndPage: React.FC = () => {
                   >
                     反年结
                   </Button>
-                </CanCapability>
+                </CanCapabilityWrite>
               </div>
             ))}
           </div>
