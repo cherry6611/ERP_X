@@ -33,6 +33,15 @@ export const STATEMENT_DOC_TYPES = [
   'receipt',
   'payment',
   'invoice',
+  /**
+   * 收入折让 / 退回冲减（`erp_revenue_adjust`）。
+   *
+   * 为什么必须有这个类型：`ArService.applyCredit` 冲减应收时**只增加
+   * `erp_ar.settled_amount`，不产生回款行**。若对账单不把折让额单列一行，
+   * 该应收在对账单上会**永远显示全额余额**（台账已 `settled`、对外单据仍显示未收），
+   * 这是对外单据上最严重的错误 —— 对方会据此认为我们还欠他钱。
+   */
+  'adjust',
 ] as const;
 
 export type StatementDocType = (typeof STATEMENT_DOC_TYPES)[number];
@@ -218,6 +227,9 @@ export function statementSortKey(docType: StatementDocType): number {
       return 20;
     case 'invoice':
       return 30;
+    // 折让/冲减与发票同为"非资金类"调整，排在资金类之后
+    case 'adjust':
+      return 40;
     default:
       return 90;
   }

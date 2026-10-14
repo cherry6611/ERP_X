@@ -12,8 +12,11 @@ import {
   erpAr,
   erpInvoice,
   erpPayment,
+  erpContract,
   erpProject,
+  erpProjectRevenue,
   erpReceipt,
+  erpRevenueAdjust,
   mdCustomer,
   mdSupplier,
   mdTaxEntity,
@@ -233,7 +236,7 @@ export class StatementService {
   private async collectCustomerTxns(
     customerId: string
   ): Promise<StatementTxn[]> {
-    const [arRows, receiptRows, invoiceRows] = await Promise.all([
+    const [arRows, receiptRows, invoiceRows, adjustRows] = await Promise.all([
       this.db
         .select({
           id: erpAr.id,
@@ -280,6 +283,38 @@ export class StatementService {
             eq(erpInvoice.customerId, customerId)
           )
         ),
+      /*
+       * 收入折让 / 退回冲减。
+       *
+       * `erp_revenue_adjust` 通过 `revenue_id → erp_project_revenue.contract_id
+       * → erp_contract.customer_id` 关联到客户（该表自身没有 customer_id）。
+       * 只取 `status='applied'`：未生效的调整不能出现在对外单据上。
+       *
+       * 为什么必须查这张表：`ArService.applyCredit` 冲减应收时只增加
+       * `erp_ar.settled_amount`，**不产生回款行**。不把它单列出来，该应收
+       * 在对账单上会永远显示全额余额（台账已 settled，对外单据仍显示未收）。
+       */
+      this.db
+        .select({
+          id: erpRevenueAdjust.id,
+          code: erpRevenueAdjust.code,
+          amount: erpRevenueAdjust.amount,
+          adjustType: erpRevenueAdjust.adjustType,
+          status: erpRevenueAdjust.status,
+          reason: erpRevenueAdjust.reason,
+          bizDate: sql<string>`(${erpRevenueAdjust.createdAt} AT TIME ZONE 'Asia/Shanghai')::date`,
+          revenueCode: erpProjectRevenue.code,
+        })
+        .from(erpRevenueAdjust)
+        .innerJoin(
+          erpProjectRevenue,
+          eq(erpRevenueAdjust.revenueId, erpProjectRevenue.id)
+        )
+        .innerJoin(
+          erpContract,
+          eq(erpProjectRevenue.contractId, erpContract.id)
+        )
+        .where(eq(erpContract.customerId, customerId)),
     ]);
 
     const out: StatementTxn[] = [];
@@ -349,6 +384,28 @@ export class StatementService {
           ? `销项发票（对应应收 ${row.arCode}）`
           : '销项发票（未关联应收）',
         sortKey: statementSortKey('invoice'),
+      });
+    }
+    for (const row of adjustRows) {
+      // 只把已生效（applied）的调整放进对外单据；草稿/已作废的不列示
+      if ((row.status ?? '') !== 'applied') continue;
+      const amount = Number(row.amount ?? 0);
+      out.push({
+        date: normalizeDate(row.bizDate),
+        docType: 'adjust',
+        docCode: row.code,
+        // 折让/退回冲减减少应收（贷方）—— 这是本次修复的核心：
+        // 不列这一行，被折让结清的应收在对账单上会永远显示全额
+        debit: 0,
+        credit: amount,
+        affectsBalance: true,
+        status: statementReconStatus({ amount, settled: amount }),
+        voided: false,
+        relatedDocCode: row.revenueCode ?? null,
+        remark: [row.adjustType, row.reason]
+          .filter(Boolean)
+          .join(' / ') || '收入折让/退回冲减',
+        sortKey: statementSortKey('adjust'),
       });
     }
     return out;

@@ -39,6 +39,13 @@ const UUID = {
   arVoided: 'a0000000-0000-4000-8000-000000000005',
   /** 客户丙：8 月发生并当月结清，10 月无任何发生额 */
   arAugClosed: 'a0000000-0000-4000-8000-000000000006',
+  /** 客户丙的合同 / 收入确认单 / 收入折让（折让链路必须完整才能关联到客户） */
+  contractC: '44444444-4444-4444-8444-333333333333',
+  revenueC: '66666666-6666-4666-8666-333333333333',
+  adjustC: '77777777-7777-4777-8777-333333333333',
+  /** 客户丁：8 月一笔应收且无任何冲减 → 专用于"有期初余额但本期无发生额"用例 */
+  customerD: '11111111-1111-4111-8111-444444444444',
+  arDCarried: 'a0000000-0000-4000-8000-000000000007',
   rcvOld: 'b0000000-0000-4000-8000-000000000001',
   rcvSep: 'b0000000-0000-4000-8000-000000000002',
   rcvOct1: 'b0000000-0000-4000-8000-000000000003',
@@ -93,7 +100,33 @@ async function seed(harness: Harness): Promise<void> {
       ('${UUID.arOct1}', '${PREFIX}ARR0003', '${UUID.contract}', '${UUID.customer}', '${UUID.project}', '200.25',  '20.25',   '2026-11-30', 'partial', 'manual', '2026-10-01 09:00:00+08'),
       ('${UUID.arOct31}','${PREFIX}ARR0004', '${UUID.contract}', '${UUID.customer}', '${UUID.project}', '300.00',  '0.00',    '2026-12-31', 'open',    'manual', '2026-10-31 23:30:00+08'),
       ('${UUID.arVoided}','${PREFIX}ARR0005','${UUID.contract}', '${UUID.customer}', '${UUID.project}', '999.00',  '0.00',    '2026-12-31', 'voided',  'manual', '2026-10-05 10:00:00+08'),
-      ('${UUID.arAugClosed}','${PREFIX}ARR0006','${UUID.contract}','${UUID.customerC}','${UUID.project}','300.00','300.00','2026-08-31', 'settled', 'manual', '2026-08-20 10:00:00+08');
+      ('${UUID.arAugClosed}','${PREFIX}ARR0006','${UUID.contractC}','${UUID.customerC}','${UUID.project}','300.00','300.00','2026-08-31', 'settled', 'manual', '2026-08-20 10:00:00+08');
+
+    -- 客户丙的合同与收入确认单：erp_revenue_adjust 自身没有 customer_id，
+    -- 只能经 revenue_id -> erp_project_revenue.contract_id -> erp_contract.customer_id
+    -- 关联到客户，因此测试数据必须把这条链建完整。
+    INSERT INTO erp_contract (id, code, name, customer_id, amount, tax_rate)
+    VALUES ('${UUID.contractC}', '${PREFIX}CT003', '${PREFIX} 合同丙', '${UUID.customerC}', '300', '6');
+
+    INSERT INTO erp_project_revenue (id, code, project_id, contract_id, period, method, amount, status)
+    VALUES ('${UUID.revenueC}', '${PREFIX}REV003', '${UUID.project}', '${UUID.contractC}', '2026-08', 'milestone', '300.00', 'recognized');
+
+    -- 收入折让：模拟 ArService.applyCredit 冲减应收后的结果。
+    -- 真实系统里 applyCredit 只增加 erp_ar.settled_amount、不写回款行，
+    -- 折让痕迹只留在 erp_revenue_adjust 上 —— 对账单必须读它才能把余额冲平。
+    -- _created_at 显式落在 8 月：该表无独立业务日期列，对账单以登记日为准（**需财务确认**），
+    -- 若用默认 CURRENT_TIMESTAMP 会落到"今天"，导致折让被算到错误的期间。
+    INSERT INTO erp_revenue_adjust (id, code, revenue_id, adjust_type, amount, reason, status, _created_at)
+    VALUES ('${UUID.adjustC}', '${PREFIX}ADJ003', '${UUID.revenueC}', 'credit', '300.00', '${PREFIX} 收入折让冲减应收', 'applied', '2026-08-20 11:00:00+08');
+
+    -- 客户丁：8 月一笔应收，**无任何冲减** → 10 月期初 500、本期 0 行、期末 500。
+    -- 用于验证"本期无发生额但有期初余额"的对手方仍出现在下拉中。
+    -- 注意 md_customer 没有 contact_name/contact_phone 列（那两列在 md_supplier 上）。
+    INSERT INTO md_customer (id, code, name)
+    VALUES ('${UUID.customerD}', '${PREFIX}C004', '${PREFIX} 客户丁');
+
+    INSERT INTO erp_ar (id, code, contract_id, customer_id, project_id, amount, settled_amount, due_date, status, source, _created_at)
+    VALUES ('${UUID.arDCarried}','${PREFIX}ARR0007','${UUID.contract}','${UUID.customerD}','${UUID.project}','500.00','0.00','2026-10-15', 'open', 'manual', '2026-08-25 10:00:00+08');
 
     INSERT INTO erp_receipt (id, code, customer_id, amount, used_amount, receipt_date, method, status)
     VALUES
@@ -308,46 +341,59 @@ describe('C-11 对账单 SQL 集成（pglite + 真实 StatementService）', () =
   });
 
   it('对手方下拉包含"本期无发生额、但有期初余额"的对手方', async () => {
-    // 客户丙只有 8 月一笔应收（300.00）：10 月本期无发生额，但期初结转 300.00。
+    // 客户丁只有 8 月一笔应收（500.00）且**没有任何冲减**：
+    // 10 月本期无发生额，但期初结转 500.00，期末仍是 500.00。
     // 它必须出现在下拉里 —— 否则用户没法对"本期看起来没有往来"的对手方出对账单，
     // 而它的账上明明还挂着余额。
-    const october = await service.getCustomerStatement(UUID.customerC, '2026-10');
-    expect(october.openingBalance).toBe(300);
+    //
+    // 注：这里刻意不用客户丙。丙的 8 月应收已被收入折让全额冲减
+    // （见本文件"核销/折让结清"用例），其期初与期末都是 0，
+    // 用它测"有期初余额"会让断言与业务含义脱节。
+    const october = await service.getCustomerStatement(UUID.customerD, '2026-10');
+    expect(october.openingBalance).toBe(500);
     expect(october.periodDebit).toBe(0);
     expect(october.periodCredit).toBe(0);
-    expect(october.closingBalance).toBe(300);
+    expect(october.closingBalance).toBe(500);
     expect(october.lines).toEqual([]);
     expect(october.openingLines).toHaveLength(1);
 
     // 8 月那张单确实被算进了 8 月账期
-    const august = await service.getCustomerStatement(UUID.customerC, '2026-08');
+    const august = await service.getCustomerStatement(UUID.customerD, '2026-08');
     expect(august.openingBalance).toBe(0);
-    expect(august.periodDebit).toBe(300);
-    expect(august.closingBalance).toBe(300);
+    expect(august.periodDebit).toBe(500);
+    expect(august.closingBalance).toBe(500);
 
     const customers = await service.listCounterparties('customer');
-    const hit = customers.filter((item) => item.id === UUID.customerC);
+    const hit = customers.filter((item) => item.id === UUID.customerD);
     expect(hit).toHaveLength(1);
-    expect(hit[0].lastDocDate).toBe('2026-08-20');
+    expect(hit[0].lastDocDate).toBe('2026-08-25');
   });
 
   /**
-   * ⚠️ 已知口径缺口（**需财务确认**，不是测试放宽）：
+   * 应收被"核销/收入折让"结清时，对账单必须体现这笔冲减。
    *
-   * 下面这张 8 月应收的 `settled_amount = 300` 是"核销出来的"（回款核销或
-   * `ArService.applyCredit` 收入折让），**没有对应的回款行**。
-   * 对账单的余额只由「应收增加 / 回款减少」两类行驱动，因此该单在对账单上
-   * 永远显示 300 的余额，而台账里它已经是 settled —— 两边不一致。
+   * 背景（曾经是一个真实缺口）：`ArService.applyCredit` 冲减应收时**只增加
+   * `erp_ar.settled_amount`，不产生回款行**。对账单的余额原先只由
+   * 「应收增加 / 回款减少」驱动，于是这张单在对账单上**永远显示全额余额**，
+   * 而台账里它已经是 settled —— 对外单据与台账不一致，对方会据此认为我们还欠钱。
    *
-   * 这里用 `it.skip` 把事实钉在测试里：**要么**把 `erp_revenue_adjust`
-   * 的折让金额作为贷方行纳入对账单，**要么**财务确认"核销不由对账单体现"。
-   * 在此之前不实现，避免我单方面替财务决定收入折让如何呈现在外发单据上。
+   * 修复：把 `erp_revenue_adjust`（`status='applied'`）的折让额作为
+   * `docType='adjust'` 的**贷方行**纳入对账单（见 `collectCustomerTxns`）。
+   *
+   * ⚠️ 仍需财务确认：对账单上折让应当显示为"贷方冲减"（本实现）
+   * 还是"红字应收"；两者余额结果相同，但外发单据的观感不同。
    */
-  it.skip('已知缺口：仅有核销、无回款行的已结清应收，对账单仍显示全额余额', async () => {
+  it('核销/折让结清的应收，对账单以「收入折让」贷方行体现冲减，期末余额归零', async () => {
     const august = await service.getCustomerStatement(UUID.customerC, '2026-08');
-    // 台账 settled_amount = 300（已结清）
-    expect(august.closingBalance).toBe(300);
-    // 期望（未实现）：0，因为应收已全额核销
+    // 台账 settled_amount = 300（已结清）→ 对账单期末必须是 0
+    expect(august.closingBalance).toBe(0);
+    // 且必须有一行 adjust 类型、落在贷方的折让行，而不是凭空消失
+    const adjustLines = august.lines.filter((line) => line.docType === 'adjust');
+    expect(adjustLines).toHaveLength(1);
+    expect(adjustLines[0].credit).toBe(300);
+    expect(adjustLines[0].debit).toBe(0);
+    // 折让行必须参与余额滚动（否则余额还是错的）
+    expect(adjustLines[0].affectsBalance).toBe(true);
   });
 
   it('B-02：self 范围按应收责任人放行/拦截（EXISTS 子查询真实取数）', async () => {
@@ -457,3 +503,4 @@ describe('C-11 对账单 SQL 集成（pglite + 真实 StatementService）', () =
     expect(result.closingBalance).toBe(1650.4);
   });
 });
+

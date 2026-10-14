@@ -41,6 +41,8 @@ const DOC_TYPE_LABELS: Record<StatementLineItem['docType'], string> = {
   receipt: '回款单',
   payment: '付款单',
   invoice: '发票',
+  // 折让/退回冲减必须单独展示：否则对方会以为这笔钱还没付
+  adjust: '收入折让',
 };
 
 /** 核对状态展示文案与颜色（备查行不参与余额，用中性色） */

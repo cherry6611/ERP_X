@@ -4674,7 +4674,14 @@ export interface NoteDueAlert {
 export type StatementDirection = 'customer' | 'supplier';
 
 /** 对账单上的单据类型 */
-export type StatementDocType = 'ar' | 'ap' | 'receipt' | 'payment' | 'invoice';
+export type StatementDocType =
+  | 'ar'
+  | 'ap'
+  | 'receipt'
+  | 'payment'
+  | 'invoice'
+  /** 收入折让/退回冲减：必须单列，否则被折让结清的应收在对账单上会永远显示全额 */
+  | 'adjust';
 
 /** 单据核对状态：已核销/部分核销/未核销/作废/备查（备查行不参与余额） */
 export type StatementReconStatus =
