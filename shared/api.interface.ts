@@ -4785,3 +4785,148 @@ export interface StatementCounterpartyOption {
   /** 该对手方最近一次业务单据日期；无单据时为 null */
   lastDocDate: string | null;
 }
+
+/* ========== 批次二 C-05：采购/销售退货闭环 ========== */
+
+export type ReturnStatus = 'draft' | 'submitted' | 'approved' | 'completed' | 'void';
+export type ReturnAction = 'submit' | 'approve' | 'reject' | 'complete' | 'void';
+
+/** 可退数量查询结果（下单前先告诉用户还能退多少） */
+export interface ReturnableQuantityResult {
+  orderId: string;
+  orderCode: string;
+  itemName: string;
+  /** 订购数量 */
+  quantity: number;
+  /** 已验收数量 */
+  acceptedQuantity: number;
+  /** 已退数量（未作废退货单累计） */
+  returnedQuantity: number;
+  /** 可退数量 = 已验收 − 已退，下限 0 */
+  returnableQuantity: number;
+  /** 尚未验收，不可退 */
+  notAccepted: boolean;
+  /** 原单含税单价（退货金额按它计算） */
+  unitPrice: number;
+  /** 原单税率（%） */
+  taxRate: number;
+  supplierId: string | null;
+  supplierName: string | null;
+  projectId: string | null;
+}
+
+export interface PurchaseReturnItem {
+  id: string;
+  code: string;
+  orderId: string;
+  orderCode: string | null;
+  supplierId: string | null;
+  supplierName: string | null;
+  projectId: string | null;
+  projectName: string | null;
+  returnDate: string;
+  returnQuantity: number;
+  amount: number;
+  taxRate: number | null;
+  netAmount: number;
+  taxAmount: number;
+  apBillId: string | null;
+  redInvoiceId: string | null;
+  status: ReturnStatus;
+  reason: string | null;
+  remark: string | null;
+  voucherRef: string | null;
+  createdByUser: string | null;
+  approvedBy: string | null;
+  submittedAt: string | null;
+  approvedAt: string | null;
+  completedAt: string | null;
+  createdAt: string;
+}
+
+export interface CreatePurchaseReturnDto {
+  orderId: string;
+  returnDate: string;
+  returnQuantity: number;
+  /** 覆盖原单单价（可选，缺省用原单快照） */
+  unitPrice?: number;
+  apBillId?: string;
+  reason?: string;
+  remark?: string;
+}
+
+export interface SalesReturnItem {
+  id: string;
+  code: string;
+  revenueId: string;
+  revenueCode: string | null;
+  contractId: string | null;
+  customerId: string | null;
+  customerName: string | null;
+  projectId: string | null;
+  projectName: string | null;
+  returnDate: string;
+  amount: number;
+  taxRate: number | null;
+  netAmount: number;
+  taxAmount: number;
+  redInvoiceId: string | null;
+  revenueAdjustId: string | null;
+  status: ReturnStatus;
+  reason: string | null;
+  remark: string | null;
+  voucherRef: string | null;
+  createdByUser: string | null;
+  approvedBy: string | null;
+  submittedAt: string | null;
+  approvedAt: string | null;
+  completedAt: string | null;
+  createdAt: string;
+}
+
+export interface CreateSalesReturnDto {
+  revenueId: string;
+  returnDate: string;
+  /** 退货含税金额（销售退货按金额而非数量，收入确认没有数量概念） */
+  amount: number;
+  taxRate?: number;
+  reason?: string;
+  remark?: string;
+}
+
+export interface PurchaseReturnListParams {
+  page?: number;
+  pageSize?: number;
+  status?: string;
+  orderId?: string;
+  supplierId?: string;
+  projectId?: string;
+}
+
+export interface SalesReturnListParams {
+  page?: number;
+  pageSize?: number;
+  status?: string;
+  revenueId?: string;
+  customerId?: string;
+}
+
+/** 退货动作入参（approve/reject/complete/void 共用） */
+export interface ReturnActionDto {
+  action: ReturnAction;
+  remark?: string;
+}
+
+/** 退货台账汇总（按状态） */
+export interface ReturnRegisterResult {
+  purchase: {
+    byStatus: Array<{ status: ReturnStatus; count: number; amount: number }>;
+    totalAmount: number;
+    completedAmount: number;
+  };
+  sales: {
+    byStatus: Array<{ status: ReturnStatus; count: number; amount: number }>;
+    totalAmount: number;
+    completedAmount: number;
+  };
+}

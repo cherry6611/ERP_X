@@ -27,6 +27,8 @@ const DashboardPage = lazy(() => import('./pages/dashboard/DashboardPage'));
 const MetricsPage = lazy(() => import('./pages/dashboard/MetricsPage'));
 // C-04 / D-02：应收应付票据（登记/持有/背书/贴现/到期收款/拒付 + 备查簿与到期预警）
 const NotesPage = lazy(() => import('./pages/notes'));
+// C-05：采购/销售退货闭环
+const ReturnsPage = lazy(() => import('./pages/returns'));
 const CustomersPage = lazy(() => import('./pages/customers/CustomersPage'));
 const CrmPage = lazy(() => import('./pages/crm/CrmPage'));
 const OpportunityDetailPage = lazy(
@@ -129,6 +131,8 @@ const RoutesComponent = () => {
           <Route path="bi/metrics" element={<MetricsPage />} />
           {/* C-04 / D-02：应收应付票据 */}
           <Route path="notes" element={<NotesPage />} />
+          {/* C-05：采购/销售退货闭环 */}
+          <Route path="returns" element={<ReturnsPage />} />
           <Route path="customers" element={<CustomersPage />} />
           <Route path="crm" element={<CrmPage />} />
           <Route path="crm/leads/new" element={<LeadCreatePage />} />

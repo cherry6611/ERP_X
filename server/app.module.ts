@@ -41,6 +41,8 @@ import { SystemConfigModule } from './modules/system-config/system-config.module
 import { IntegrationsModule } from './modules/integrations/integrations.module';
 // C-04 / D-02：应收应付票据（独立模块：自带状态机、备查簿与到期预警）
 import { NoteModule } from './modules/notes/note.module';
+// C-05：采购/销售退货闭环（采购与销售共用一套状态机与动作语义）
+import { ReturnModule } from './modules/returns/return.module';
 
 @Module({
   imports: [
@@ -83,6 +85,7 @@ import { NoteModule } from './modules/notes/note.module';
     SystemConfigModule,
     IntegrationsModule,
     NoteModule,
+    ReturnModule,
     // ====== @route-section: business-modules END ======
 
     // ⚠️ @route-order: last

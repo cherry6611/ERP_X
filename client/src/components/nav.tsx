@@ -20,6 +20,7 @@ import {
   LayoutDashboard,
   Library,
   Package,
+  PackageX,
   PiggyBank,
   Receipt,
   ScrollText,
@@ -69,6 +70,8 @@ export const NAV_GROUPS: { title: string; items: NavItem[] }[] = [
     title: '采购与资产',
     items: [
       { label: '采购管理', path: '/pur', icon: Package, capability: 'pur_asset' },
+      // C-05：采购/销售退货闭环
+      { label: '退货管理', path: '/returns', icon: PackageX, capability: 'pur_asset' },
       { label: '固定资产', path: '/asset', icon: Laptop, capability: 'pur_asset' },
     ],
   },
