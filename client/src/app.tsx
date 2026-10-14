@@ -24,6 +24,7 @@ function RouteErrorBoundary({ children }: { children: React.ReactNode }) {
 
 const NotFound = lazy(() => import('./pages/NotFound/NotFound'));
 const DashboardPage = lazy(() => import('./pages/dashboard/DashboardPage'));
+const MetricsPage = lazy(() => import('./pages/dashboard/MetricsPage'));
 const CustomersPage = lazy(() => import('./pages/customers/CustomersPage'));
 const CrmPage = lazy(() => import('./pages/crm/CrmPage'));
 const OpportunityDetailPage = lazy(
@@ -122,6 +123,8 @@ const RoutesComponent = () => {
           }
         >
           <Route index element={<DashboardPage />} />
+          {/* D-12：指标中心（口径说明 / 上期对比 / 下钻 / 预警订阅） */}
+          <Route path="bi/metrics" element={<MetricsPage />} />
           <Route path="customers" element={<CustomersPage />} />
           <Route path="crm" element={<CrmPage />} />
           <Route path="crm/leads/new" element={<LeadCreatePage />} />

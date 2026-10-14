@@ -16,4 +16,6 @@ export const CRON_BY_TRIGGER: Record<string, string> = {
   retention_daily: '30 3 * * *',
   /** A-04：年结提醒（12 月 20 日起每日提醒 admin 做年结前置检查） */
   year_end_reminder_daily: '0 9 * * *',
+  /** D-12：BI 指标预警扫描（每日 08:30，按用户订阅的阈值判定并推送） */
+  bi_alert_daily: '30 8 * * *',
 };

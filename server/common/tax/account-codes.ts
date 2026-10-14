@@ -28,6 +28,10 @@ export const ACCOUNT_INVENTORY = '1403';
 export const ACCOUNT_FIXED_ASSET = '1601';
 /** 累计折旧 */
 export const ACCOUNT_ACCUM_DEPRECIATION = '1602';
+/** 固定资产清理（D-08 处置过渡科目，借贷双向） */
+export const ACCOUNT_FIXED_ASSET_DISPOSAL = '1603';
+/** 固定资产减值准备（D-08 资产备抵科目，贷） */
+export const ACCOUNT_FIXED_ASSET_IMPAIRMENT = '1604';
 
 /** 应付账款 */
 export const ACCOUNT_AP = '2202';

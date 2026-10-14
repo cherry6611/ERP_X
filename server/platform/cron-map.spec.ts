@@ -5,6 +5,8 @@ describe('cron map', () => {
     expect(Object.keys(CRON_BY_TRIGGER).sort()).toEqual([
       'admin_rent_expiry_remind',
       'ar_due_reminder_daily',
+      // D-12：BI 指标预警扫描（每日 08:30）
+      'bi_alert_daily',
       'customer_credit_alert',
       'delivery_warning_weekly',
       'feishu_contact_full',
@@ -30,10 +32,12 @@ describe('cron map', () => {
     }
   });
 
-  it('保留任务在凌晨低峰执行，提醒类任务在 09:00 执行', () => {
+  it('保留任务在凌晨低峰执行，提醒类任务在 09:00 前执行', () => {
     expect(CRON_BY_TRIGGER.retention_daily).toBe('30 3 * * *');
     expect(CRON_BY_TRIGGER.session_cleanup_daily).toBe('15 3 * * *');
     expect(CRON_BY_TRIGGER.ar_due_reminder_daily).toBe('0 9 * * *');
     expect(CRON_BY_TRIGGER.year_end_reminder_daily).toBe('0 9 * * *');
+    // D-12 预警必须在工作时间开始前跑完，否则业务方上午看不到提醒
+    expect(CRON_BY_TRIGGER.bi_alert_daily).toBe('30 8 * * *');
   });
 });

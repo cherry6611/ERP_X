@@ -95,8 +95,8 @@ class ResetPasswordDto {
 /**
  * 飞书联系人绑定入参（class DTO：openId 必填，避免空值触发飞书侧 400）。
  *
- * 注意：**必须定义在 controller 类之前**。`@Body() body: SomeDto` 会把 DTO 的
- * 构造器作为设计期元数据写在 controller 的装饰器上，而 TS 编译到 CJS 后
+ * 注意：**必须定义在 controller 类之前**。`@Body()` 会把 DTO 的构造器
+ * 作为设计期元数据写在 controller 的装饰器上，而 TS 编译到 CJS 后
  * 类声明仍是 `let/const`（TDZ）；若 DTO 定义在 controller 之后，
  * 生产构建启动时会抛 `Cannot access 'X' before initialization`
  * （`tsc --noEmit` 与 jest(ts-jest) 都发现不了，只有真正 require 编译产物才暴露）。

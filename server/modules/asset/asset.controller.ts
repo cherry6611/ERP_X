@@ -7,8 +7,11 @@ import {
   ParseUUIDPipe,
   Post,
   Query,
+  Req,
 } from '@nestjs/common';
 import { CanCapability, NeedLogin } from '@server/platform';
+import type { Request } from 'express';
+import { actorFromRequest } from '@server/common/auth/actor';
 import {
   IsDateString,
   IsIn,
@@ -23,10 +26,19 @@ import {
 } from 'class-validator';
 import { AssetService } from './asset.service';
 import { AssetDepreciationService } from './asset-depreciation.service';
+import { AssetLifecycleService } from './asset-lifecycle.service';
 import type {
   AssetChangeAction,
   AssetChangeItem,
   AssetDepreciationItem,
+  AssetDisposalItem,
+  AssetDisposalPreview,
+  AssetImpairmentItem,
+  AssetLifecycleResult,
+  CreateAssetDisposalDto as ICreateAssetDisposalDto,
+  CreateAssetImpairmentDto as ICreateAssetImpairmentDto,
+  DisposalAction,
+  ImpairmentTestPreview,
   AssetItem,
   AssetOverview,
   CreateAssetChangeDto as ICreateAssetChangeDto,
@@ -101,12 +113,72 @@ export class DepreciatePeriodDto implements IDepreciatePeriodDto {
   period!: string;
 }
 
+/* ========== D-08：减值与处置（class DTO 必须定义在 controller 之前） ========== */
+
+/** 减值测试计提入参 */
+export class CreateAssetImpairmentDto implements ICreateAssetImpairmentDto {
+  @IsUUID()
+  assetId!: string;
+
+  @IsDateString()
+  testDate!: string;
+
+  @IsString()
+  @Matches(/^\d{4}-(0[1-9]|1[0-2])$/, { message: '期间格式必须为 YYYY-MM' })
+  period!: string;
+
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @Min(0)
+  recoverableAmount!: number;
+
+  @IsOptional()
+  @IsString()
+  method?: string;
+
+  @IsOptional()
+  @IsString()
+  remark?: string;
+}
+
+/** 处置申请入参 */
+export class CreateAssetDisposalDto implements ICreateAssetDisposalDto {
+  @IsUUID()
+  assetId!: string;
+
+  @IsIn(['sale', 'scrap', 'donate'], {
+    message: '处置方式仅支持 sale / scrap / donate',
+  })
+  disposalType!: 'sale' | 'scrap' | 'donate';
+
+  @IsDateString()
+  applyDate!: string;
+
+  @IsOptional()
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @Min(0)
+  disposalIncome?: number;
+
+  @IsOptional()
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @Min(0)
+  taxRate?: number;
+
+  @IsOptional()
+  @IsString()
+  reason?: string;
+
+  @IsOptional()
+  @IsString()
+  remark?: string;
+}
+
 @NeedLogin()
 @Controller('api/asset')
 export class AssetController {
   constructor(
     private readonly assetService: AssetService,
-    private readonly assetDepreciationService: AssetDepreciationService
+    private readonly assetDepreciationService: AssetDepreciationService,
+    private readonly assetLifecycleService: AssetLifecycleService
   ) {}
 
   @Get('assets')
@@ -190,5 +262,141 @@ export class AssetController {
   @Get('overview')
   async getOverview(): Promise<AssetOverview> {
     return this.assetService.getOverview();
+  }
+
+  /* ========== D-08 资产全生命周期 ========== */
+
+  /** 完整生命周期时间线（建卡 / 变更 / 折旧 / 减值 / 处置） */
+  @Get('assets/:id/lifecycle')
+  async lifecycle(
+    @Param('id', ParseUUIDPipe) id: string
+  ): Promise<AssetLifecycleResult> {
+    return this.assetLifecycleService.lifecycle(id);
+  }
+
+  /** 资产归属与保管人 */
+  @Get('assets/:id/ownership')
+  async ownership(@Param('id', ParseUUIDPipe) id: string) {
+    return this.assetLifecycleService.ownership(id);
+  }
+
+  /** 减值测试预览（不落库，用于前端确认后提交） */
+  @Get('impairment-test')
+  async impairmentTest(
+    @Query('assetId', ParseUUIDPipe) assetId: string,
+    @Query('recoverableAmount') recoverableAmount: string
+  ): Promise<ImpairmentTestPreview> {
+    if (!assetId) throw new BadRequestException('assetId 必填');
+    const amount = Number(recoverableAmount);
+    if (!Number.isFinite(amount)) {
+      throw new BadRequestException('recoverableAmount 必填且必须为数值');
+    }
+    return this.assetLifecycleService.previewImpairmentTest({
+      assetId,
+      recoverableAmount: amount,
+    });
+  }
+
+  @Get('impairments')
+  async listImpairments(
+    @Query('assetId') assetId?: string,
+    @Query('period') period?: string,
+    @Query('page') page?: string,
+    @Query('pageSize') pageSize?: string
+  ) {
+    return this.assetLifecycleService.listImpairments({
+      assetId,
+      period,
+      page: page ? Number(page) : undefined,
+      pageSize: pageSize ? Number(pageSize) : undefined,
+    });
+  }
+
+  @CanCapability('pur_asset')
+  @Post('impairments')
+  async createImpairment(
+    @Req() req: Request,
+    @Body() dto: CreateAssetImpairmentDto
+  ): Promise<AssetImpairmentItem> {
+    return this.assetLifecycleService.createImpairment(
+      dto,
+      actorFromRequest(req).userId
+    );
+  }
+
+  @CanCapability('pur_asset')
+  @Post('impairments/:id/delete')
+  async deleteImpairment(
+    @Req() req: Request,
+    @Param('id', ParseUUIDPipe) id: string
+  ): Promise<{ ok: true }> {
+    return this.assetLifecycleService.deleteImpairment(
+      id,
+      actorFromRequest(req).userId
+    );
+  }
+
+  /** 处置预览（给出净值、销项税、预计损益与将生成的分录） */
+  @Get('disposal-preview')
+  async disposalPreview(
+    @Query('assetId', ParseUUIDPipe) assetId: string,
+    @Query('disposalType') disposalType: string,
+    @Query('disposalIncome') disposalIncome?: string,
+    @Query('taxRate') taxRate?: string
+  ): Promise<AssetDisposalPreview> {
+    if (!assetId) throw new BadRequestException('assetId 必填');
+    if (!['sale', 'scrap', 'donate'].includes(disposalType)) {
+      throw new BadRequestException('disposalType 仅支持 sale / scrap / donate');
+    }
+    return this.assetLifecycleService.previewDisposal({
+      assetId,
+      disposalType: disposalType as 'sale' | 'scrap' | 'donate',
+      disposalIncome: disposalIncome ? Number(disposalIncome) : undefined,
+      taxRate: taxRate ? Number(taxRate) : undefined,
+    });
+  }
+
+  @Get('disposals')
+  async listDisposals(
+    @Query('assetId') assetId?: string,
+    @Query('status') status?: string,
+    @Query('page') page?: string,
+    @Query('pageSize') pageSize?: string
+  ) {
+    return this.assetLifecycleService.listDisposals({
+      assetId,
+      status,
+      page: page ? Number(page) : undefined,
+      pageSize: pageSize ? Number(pageSize) : undefined,
+    });
+  }
+
+  @CanCapability('pur_asset')
+  @Post('disposals')
+  async createDisposal(
+    @Req() req: Request,
+    @Body() dto: CreateAssetDisposalDto
+  ): Promise<AssetDisposalItem> {
+    return this.assetLifecycleService.createDisposal(
+      dto,
+      actorFromRequest(req).userId
+    );
+  }
+
+  @CanCapability('pur_asset')
+  @Post('disposals/:id/actions/:action')
+  async disposalAction(
+    @Req() req: Request,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('action') action: string
+  ): Promise<AssetDisposalItem> {
+    if (action !== 'complete' && action !== 'reject') {
+      throw new BadRequestException('不支持的操作，仅允许 complete / reject');
+    }
+    return this.assetLifecycleService.disposalAction(
+      id,
+      action as DisposalAction,
+      actorFromRequest(req).userId
+    );
   }
 }

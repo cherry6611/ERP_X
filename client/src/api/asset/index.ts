@@ -6,13 +6,22 @@ import type {
   AssetChangeListParams,
   AssetDepreciationItem,
   AssetDepreciationListParams,
+  AssetDisposalItem,
+  AssetDisposalPreview,
+  AssetDisposalType,
+  AssetImpairmentItem,
   AssetItem,
+  AssetLifecycleResult,
   AssetListParams,
   AssetOverview,
   CreateAssetChangeDto,
+  CreateAssetDisposalDto,
   CreateAssetDto,
+  CreateAssetImpairmentDto,
   DepreciatePeriodDto,
   DepreciateResult,
+  DisposalAction,
+  ImpairmentTestPreview,
   PagedResult,
 } from '@shared/api.interface';
 
@@ -95,6 +104,119 @@ export async function depreciate(
   const resp = await axiosForBackend.post<DepreciateResult>(
     '/api/asset/depreciate',
     dto,
+  );
+  ensureNotForbidden(resp);
+  return resp.data;
+}
+
+/* ========== D-08 全生命周期 / 减值 / 处置 ========== */
+
+export async function getLifecycle(
+  assetId: string,
+): Promise<AssetLifecycleResult> {
+  const resp = await axiosForBackend.get<AssetLifecycleResult>(
+    `/api/asset/assets/${assetId}/lifecycle`,
+  );
+  return resp.data;
+}
+
+export async function getOwnership(assetId: string) {
+  const resp = await axiosForBackend.get<{
+    departmentId: string | null;
+    departmentName: string | null;
+    projectId: string | null;
+    projectName: string | null;
+    keeperName: string | null;
+  }>(`/api/asset/assets/${assetId}/ownership`);
+  return resp.data;
+}
+
+export async function previewImpairmentTest(
+  assetId: string,
+  recoverableAmount: number,
+): Promise<ImpairmentTestPreview> {
+  const resp = await axiosForBackend.get<ImpairmentTestPreview>(
+    '/api/asset/impairment-test',
+    { params: { assetId, recoverableAmount } },
+  );
+  return resp.data;
+}
+
+export async function listImpairments(params?: {
+  assetId?: string;
+  period?: string;
+  page?: number;
+  pageSize?: number;
+}): Promise<PagedResult<AssetImpairmentItem>> {
+  const resp = await axiosForBackend.get<PagedResult<AssetImpairmentItem>>(
+    '/api/asset/impairments',
+    { params },
+  );
+  return resp.data;
+}
+
+export async function createImpairment(
+  dto: CreateAssetImpairmentDto,
+): Promise<AssetImpairmentItem> {
+  const resp = await axiosForBackend.post<AssetImpairmentItem>(
+    '/api/asset/impairments',
+    dto,
+  );
+  ensureNotForbidden(resp);
+  return resp.data;
+}
+
+export async function deleteImpairment(id: string): Promise<{ ok: true }> {
+  const resp = await axiosForBackend.post<{ ok: true }>(
+    `/api/asset/impairments/${id}/delete`,
+  );
+  ensureNotForbidden(resp);
+  return resp.data;
+}
+
+export async function previewDisposal(params: {
+  assetId: string;
+  disposalType: AssetDisposalType;
+  disposalIncome?: number;
+  taxRate?: number;
+}): Promise<AssetDisposalPreview> {
+  const resp = await axiosForBackend.get<AssetDisposalPreview>(
+    '/api/asset/disposal-preview',
+    { params },
+  );
+  return resp.data;
+}
+
+export async function listDisposals(params?: {
+  assetId?: string;
+  status?: string;
+  page?: number;
+  pageSize?: number;
+}): Promise<PagedResult<AssetDisposalItem>> {
+  const resp = await axiosForBackend.get<PagedResult<AssetDisposalItem>>(
+    '/api/asset/disposals',
+    { params },
+  );
+  return resp.data;
+}
+
+export async function createDisposal(
+  dto: CreateAssetDisposalDto,
+): Promise<AssetDisposalItem> {
+  const resp = await axiosForBackend.post<AssetDisposalItem>(
+    '/api/asset/disposals',
+    dto,
+  );
+  ensureNotForbidden(resp);
+  return resp.data;
+}
+
+export async function disposalAction(
+  id: string,
+  action: DisposalAction,
+): Promise<AssetDisposalItem> {
+  const resp = await axiosForBackend.post<AssetDisposalItem>(
+    `/api/asset/disposals/${id}/actions/${action}`,
   );
   ensureNotForbidden(resp);
   return resp.data;

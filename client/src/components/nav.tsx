@@ -14,6 +14,7 @@ import {
   FileSignature,
   FileSpreadsheet,
   FolderKanban,
+  Gauge,
   Laptop,
   Layers,
   LayoutDashboard,
@@ -41,7 +42,11 @@ export interface NavItem {
 export const NAV_GROUPS: { title: string; items: NavItem[] }[] = [
   {
     title: '经营总览',
-    items: [{ label: '经营看板', path: '/', icon: LayoutDashboard, capability: 'dashboard' }],
+    items: [
+      { label: '经营看板', path: '/', icon: LayoutDashboard, capability: 'dashboard' },
+      // D-12：指标中心（口径说明 + 下钻 + 阈值预警订阅），只对财务口径可见
+      { label: '指标中心', path: '/bi/metrics', icon: Gauge, capability: 'finance' },
+    ],
   },
   {
     title: '前端业务',

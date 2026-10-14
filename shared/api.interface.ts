@@ -4085,3 +4085,188 @@ export interface BindFeishuContactDto {
 export interface SetEntityStatusDto {
   status: 'active' | 'inactive';
 }
+
+/* ========== 批次三 D-08：固定资产减值、处置与全生命周期 ========== */
+
+/** 减值测试预览（GET /api/asset/impairment-test） */
+export interface ImpairmentTestPreview {
+  assetId: string;
+  assetCode: string;
+  assetName: string;
+  originalValue: number;
+  accumulatedDepreciation: number;
+  accumulatedImpairment: number;
+  /** 账面价值 = 原值 − 累计折旧 − 已计提减值 */
+  bookValue: number;
+  recoverableAmount: number;
+  /** 减值损失 = max(账面价值 − 可收回金额, 0) */
+  impairmentLoss: number;
+  /** 损失为 0 时无需建单 */
+  needsImpairment: boolean;
+  /** 可收回金额低于残值的提示（不阻断，仅供复核） */
+  belowResidual: boolean;
+}
+
+export interface AssetImpairmentItem {
+  id: string;
+  code: string;
+  assetId: string;
+  assetCode: string;
+  assetName: string;
+  testDate: string;
+  period: string;
+  bookValue: number;
+  recoverableAmount: number;
+  impairmentLoss: number;
+  method: string;
+  /** 关联的凭证 sourceRef；null 表示凭证生成失败（已进补偿队列） */
+  voucherRef: string | null;
+  remark: string | null;
+  createdAt: string;
+}
+
+export interface CreateAssetImpairmentDto {
+  assetId: string;
+  /** 减值测试日 */
+  testDate: string;
+  /** 归属期间 YYYY-MM，同一资产同一期间只允许一次测试 */
+  period: string;
+  /** 可收回金额（公允价值减处置费用与预计未来现金流量现值孰高），由评估确定 */
+  recoverableAmount: number;
+  method?: string;
+  remark?: string;
+}
+
+export type AssetDisposalType = 'sale' | 'scrap' | 'donate';
+export type AssetDisposalStatus = 'disposing' | 'disposed' | 'scrapped' | 'rejected';
+export type DisposalAction = 'complete' | 'reject';
+
+export interface AssetDisposalItem {
+  id: string;
+  code: string;
+  assetId: string;
+  assetCode: string;
+  assetName: string;
+  disposalType: AssetDisposalType;
+  status: AssetDisposalStatus;
+  applyDate: string;
+  disposeDate: string | null;
+  originalValue: number;
+  accumulatedDepreciation: number;
+  netValue: number;
+  disposalIncome: number;
+  taxRate: number | null;
+  taxAmount: number;
+  /** 正为处置收益（营业外收入），负为处置损失（营业外支出） */
+  gainLoss: number;
+  voucherRef: string | null;
+  reason: string | null;
+  remark: string | null;
+  approvedBy: string | null;
+  createdAt: string;
+}
+
+export interface CreateAssetDisposalDto {
+  assetId: string;
+  disposalType: AssetDisposalType;
+  applyDate: string;
+  /** 处置收入（不含税）；报废/捐赠为 0 */
+  disposalIncome?: number;
+  /** 销项税率（%） */
+  taxRate?: number;
+  reason?: string;
+  remark?: string;
+}
+
+/** 处置预览（GET /api/asset/disposal-preview） */
+export interface AssetDisposalPreview {
+  netBookValue: number;
+  accumulatedImpairment: number;
+  taxAmount: number;
+  gainLoss: number;
+  lines: Array<{ accountCode: string; debit: number; credit: number }>;
+}
+
+/** 生命周期事件 */
+export type AssetLifecycleEventType =
+  | 'purchase'
+  | 'change'
+  | 'depreciation'
+  | 'impairment'
+  | 'disposal';
+
+export interface AssetLifecycleEvent {
+  eventType: AssetLifecycleEventType;
+  /** 事件发生日 YYYY-MM-DD */
+  occurredAt: string;
+  title: string;
+  /** 金额语义随事件类型不同：采购=原值、折旧=本期折旧、减值=减值损失、处置=净损益 */
+  amount: number | null;
+  refCode: string;
+  detail: string;
+}
+
+/** 完整生命周期（GET /api/asset/assets/:id/lifecycle） */
+export interface AssetLifecycleResult {
+  assetId: string;
+  assetCode: string;
+  assetName: string;
+  status: string;
+  originalValue: number;
+  accumulatedDepreciation: number;
+  accumulatedImpairment: number;
+  residualValue: number;
+  /** 账面净值 = 原值 − 累计折旧 − 累计减值 */
+  netBookValue: number;
+  purchaseOrderId: string | null;
+  departmentName: string | null;
+  projectName: string | null;
+  events: AssetLifecycleEvent[];
+}
+
+/* ========== 批次三 D-12：BI 指标中心与预警订阅 ========== */
+
+/** 单个指标：必须带可读的公式口径说明与下钻入口 */
+export interface BiMetric {
+  key: string;
+  name: string;
+  value: number;
+  unit: string;
+  /** 可读中文口径说明（不是代码），例如「毛利率 =（营业收入 − 营业成本）/ 营业收入」 */
+  formula: string;
+  /** 前端跳转路径；无对应页面时为 null */
+  drillUrl: string | null;
+  /** 环比/上期对比值；无上期数据时 null */
+  previousValue: number | null;
+}
+
+export interface BiMetricsResult {
+  period: string;
+  generatedAt: string;
+  metrics: BiMetric[];
+}
+
+export type BiAlertDirection = 'gt' | 'lt';
+
+export interface BiAlertSubscriptionItem {
+  id: string;
+  userId: string;
+  metricKey: string;
+  metricName: string;
+  thresholdDirection: BiAlertDirection;
+  threshold: number;
+  channel: 'feishu' | 'inbox';
+  enabled: boolean;
+  lastTriggeredAt: string | null;
+  remark: string | null;
+  createdAt: string;
+}
+
+export interface UpsertBiAlertSubscriptionDto {
+  metricKey: string;
+  thresholdDirection?: BiAlertDirection;
+  threshold: number;
+  channel?: 'feishu' | 'inbox';
+  enabled?: boolean;
+  remark?: string;
+}

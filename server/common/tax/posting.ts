@@ -1,17 +1,27 @@
 import { splitTax } from '@shared/tax';
 import {
+  ACCOUNT_ACCUM_DEPRECIATION,
   ACCOUNT_ADMIN_EXPENSE,
   ACCOUNT_AP,
   ACCOUNT_AR,
+  ACCOUNT_ASSET_IMPAIRMENT,
   ACCOUNT_BANK_PRIMARY,
   ACCOUNT_CASH,
   ACCOUNT_COST_MAIN,
   ACCOUNT_FIXED_ASSET,
+  ACCOUNT_FIXED_ASSET_DISPOSAL,
+  ACCOUNT_FIXED_ASSET_IMPAIRMENT,
+  ACCOUNT_NON_OPERATING_EXPENSE,
+  ACCOUNT_NON_OPERATING_INCOME,
   ACCOUNT_PAYROLL_PAYABLE,
   ACCOUNT_REVENUE_MAIN,
   ACCOUNT_VAT_INPUT,
   ACCOUNT_VAT_OUTPUT,
 } from './account-codes';
+
+function round2(value: number): number {
+  return Math.round(value * 100) / 100;
+}
 
 export interface PostingLine {
   /** 语义科目编码（可为汇总科目，由 AccountResolverService 下钻到末级） */
@@ -133,4 +143,120 @@ export function payrollAccrualLines(amount: number): PostingLine[] {
     { accountCode: ACCOUNT_COST_MAIN, debit: amount },
     { accountCode: ACCOUNT_PAYROLL_PAYABLE, credit: amount },
   ];
+}
+
+/* ========== D-08：固定资产减值与处置（口径需财务确认，见迁移注释） ========== */
+
+/**
+ * 计提固定资产减值：借 6701 资产减值损失，贷 1604 固定资产减值准备。
+ *
+ * 为什么单独挂 1604 而不是直接冲减 1601：
+ * 固定资产原值必须保留（报表"固定资产原价"行取 1601 借方余额），
+ * 减值只能作为备抵科目列示，否则"原价"与"累计折旧"两个口径同时失真。
+ */
+export function assetImpairmentLines(loss: number): PostingLine[] {
+  return keep([
+    { accountCode: ACCOUNT_ASSET_IMPAIRMENT, debit: loss },
+    { accountCode: ACCOUNT_FIXED_ASSET_IMPAIRMENT, credit: loss },
+  ]);
+}
+
+export interface AssetDisposalInput {
+  /** 账面原值 */
+  originalValue: number;
+  /** 累计折旧 */
+  accumulatedDepreciation: number;
+  /** 已计提减值准备 */
+  impairmentProvision: number;
+  /** 处置收入（不含税）；报废/捐赠为 0 */
+  disposalIncome: number;
+  /** 销项税额（处置收入倒算）；无收入为 0 */
+  outputTax: number;
+  /** sale=出售转让 / scrap=报废 / donate=捐赠 */
+  disposalType: 'sale' | 'scrap' | 'donate';
+}
+
+export interface AssetDisposalPosting {
+  lines: PostingLine[];
+  /** 处置净损益：正=收益（营业外收入），负=损失（营业外支出） */
+  gainLoss: number;
+}
+
+/**
+ * 固定资产处置（出售/报废/捐赠）：
+ *
+ *   ① 转入清理：借 1603 固定资产清理（净值）+ 借 1602 累计折旧 + 借 1604 减值准备
+ *              / 贷 1601 固定资产（原值）
+ *   ② 处置收入：借 1002 银行存款（含税）/ 贷 1603 清理 + 贷 222101 销项税
+ *   ③ 清理净额：1603 借方余额（净损失）→ 借 6711 营业外支出；
+ *              1603 贷方余额（净收益）→ 贷 6301 营业外收入
+ *
+ * 净损益推导（单测据此断言）：
+ *   gainLoss = 处置收入 − 销项税 − (原值 − 累计折旧 − 减值准备)
+ *            = disposalIncome − outputTax − netBookValue
+ * 净损失走 6711、净收益走 6301，金额恒为 |gainLoss|。
+ */
+export function assetDisposalLines(input: AssetDisposalInput): AssetDisposalPosting {
+  const {
+    originalValue,
+    accumulatedDepreciation,
+    impairmentProvision,
+    disposalIncome,
+    outputTax,
+  } = input;
+  const netBookValue = round2(
+    originalValue - accumulatedDepreciation - impairmentProvision
+  );
+  const gainLoss = round2(disposalIncome - outputTax - netBookValue);
+
+  const lines: PostingLine[] = [];
+  // ① 转入清理：把原值、累计折旧、减值准备同时转出到 1603
+  //
+  // 注意：每条分录只写**单边**金额（借方行只给 debit，贷方行只给 credit）。
+  // 下面 keep() 会丢弃"两侧都为 0"的行；若把一条分录同时写成 `{debit: x, credit: 0}`
+  // 之外的形态（例如两边都给值），会被 keep 的过滤条件误判，因此这里保持单边写法。
+  if (originalValue > 0) {
+    if (netBookValue > 0) {
+      lines.push({ accountCode: ACCOUNT_FIXED_ASSET_DISPOSAL, debit: netBookValue });
+    } else if (netBookValue < 0) {
+      // 账面为负（累计折旧+减值超过原值，历史数据异常）时挂贷方，保证分录仍能轧平
+      lines.push({ accountCode: ACCOUNT_FIXED_ASSET_DISPOSAL, credit: -netBookValue });
+    }
+    if (accumulatedDepreciation > 0) {
+      lines.push({
+        accountCode: ACCOUNT_ACCUM_DEPRECIATION,
+        debit: accumulatedDepreciation,
+      });
+    }
+    if (impairmentProvision > 0) {
+      lines.push({
+        accountCode: ACCOUNT_FIXED_ASSET_IMPAIRMENT,
+        debit: impairmentProvision,
+      });
+    }
+    lines.push({ accountCode: ACCOUNT_FIXED_ASSET, credit: originalValue });
+  }
+  // ② 处置收入（出售转让或报废变卖收入）
+  if (disposalIncome > 0) {
+    lines.push({
+      accountCode: ACCOUNT_BANK_PRIMARY,
+      debit: round2(disposalIncome + outputTax),
+    });
+    lines.push({
+      accountCode: ACCOUNT_FIXED_ASSET_DISPOSAL,
+      credit: disposalIncome,
+    });
+    if (outputTax > 0) {
+      lines.push({ accountCode: ACCOUNT_VAT_OUTPUT, credit: outputTax });
+    }
+  }
+  // ③ 清理净额结转
+  if (gainLoss > 0) {
+    lines.push({ accountCode: ACCOUNT_FIXED_ASSET_DISPOSAL, debit: gainLoss });
+    lines.push({ accountCode: ACCOUNT_NON_OPERATING_INCOME, credit: gainLoss });
+  } else if (gainLoss < 0) {
+    lines.push({ accountCode: ACCOUNT_NON_OPERATING_EXPENSE, debit: -gainLoss });
+    lines.push({ accountCode: ACCOUNT_FIXED_ASSET_DISPOSAL, credit: -gainLoss });
+  }
+  return { lines: keep(lines), gainLoss };
 }
