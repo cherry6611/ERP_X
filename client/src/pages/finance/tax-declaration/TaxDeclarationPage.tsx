@@ -12,6 +12,7 @@ import {
   Wallet,
 } from 'lucide-react';
 import PageShell from '@client/src/components/PageShell';
+import TaxRiskPanel from './TaxRiskPanel';
 import FilterBar from '@client/src/components/erp/FilterBar';
 import PeriodSelect from '@client/src/components/erp/PeriodSelect';
 import DataBoundary from '@client/src/components/erp/DataBoundary';
@@ -164,8 +165,10 @@ const TaxDeclarationPage: React.FC = () => {
   return (
     <PageShell
       title="增值税申报"
-      description="发票台账口径与总账口径的销项/进项比对底稿，确认后留痕可追溯"
+      description="发票台账口径与总账口径的销项/进项比对底稿，确认后留痕可追溯；含 D-06 税务风险扫描"
     >
+      <TaxRiskPanel period={period} />
+
       <FilterBar>
         <div className="flex items-center gap-2">
           <Label htmlFor="vat-period" className="text-xs text-muted-foreground">

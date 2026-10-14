@@ -29,6 +29,7 @@ import { LedgersService } from './ledgers.service';
 import { YearEndService } from './year-end.service';
 import { VatDeclarationService } from './vat-declaration.service';
 import { AuxiliaryService } from './auxiliary.service';
+import { TaxRiskService } from './tax-risk.service';
 import type {
   CreateAuxDimensionDto as ICreateAuxDimensionDto,
   ToggleAuxDimensionDto as IToggleAuxDimensionDto,
@@ -114,6 +115,7 @@ export class FinanceReportsController {
     private readonly yearEndService: YearEndService,
     private readonly vatService: VatDeclarationService,
     private readonly auxiliaryService: AuxiliaryService,
+    private readonly taxRiskService: TaxRiskService,
   ) {}
 
   private assertPeriod(period: string | undefined): string {
@@ -385,6 +387,40 @@ export class FinanceReportsController {
     return this.vatService.list(
       Math.min(Math.max(Number(limit) || 24, 1), 120)
     );
+  }
+
+  /* ========== D-06 税务风险扫描 ========== */
+
+  /**
+   * 税务风险扫描：税负率异常 / 进销项匹配异常 / 发票异常。
+   *
+   * 复用 A-06 底稿作为进销项匹配的输入（不重算，避免两处口径漂移）；
+   * 三个方向独立容错，部分取数失败时在 `skipped` 里如实告知。
+   */
+  @CanCapability('finance')
+  @Get('tax-risk-scan')
+  scanTaxRisk(
+    @Query('period') period?: string,
+    @Query('taxEntityId') taxEntityId?: string
+  ) {
+    return this.taxRiskService.scan({
+      period: this.assertPeriod(period),
+      taxEntityId: taxEntityId || undefined,
+    });
+  }
+
+  /** 当前生效的风险阈值（前端展示口径说明，让业务知道按什么标准判定） */
+  @CanCapability('finance')
+  @Get('tax-risk-thresholds')
+  taxRiskThresholds() {
+    return this.taxRiskService.thresholds();
+  }
+
+  /** 增值税明细科目的本期发生额（解释底稿"总账口径"数字从哪来） */
+  @CanCapability('finance')
+  @Get('tax-risk-vat-movement')
+  vatAccountMovement(@Query('period') period?: string) {
+    return this.taxRiskService.vatAccountMovement(this.assertPeriod(period));
   }
 
   /* ========== A-05 辅助核算维度维护 ========== */

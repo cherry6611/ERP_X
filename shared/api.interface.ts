@@ -4978,3 +4978,70 @@ export interface AuditImmutabilityProbe {
   deleteBlocked: boolean;
   message: string;
 }
+
+/* ========== 批次三 D-06：税务风险扫描 ========== */
+
+export type TaxRiskSeverity = 'high' | 'medium' | 'low';
+
+export type TaxRiskCategory =
+  | 'burden_rate'
+  | 'invoice_ledger_mismatch'
+  | 'invoice_anomaly';
+
+export interface TaxRiskFindingItem {
+  code: string;
+  category: TaxRiskCategory;
+  severity: TaxRiskSeverity;
+  title: string;
+  /** 可读依据，必须含具体数字 */
+  evidence: string;
+  /** 建议的下一步动作 */
+  suggestion: string;
+  amount: number | null;
+}
+
+/** 可配置阈值（来自 sys_param，缺省值见 tax-risk-rules.ts） */
+export interface TaxRiskThresholds {
+  /** 增值税税负率参考区间下限（%） */
+  burdenRateMin: number;
+  /** 上限（%） */
+  burdenRateMax: number;
+  /** 环比波动阈值（百分点） */
+  burdenRateFluctuation: number;
+  /** 发票作废率告警阈值（%） */
+  voidRateThreshold: number;
+}
+
+export interface TaxRiskBurdenRateSnapshot {
+  revenue: number;
+  outputTax: number;
+  inputTax: number;
+  payableTax: number;
+  rate: number;
+  withinRange: boolean;
+}
+
+export interface TaxRiskScanResult {
+  period: string;
+  taxEntityId: string | null;
+  taxEntityName: string | null;
+  thresholds: TaxRiskThresholds;
+  /** 本期税负率快照（底稿不可用时为 null） */
+  burdenRate: TaxRiskBurdenRateSnapshot | null;
+  /** 底稿的发票口径 vs 总账口径是否已勾稽一致 */
+  reconciled: boolean;
+  findings: TaxRiskFindingItem[];
+  bySeverity: Record<TaxRiskSeverity, number>;
+  byCategory: Array<{
+    category: TaxRiskCategory;
+    label: string;
+    count: number;
+  }>;
+  totalFindings: number;
+  highestSeverity: TaxRiskSeverity | null;
+  /** 涉及金额合计（按 code 去重） */
+  totalAmountInvolved: number;
+  generatedAt: string;
+  /** 哪些扫描方向因取数失败被跳过（部分失败也要如实告知） */
+  skipped: string[];
+}

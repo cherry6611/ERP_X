@@ -19,6 +19,8 @@ import type {
   ReportQueryArgs,
   ReportTemplateRow,
   ReverseYearEndArgs,
+  TaxRiskScanResult,
+  TaxRiskThresholds,
   TrialBalanceResult,
   VatDeclarationHistoryItem,
   VatDeclarationResult,
@@ -260,5 +262,36 @@ export async function listVatDeclarations(
     '/api/finance/tax-declaration/list',
     { params: { limit } },
   );
+  return resp.data;
+}
+
+/* ========== D-06 税务风险扫描 ========== */
+
+export async function scanTaxRisk(params: {
+  period: string;
+  taxEntityId?: string;
+}): Promise<TaxRiskScanResult> {
+  const resp = await axiosForBackend.get<TaxRiskScanResult>(
+    '/api/finance/tax-risk-scan',
+    { params },
+  );
+  return resp.data;
+}
+
+export async function getTaxRiskThresholds(): Promise<TaxRiskThresholds> {
+  const resp = await axiosForBackend.get<TaxRiskThresholds>(
+    '/api/finance/tax-risk-thresholds',
+  );
+  return resp.data;
+}
+
+export async function getVatAccountMovement(period: string): Promise<{
+  outputTaxCredit: number;
+  inputTaxDebit: number;
+}> {
+  const resp = await axiosForBackend.get<{
+    outputTaxCredit: number;
+    inputTaxDebit: number;
+  }>('/api/finance/tax-risk-vat-movement', { params: { period } });
   return resp.data;
 }
