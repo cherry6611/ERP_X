@@ -32,6 +32,7 @@ import type {
   NoteDueAlert,
   NoteItem,
   NoteLogItem,
+  NoteRegisterDeepResult,
   NoteRegisterResult,
   PagedResult,
 } from '@shared/api.interface';
@@ -190,6 +191,17 @@ export class NoteController {
   @Get('register')
   async register(): Promise<NoteRegisterResult> {
     return this.noteService.register();
+  }
+
+  /**
+   * D-02 备查簿深化：到期结构 + 票号连续性 + 贴现成本分析 + 需关注清单。
+   *
+   * 四块共用一次取数（避免时间差导致两份数字对不上，审计会直接质疑整份报告）。
+   */
+  @CanCapabilityRead('finance')
+  @Get('register-deep')
+  async registerDeep(): Promise<NoteRegisterDeepResult> {
+    return this.noteService.registerDeep();
   }
 
   /** D-02 到期预警（逾期 / 15 天内） */

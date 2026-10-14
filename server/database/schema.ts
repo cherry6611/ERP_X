@@ -1875,6 +1875,14 @@ export const erpNote = pgTable("erp_note", {
   /** 贴现息 = 票面 × 贴现率 × 剩余天数 / 360（**计息基准需财务确认**） */
   discountInterest: numeric("discount_interest"),
   discountRate: numeric("discount_rate"),
+  /**
+   * D-02：贴现计息天数（贴现日 → 到期日，算头不算尾），贴现时写入。
+   *
+   * 为什么落库而不是从 `settled_date`/`due_date` 现算：贴现天数在贴现那一刻
+   * 固定，而"距今天数"随时间变化；用后者冒充前者会算出一个"每天都不一样"的
+   * 年化成本率 —— 这种数字比没有更糟。
+   */
+  discountDays: integer("discount_days"),
   settledAmount: numeric("settled_amount"),
   settledDate: date("settled_date"),
   endorsementCounterparty: varchar("endorsement_counterparty", { length: 200 }),

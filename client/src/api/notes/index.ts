@@ -9,6 +9,7 @@ import type {
   NoteItem,
   NoteListParams,
   NoteLogItem,
+  NoteRegisterDeepResult,
   NoteRegisterResult,
   NoteStatus,
   NoteType,
@@ -129,5 +130,13 @@ export async function noteAction(
     dto,
   );
   ensureNotForbidden(resp);
+  return resp.data;
+}
+
+/** D-02 备查簿深化：到期结构 + 票号连续性 + 贴现成本分析 + 需关注清单 */
+export async function getNoteRegisterDeep(): Promise<NoteRegisterDeepResult> {
+  const resp = await axiosForBackend.get<NoteRegisterDeepResult>(
+    '/api/notes/register-deep',
+  );
   return resp.data;
 }

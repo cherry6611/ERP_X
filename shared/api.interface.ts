@@ -5156,3 +5156,90 @@ export interface AuxAllocationPreview {
     netShare: number | null;
   }>;
 }
+
+/* ========== 批次三 D-02：票据备查簿深化 ========== */
+
+export type NoteDueBucket =
+  | 'overdue'
+  | 'within7'
+  | 'within30'
+  | 'within90'
+  | 'beyond90';
+
+/** 票号连续性检查结果（《票据管理实施办法》要求备查簿连续登记） */
+export interface NoteNoCheckResult {
+  totalNotes: number;
+  numberedNotes: number;
+  /** 无票号的票据数（票号必填，非 0 说明数据有缺口） */
+  missingNoteNoCount: number;
+  gaps: Array<{ before: string; after: string; missing: number }>;
+  duplicates: Array<{
+    noteNo: string;
+    codes: string[];
+    amount: number;
+    /** 全部为已作废 → 可能是作废后重开，不算高风险 */
+    allVoided: boolean;
+  }>;
+  continuous: boolean;
+  hasIssues: boolean;
+  message: string;
+}
+
+/** 到期结构（账龄分桶，看流动性压力） */
+export interface NoteDueStructureResult {
+  buckets: Array<{
+    bucket: NoteDueBucket;
+    label: string;
+    count: number;
+    amount: number;
+    share: number;
+  }>;
+  outstandingAmount: number;
+  outstandingCount: number;
+  overdueAmount: number;
+}
+
+/** 贴现成本分析（资金成本分析的基础数据） */
+export interface NoteDiscountCostResult {
+  count: number;
+  amount: number;
+  interest: number;
+  netProceeds: number;
+  /** 综合成本率（%）= 息合计 / 金额合计，**加权**而非算术平均 */
+  weightedRate: number;
+  byType: Array<{
+    noteType: string;
+    count: number;
+    amount: number;
+    interest: number;
+    weightedRate: number;
+  }>;
+  /** 年化成本率（%），按实际计息天数折算 */
+  annualizedRate: number;
+  /** 缺息或缺计息天数的票据编号，需补录后才能计入年化 */
+  incompleteCodes: string[];
+}
+
+/** 备查簿深化汇总（可直接打印给税务/审计） */
+export interface NoteRegisterDeepResult {
+  generatedAt: string;
+  total: { count: number; amount: number };
+  byStatus: Array<{
+    status: string;
+    label: string;
+    count: number;
+    amount: number;
+  }>;
+  dueStructure: NoteDueStructureResult;
+  numbering: NoteNoCheckResult;
+  discountCost: NoteDiscountCostResult;
+  /** 需关注票据（逾期 + 15 天内到期），按紧迫度排序 */
+  attention: Array<{
+    code: string;
+    noteNo: string;
+    amount: number;
+    dueDate: string;
+    daysLeft: number;
+    status: string;
+  }>;
+}

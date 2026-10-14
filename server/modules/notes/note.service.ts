@@ -22,6 +22,7 @@ import {
 } from '@server/database/schema';
 import { generateBizCode } from '@server/common/utils/biz-code';
 import { unwrapRows } from '@server/common/utils/rows';
+import { buildNoteRegister } from './note-register-rules';
 import {
   DISCOUNT_DAY_BASIS,
   NOTE_ACTION_LABELS,
@@ -50,6 +51,7 @@ import type {
   NoteItem,
   NoteListParams,
   NoteLogItem,
+  NoteRegisterDeepResult,
   NoteRegisterResult,
   PagedResult,
 } from '@shared/api.interface';
@@ -245,6 +247,60 @@ export class NoteService {
         noteType: row.noteType ?? 'bank',
         amount: round2(toNumber(row.amount)),
       }))
+    );
+  }
+
+  /**
+   * D-02：备查簿深化汇总。
+   *
+   * 四块内容拼成一份可直接给税务/审计的摘要：
+   *   ① 状态分布；② **到期结构**（账龄分桶，看流动性压力）；
+   *   ③ **票号连续性检查**（缺号/重号 —— 《票据管理实施办法》的硬要求）；
+   *   ④ **贴现成本分析**（综合成本率与年化率，资金成本分析的基础数据）。
+   *
+   * 为什么四块共用一次取数：分散查询会因时间差导致"状态分布的总数"
+   * 与"到期结构的总数"不一致，审计看到两个数字对不上会直接质疑整份报告。
+   */
+  async registerDeep(): Promise<NoteRegisterDeepResult> {
+    const today = todayInShanghai();
+    const rows = await this.db
+      .select({
+        id: erpNote.id,
+        code: erpNote.code,
+        noteNo: erpNote.noteNo,
+        noteType: erpNote.noteType,
+        status: erpNote.status,
+        amount: erpNote.amount,
+        drawer: erpNote.drawer,
+        dueDate: erpNote.dueDate,
+        discountInterest: erpNote.discountInterest,
+        discountRate: erpNote.discountRate,
+        discountDays: erpNote.discountDays,
+      })
+      .from(erpNote)
+      .orderBy(asc(erpNote.dueDate));
+    return buildNoteRegister(
+      rows.map((row) => ({
+        id: row.id,
+        code: row.code,
+        noteNo: row.noteNo,
+        noteType: row.noteType ?? 'bank',
+        status: row.status ?? 'received',
+        amount: round2(toNumber(row.amount)),
+        drawer: row.drawer,
+        dueDate: row.dueDate,
+        // 距今天数由服务端按业务时区算，前端不自己算（避免时区口径漂移）
+        daysLeft: daysBetween(row.dueDate, today),
+        discountInterest:
+          row.discountInterest === null
+            ? null
+            : round2(toNumber(row.discountInterest)),
+        discountRate:
+          row.discountRate === null ? null : round2(toNumber(row.discountRate)),
+        discountDays:
+          row.discountDays === null ? null : Math.trunc(toNumber(row.discountDays)),
+      })),
+      today
     );
   }
 
@@ -474,6 +530,14 @@ export class NoteService {
     if (dto.action === 'discount') {
       patch.discountRate = String(round2(dto.discountRate ?? 0));
       patch.discountInterest = String(interest);
+      // D-02：落库计息天数。贴现天数在贴现那一刻固定，不能日后从
+      // settled_date/due_date 现算 —— 那会随查询时间漂移出不同的年化率。
+      patch.discountDays = computeDiscount({
+        amount: note.amount,
+        rate: dto.discountRate ?? 0,
+        discountDate: actionDate,
+        dueDate: note.dueDate,
+      }).days;
       patch.settledAmount = String(settledAmount ?? 0);
       patch.settledDate = actionDate;
     }
