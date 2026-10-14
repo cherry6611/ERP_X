@@ -29,6 +29,7 @@ import { VoucherService } from './voucher.service';
 import type {
   AccountItem,
   CreateAccountDto as ICreateAccountDto,
+  SetAccountStatusDto as ISetAccountStatusDto,
   CreateVoucherDto as ICreateVoucherDto,
   CreateVoucherLineDto as ICreateVoucherLineDto,
   PagedResult,
@@ -55,6 +56,20 @@ export class CreateAccountDto implements ICreateAccountDto {
   @IsOptional()
   @IsString()
   remark?: string;
+}
+
+/**
+ * A-09：科目启用/停放入参。
+ *
+ * 用 `@IsIn` 而不是 `@IsBoolean`：状态是**两个具名取值**（active/inactive）
+ * 而非布尔量 —— 布尔会在契约里丢掉"这是状态机的一个取值"这层含义，
+ * 且今后若增加第三种状态（如 `archived`）就必须改契约。
+ */
+export class SetAccountStatusDto implements ISetAccountStatusDto {
+  @IsIn(['active', 'inactive'], {
+    message: 'status 仅支持 active（启用）/ inactive（停用）',
+  })
+  status!: 'active' | 'inactive';
 }
 
 export class CreateVoucherLineDto implements ICreateVoucherLineDto {
@@ -166,6 +181,22 @@ export class VoucherController {
   @Post('accounts')
   async createAccount(@Body() dto: CreateAccountDto): Promise<AccountItem> {
     return this.voucherService.createAccount(dto);
+  }
+
+  /**
+   * A-09：科目启用/停用。
+   *
+   * 此前只能建科目、不能停用 —— 建账模板带入的多余科目（实测 `1403 原材料`
+   * 全库 0 次使用）无法清理，而 `createVoucher` 又会在科目非 active 时拒绝做账，
+   * 形成一个"没有入口进入的状态"。
+   */
+  @CanCapability('finance_write')
+  @Post('accounts/:code/status')
+  async setAccountStatus(
+    @Param('code') code: string,
+    @Body() dto: SetAccountStatusDto
+  ): Promise<AccountItem> {
+    return this.voucherService.setAccountStatus(code, dto.status);
   }
 
   @Get('vouchers')

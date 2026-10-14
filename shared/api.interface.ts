@@ -5349,3 +5349,13 @@ export interface FullBudgetOverview {
   needsAttention: boolean;
   generatedAt: string;
 }
+
+/**
+ * A-09：科目启用/停用。
+ *
+ * 语义是**两个具名状态**而不是布尔量 —— 布尔会丢掉"这是状态机取值"的含义。
+ * `inactive` 的科目不接受新凭证，但其历史余额仍会出现在报表中。
+ */
+export interface SetAccountStatusDto {
+  status: 'active' | 'inactive';
+}

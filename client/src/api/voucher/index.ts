@@ -3,6 +3,7 @@ import { ensureNotForbidden } from '@client/src/utils/api-error';
 import type {
   AccountItem,
   CreateAccountDto,
+  SetAccountStatusDto,
   CreateVoucherDto,
   ListAccountParams,
   ListVoucherParams,
@@ -95,6 +96,24 @@ export async function unclosePeriod(
   const resp = await axiosForBackend.post<PeriodStatus>(
     `/api/voucher/periods/${period}/unclose`,
     { remark },
+  );
+  ensureNotForbidden(resp);
+  return resp.data;
+}
+
+/**
+ * A-09：科目启用/停用。
+ *
+ * `inactive` 的科目不接受新凭证；其历史余额仍会出现在报表中。
+ * 后端会拒绝停用「有下级科目」或「已有凭证发生额」的科目。
+ */
+export async function setAccountStatus(
+  code: string,
+  dto: SetAccountStatusDto,
+): Promise<AccountItem> {
+  const resp = await axiosForBackend.post<AccountItem>(
+    `/api/voucher/accounts/${encodeURIComponent(code)}/status`,
+    dto,
   );
   ensureNotForbidden(resp);
   return resp.data;

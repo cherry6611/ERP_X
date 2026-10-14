@@ -237,6 +237,76 @@ export class VoucherService {
     };
   }
 
+  /**
+   * A-09 决策落地所需：科目启用/停用。
+   *
+   * ## 为什么必须有这个入口
+   *
+   * `createVoucher` 里明确写着「科目 X 已停用，不可做账」
+   * （`status !== 'active'` 时拒绝），但**此前没有任何接口能把科目置为非 active**
+   * —— 只能建、不能停。于是：
+   * - 建账模板带入的多余科目（实测 `1403 原材料`，全库 0 次使用）**无法清理**，
+   *   业务方会一直看到它并可能误用；
+   * - A-09 决策记录里"建议停用 `1403`"这条建议**在系统里做不到**。
+   *
+   * ## 安全约束（停下来容易，停错了很难查）
+   *
+   * - **有余额/有发生额的科目不允许停用**：停掉之后报表仍会显示其余额，
+   *   但做账时会被拒绝，形成"看得到、动不了"的怪状态，比不停更糟；
+   * - **有下级科目的父科目不允许停用**：父科目停用会让整棵树语义含混；
+   * - 停用是**可逆**的（可再启用），因此不需要二次确认级别的保护，
+   *   但必须留有发生额检查这一道硬门槛。
+   */
+  async setAccountStatus(
+    code: string,
+    status: 'active' | 'inactive'
+  ): Promise<AccountItem> {
+    const rows: AccountRow[] = await this.db
+      .select(ACCOUNT_SELECT)
+      .from(finAccount)
+      .where(eq(finAccount.code, code))
+      .limit(1);
+    if (rows.length === 0) throw new NotFoundException(`科目 ${code} 不存在`);
+
+    if (status === 'inactive') {
+      // 有下级科目：不允许停用父科目
+      const children = await this.db
+        .select({ id: finAccount.id })
+        .from(finAccount)
+        .where(eq(finAccount.parentCode, code))
+        .limit(1);
+      if (children.length > 0) {
+        throw new BadRequestException(
+          `科目 ${code} 存在下级科目，不可停用；请先处理下级科目`
+        );
+      }
+
+      // 有凭证发生额：不允许停用（避免"看得到、动不了"）
+      const used = await this.db
+        .select({ id: finVoucherLine.id })
+        .from(finVoucherLine)
+        .where(eq(finVoucherLine.accountCode, code))
+        .limit(1);
+      if (used.length > 0) {
+        throw new BadRequestException(
+          `科目 ${code} 已有凭证发生额，不可停用；停用后其历史余额仍会出现在报表中，但将无法再做账`
+        );
+      }
+    }
+
+    await this.db
+      .update(finAccount)
+      .set({ status, updatedAt: new Date() })
+      .where(eq(finAccount.code, code));
+
+    const updated: AccountRow[] = await this.db
+      .select(ACCOUNT_SELECT)
+      .from(finAccount)
+      .where(eq(finAccount.code, code))
+      .limit(1);
+    return this.toAccountItem(updated[0]);
+  }
+
   async createAccount(dto: CreateAccountDto): Promise<AccountItem> {
     const dup = await this.db
       .select({ id: finAccount.id })

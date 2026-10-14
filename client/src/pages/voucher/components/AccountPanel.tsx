@@ -5,7 +5,9 @@ import { z } from 'zod';
 import { toast } from 'sonner';
 import { Plus } from 'lucide-react';
 import { Table, TableColumnsType } from 'antd';
-import { CanRole } from '@client/src/platform/auth';
+import { CanCapability } from '@client/src/platform/auth';
+import { confirmDanger } from '@client/src/utils/confirmDanger';
+import { getApiErrorMessage } from '@client/src/utils/api-error-message';
 import { AccountStatusBadge, ACCOUNT_TYPE_LABELS } from './VoucherBadges';
 import { Button } from '@client/src/components/ui/button';
 import {
@@ -121,7 +123,59 @@ const AccountPanel: React.FC = () => {
       dataIndex: 'remark',
       render: (v: string | null) => v ?? '-',
     },
+    {
+      // A-09：科目启用/停用。此前只有"新建"没有"停用"，
+      // 建账模板带入的多余科目（如 1403 原材料）无法清理。
+      title: '操作',
+      key: 'actions',
+      width: 90,
+      fixed: 'right',
+      render: (_: unknown, record: AccountItem) => {
+        const isActive = (record.status ?? 'active') === 'active';
+        return (
+          <Button
+            variant="ghost"
+            size="sm"
+            disabled={operating}
+            onClick={() => void toggleStatus(record, isActive)}
+          >
+            {isActive ? '停用' : '启用'}
+          </Button>
+        );
+      },
+    },
   ];
+
+  /**
+   * 停用是**有门槛**的：后端会拒绝「有下级科目」或「已有凭证发生额」的科目。
+   * 这里在点击前先做一次确认，并把门槛原因讲清楚 ——
+   * 否则业务方点了才被拒，会以为是系统故障。
+   */
+  const toggleStatus = async (record: AccountItem, isActive: boolean) => {
+    if (isActive) {
+      const confirmed = await confirmDanger(
+        `停用后科目「${record.name}」（${record.code}）将不接受新凭证。` +
+          '若该科目已有凭证发生额或存在下级科目，系统会拒绝停用 —— ' +
+          '因为其历史余额仍会出现在报表中，却无法再做账，会造成"看得到、动不了"的状态。',
+        { title: `停用科目 ${record.code}？`, confirmLabel: '停用' },
+      );
+      if (!confirmed) return;
+    }
+    setOperating(true);
+    try {
+      await voucherApi.setAccountStatus(record.code, {
+        status: isActive ? 'inactive' : 'active',
+      });
+      toast.success(`科目 ${record.code} 已${isActive ? '停用' : '启用'}`);
+      await reload();
+    } catch (err) {
+      toast.error(
+        getApiErrorMessage(err, isActive ? '停用科目失败' : '启用科目失败'),
+      );
+    } finally {
+      setOperating(false);
+    }
+  };
 
   return (
     <div className="flex flex-col gap-4">
@@ -141,12 +195,12 @@ const AccountPanel: React.FC = () => {
             <span className="text-xs text-muted-foreground">筛选中…</span>
           ) : null}
         </div>
-        <CanRole roles={['admin']}>
+        <CanCapability capability="finance_write">
           <Button onClick={openCreate}>
             <Plus className="h-4 w-4" />
             新增科目
           </Button>
-        </CanRole>
+        </CanCapability>
       </div>
       {error ? (
         <p className="text-sm text-destructive">

@@ -3,6 +3,24 @@ module.exports = {
   testEnvironment: 'node',
   roots: ['<rootDir>/server'],
   testMatch: ['**/*.spec.ts'],
+  /**
+   * 默认超时从 jest 的 5000ms 提高到 30000ms。
+   *
+   * 原因（实测，不是猜测）：本仓有多个 pglite 集成规格，每个都要 boot 一次
+   * pglite WebAssembly 并跑完整 36 条迁移链 —— **迁移本身只占 1.3s**
+   * （`migrate:dryrun` 各条耗时合计），其余是 WASM 启动与 Drizzle 初始化。
+   * 单跑一个这样的规格约 8~20s。
+   *
+   * 在默认 5s 下，一旦有足够多的 pglite 规格并行占用 worker（本轮新增
+   * `column-reference-audit` / `baseline-consistency` / `account-status` 三个），
+   * **与它们无关的普通规格也会被拖过 5s 而失败** —— 实测
+   * `export-file.spec.ts` 单跑 27s 通过、全量跑 107s 后超时失败，
+   * 属于资源争用导致的假失败。假失败比慢更糟：它会让人开始忽略红灯。
+   *
+   * 这里选择显式提高默认超时，而不是给单个规格加 `jest.setTimeout`：
+   * 争用影响的是**任意**规格，逐个加必然漏，且漏掉的那个会在 CI 上偶发失败。
+   */
+  testTimeout: 30000,
   transform: {
     '^.+\\.ts$': ['ts-jest', { tsconfig: 'tsconfig.test.json' }],
     // @electric-sql/pglite 产物内部用真实动态 import 加载内置模块，jest 的 CJS VM 不支持，
