@@ -67,20 +67,9 @@ const KNOWN_UNUSED_TABLES: UnusedTableEntry[] = [
       '（物化会引入"报表显示过期数据"的风险）。' +
       '复测脚本 scripts/bench-report-query-pg.mjs；重新评估条件见 schema.ts 该表注释',
   },
-  {
-    table: 'pur_return_item',
-    kind: 'gap',
-    reason:
-      'C-05 采购退货**明细行**表，已建但未实现 —— 当前 pur_return 只存整单 ' +
-      'return_quantity/amount，不支持按行退货。需业务确认是否要求行级退货',
-  },
-  {
-    table: 'sales_return_item',
-    kind: 'gap',
-    reason:
-      'C-05 销售退货**明细行**表，同上。当前 sales_return 只存整单金额，' +
-      '不支持按行退货。需业务确认是否要求行级退货',
-  },
+  // 『pur_return_item』『sales_return_item』已于 2026-10-15 删除（结构上不可用）：
+  // `pur_order` 是扁平单行表（无订单明细行），退货行没有可引用的对象。
+  // 见迁移 2026-10-15-upgrade-batch3z-drop-unusable-return-items.sql。
 ];
 
 describe('基线一致性审计：孤儿表', () => {

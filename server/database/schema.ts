@@ -845,34 +845,13 @@ export const purReturn = pgTable("pur_return", {
   check("chk_pur_return_quantity", sql`${table.returnQuantity} > 0`),
 ]);
 
-export const purReturnItem = pgTable("pur_return_item", {
-  id: uuid("id").primaryKey().defaultRandom(),
-  returnId: uuid("return_id").notNull(),
-  orderId: uuid("order_id"),
-  itemName: varchar("item_name", { length: 200 }).notNull(),
-  quantity: integer("quantity").notNull().default(0),
-  unitPrice: numeric("unit_price").notNull().default('0'),
-  amount: numeric("amount").notNull().default('0'),
-  taxRate: numeric("tax_rate"),
-  netAmount: numeric("net_amount").notNull().default('0'),
-  taxAmount: numeric("tax_amount").notNull().default('0'),
-  remark: text("remark"),
-  seq: integer("seq").notNull().default(1),
-  // System field: Creation time (auto-filled, do not modify)
-  createdAt: customTimestamptz("_created_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
-  // System field: Creator (auto-filled, do not modify)
-  createdBy: userProfile("_created_by").default(sql`CASE
-    WHEN (current_setting('app.user_id'::text, true) = ''::text) THEN NULL`),
-  // System field: Update time (auto-filled, do not modify)
-  updatedAt: customTimestamptz("_updated_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
-  // System field: Updater (auto-filled, do not modify)
-  updatedBy: userProfile("_updated_by").default(sql`CASE
-    WHEN (current_setting('app.user_id'::text, true) = ''::text) THEN NULL`),
-}, (table) => [
-  index("idx_pur_return_item_return").on(table.returnId),
-  index("idx_pur_return_item_order").on(table.orderId),
-  check("chk_pur_return_item_quantity", sql`${table.quantity} > 0`),
-]);
+// 【已删除】pur_return_item —— 见迁移 2026-10-15-upgrade-batch3z-drop-unusable-return-items.sql
+//
+// 该表原为"按物料行退货"预留，但 `pur_order` 是**扁平单行**表
+// （item_name/quantity/unit_price 都在表头，不存在订单明细行），
+// 因此退货行没有可引用的对象 —— 属结构上不可用，而非未实现。
+// 部分退货由 `pur_return.return_quantity` + `returnableQuantity()` 支持。
+// 若将来引入 `pur_order_item`，再按 batch3-core.sql 原定义重建。
 
 export const finVoucherLine = pgTable("fin_voucher_line", {
   id: uuid("id").primaryKey().defaultRandom(),
@@ -1875,31 +1854,10 @@ export const salesReturn = pgTable("sales_return", {
   check("chk_sales_return_amount", sql`${table.amount} > 0`),
 ]);
 
-export const salesReturnItem = pgTable("sales_return_item", {
-  id: uuid("id").primaryKey().defaultRandom(),
-  returnId: uuid("return_id").notNull(),
-  revenueId: uuid("revenue_id"),
-  itemName: varchar("item_name", { length: 200 }).notNull(),
-  amount: numeric("amount").notNull().default('0'),
-  taxRate: numeric("tax_rate"),
-  netAmount: numeric("net_amount").notNull().default('0'),
-  taxAmount: numeric("tax_amount").notNull().default('0'),
-  remark: text("remark"),
-  seq: integer("seq").notNull().default(1),
-  // System field: Creation time (auto-filled, do not modify)
-  createdAt: customTimestamptz("_created_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
-  // System field: Creator (auto-filled, do not modify)
-  createdBy: userProfile("_created_by").default(sql`CASE
-    WHEN (current_setting('app.user_id'::text, true) = ''::text) THEN NULL`),
-  // System field: Update time (auto-filled, do not modify)
-  updatedAt: customTimestamptz("_updated_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
-  // System field: Updater (auto-filled, do not modify)
-  updatedBy: userProfile("_updated_by").default(sql`CASE
-    WHEN (current_setting('app.user_id'::text, true) = ''::text) THEN NULL`),
-}, (table) => [
-  index("idx_sales_return_item_return").on(table.returnId),
-  check("chk_sales_return_item_amount", sql`${table.amount} > 0`),
-]);
+// 【已删除】sales_return_item —— 见迁移 2026-10-15-upgrade-batch3z-drop-unusable-return-items.sql
+//
+// 同 `pur_return_item`：`erp_project_revenue`（收入确认单）本身即单行，
+// 没有可供退货行引用的明细行，属结构上不可用。
 
 /**
  * C-04：应收/应付票据（银行承兑 / 商业承兑）。
