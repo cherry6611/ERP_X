@@ -847,7 +847,29 @@ export class AssetLifecycleService {
     return rows[0]?.name ?? null;
   }
 
-  /** 资产归属（部门/项目）与使用人，供详情页头部展示 */
+  /**
+   * 资产归属（部门/项目）与使用人，供详情页头部展示。
+   *
+   * ⚠️ **`keeperName` 当前恒为 `null`** —— 这不是偷懒，是修复一个真实的 500：
+   * 原实现写的是
+   * ```
+   * LEFT JOIN md_employee e ON e.id = a.keeper_employee_id
+   * ```
+   * 而 `ast_asset` **没有 `keeper_employee_id` 列**（实测库结构确认），
+   * 因此该端点被调用时 PostgreSQL 直接报
+   * `column a.keeper_employee_id does not exist`，整个接口 500。
+   * 之所以长期没被发现：前端从未调用 `/ownership`
+   * （只有 `getLifecycle` 被 `AssetLifecyclePanel` 使用），
+   * 而 pglite 的 `migrate:dryrun` 只执行迁移、不执行这些查询。
+   *
+   * 为什么**不**补一个 `keeper_employee_id` 列把功能凑出来：
+   * 资产保管/使用人是一个**真实的业务模型**（谁在用、领用/归还记录、
+   * 离职移交），不是"加个 nullable 列"就能成立的 —— 加了也没人填，
+   * 反而会让人以为系统在追踪保管人。是否引入该模型需业务确认。
+   *
+   * 因此这里如实返回 `null`，并在契约注释中说明未实现；
+   * 契约字段保留是为了不破坏已发布的接口形状。
+   */
   async ownership(assetId: string): Promise<{
     departmentId: string | null;
     departmentName: string | null;
@@ -856,18 +878,12 @@ export class AssetLifecycleService {
     keeperName: string | null;
   }> {
     const asset = await this.loadAsset(assetId);
-    const keeper = await this.db.execute(sql`
-      SELECT e.name FROM ast_asset a
-      LEFT JOIN md_employee e ON e.id = a.keeper_employee_id
-      WHERE a.id = ${assetId}::uuid LIMIT 1
-    `);
-    const keeperRow = unwrapRows<{ name: string | null }>(keeper)[0];
     return {
       departmentId: asset.departmentId,
       departmentName: await this.departmentName(asset.departmentId),
       projectId: asset.projectId,
       projectName: await this.projectName(asset.projectId),
-      keeperName: keeperRow?.name ?? null,
+      keeperName: null,
     };
   }
 }

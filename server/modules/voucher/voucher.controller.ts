@@ -118,6 +118,14 @@ export class CreateVoucherDto implements ICreateVoucherDto {  @IsDateString()
   @IsOptional()
   @IsString()
   remark?: string;
+
+  /**
+   * A-01/A-06：凭证归属的纳税主体。
+   * 不传时后端按「来源合同 → 系统唯一默认主体」推导；推导不出则留空。
+   */
+  @IsOptional()
+  @IsUUID()
+  taxEntityId?: string;
 }
 
 /** 反结账入参（A-04/B-01：必须有 class DTO，否则 ValidationPipe 静默失效） */

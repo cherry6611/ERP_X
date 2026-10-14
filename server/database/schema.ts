@@ -942,6 +942,18 @@ export const finVoucher = pgTable("fin_voucher", {
   crossPeriod: integer("cross_period").notNull().default(0),
   crossPeriodReason: varchar("cross_period_reason", { length: 500 }),
   crossPeriodApprover: varchar("cross_period_approver", { length: 64 }),
+  /**
+   * A-01/A-06：凭证归属的**纳税主体**。
+   *
+   * 报表/账簿/增值税底稿按主体出具时依赖本列（`WHERE v.tax_entity_id = ...`）。
+   * 该列曾长期缺失，导致任何传了 `taxEntityId` 的报表请求直接 500 ——
+   * 详见迁移 `2026-10-15-upgrade-batch1z-voucher-tax-entity.sql`。
+   *
+   * `NULL` 表示尚未归属：该凭证**不会出现在任何主体的报表**里（刻意如此，
+   * 硬塞进默认主体会让该主体数字虚增）。可用视图
+   * `v_fin_voucher_unassigned_entity` 核对还有多少未归属。
+   */
+  taxEntityId: uuid("tax_entity_id"),
   remark: text("remark"),
   // System field: Creation time (auto-filled, do not modify)
   createdAt: customTimestamptz("_created_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),

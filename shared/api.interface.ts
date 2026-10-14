@@ -2196,6 +2196,14 @@ export interface CreateVoucherDto {
   sourceRef?: string;
   lines: CreateVoucherLineDto[];
   remark?: string;
+  /**
+   * A-01/A-06：凭证归属的纳税主体。
+   *
+   * 不传时由后端推导：① 来源单据（合同）的主体 → ② 系统唯一的默认主体。
+   * 都推导不出则留空 —— 该凭证不计入任何主体的报表，由视图
+   * `v_fin_voucher_unassigned_entity` 暴露，需人工补主体。
+   */
+  taxEntityId?: string;
 }
 
 export type VoucherAction = 'post' | 'void';

@@ -33,6 +33,7 @@ import {
   hrPayroll,
 } from '@server/database/schema';
 import { generateBizCode } from '@server/common/utils/biz-code';
+import { unwrapRows } from '@server/common/utils/rows';
 import type {
   AccountItem,
   CreateAccountDto,
@@ -138,6 +139,53 @@ export class VoucherService {
   constructor(
     @Inject(DRIZZLE_DATABASE) private readonly db: PostgresJsDatabase
   ) {}
+
+  /**
+   * A-01/A-06：推导凭证归属的纳税主体。
+   *
+   * 优先级（**需财务确认**）：
+   * 1. 请求显式指定 `taxEntityId`（最高优先，允许人工纠偏）；
+   * 2. `sourceRef` 命中某份合同（按合同编号或 id）时取该合同的主体；
+   * 3. 系统**恰有一个**启用中的默认主体时用它兜底。
+   *
+   * 关于第 2 条为什么**不按 `sourceType` 判断**：`VoucherSourceType` 的取值是
+   * `receipt/payment/expense/payroll/depreciation/invoice/manual`，**没有 `contract`**
+   * —— 合同不是凭证的直接来源，合同类业务凭证的来源是收付款/发票/费用。
+   * 因此这里只按 `sourceRef` 去 `erp_contract` 找：命中说明该凭证确实挂在一份合同上，
+   * 与来源类型无关。合同编号格式（`CTR...`）与其他单据编号不冲突，
+   * 误配风险很低；万一误配，也只是主体归属不准，可由第 1 条人工纠正。
+   *
+   * 第 3 条刻意加了"恰有一个"的条件：多主体下用默认主体顶替会让该主体报表虚增
+   * —— **一个看起来正确的错误数字，比一个明显的缺口更危险**。
+   * 推导不出的保持 `null`，由视图 `v_fin_voucher_unassigned_entity` 暴露。
+   */
+  private async resolveTaxEntityId(
+    dto: CreateVoucherDto
+  ): Promise<string | null> {
+    const explicit = dto.taxEntityId?.trim();
+    if (explicit) return explicit;
+
+    // ② sourceRef 命中合同
+    const ref = dto.sourceRef?.trim();
+    if (ref) {
+      const rows = await this.db.execute(sql`
+        SELECT tax_entity_id FROM erp_contract
+        WHERE (code = ${ref} OR id::text = ${ref})
+          AND tax_entity_id IS NOT NULL
+        LIMIT 1
+      `);
+      const found = unwrapRows<{ tax_entity_id: string | null }>(rows)[0];
+      if (found?.tax_entity_id) return found.tax_entity_id;
+    }
+
+    // ③ 唯一默认主体兜底
+    const defaults = await this.db.execute(sql`
+      SELECT id FROM md_tax_entity
+      WHERE is_default = 1 AND status = 'active'
+    `);
+    const candidates = unwrapRows<{ id: string }>(defaults);
+    return candidates.length === 1 ? candidates[0].id : null;
+  }
 
   /* ========== 科目 ========== */
 
@@ -572,6 +620,15 @@ export class VoucherService {
       finVoucher.code,
       'VCH'
     );
+    // A-01/A-06：纳税主体在**事务外**解析。
+    //
+    // 为什么必须在事务外：`resolveTaxEntityId` 要查 `erp_contract` 与 `md_tax_entity`，
+    // 若放进 `db.transaction(async (tx) => ...)` 内部（无论用 `tx` 还是 `this.db`），
+    // 在 pglite 上会**死锁** —— 实测表现为整个集成测试套件挂起（单条测试 5s 超时、
+    // 全套 130s+ 不结束）。真实 postgres-js 下嵌套查询能用，但依赖这个差异是错的：
+    // 与 AGENTS.md 的「新增外部 IO 必须在事务外」同源 —— **读多张表的推导逻辑
+    // 不应占用写事务**，否则事务持有时间无谓变长，锁竞争加剧。
+    const taxEntityId = await this.resolveTaxEntityId(dto);
     await this.db.transaction(async (tx) => {
       const inserted = await tx
         .insert(finVoucher)
@@ -583,6 +640,8 @@ export class VoucherService {
           sourceType: dto.sourceType ?? 'manual',
           sourceRef: dto.sourceRef,
           status: 'draft',
+          // A-01/A-06：落纳税主体，否则该凭证不计入任何主体的报表
+          taxEntityId,
           remark: dto.remark,
         })
         .returning({ id: finVoucher.id });
