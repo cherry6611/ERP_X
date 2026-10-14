@@ -5243,3 +5243,101 @@ export interface NoteRegisterDeepResult {
     status: string;
   }>;
 }
+
+/* ========== 批次三 D-05：全面预算（收入/资本预算 + 滚动预测） ========== */
+
+export type BudgetType = 'expense' | 'revenue' | 'capital';
+
+/** 逐月预算/实际，`actual` 为 null 表示该期间尚未确认 */
+export interface BudgetForecastSeriesItem {
+  period: string;
+  budget: number;
+  /** `null` = 尚未确认（与 `0` 语义不同：0 是"确实是 0"） */
+  actual: number | null;
+  /** 是否已确认（有实际数且在 asOf 之前） */
+  confirmed: boolean;
+}
+
+/** 单类型滚动预测结果 */
+export interface BudgetForecastResult {
+  year: string;
+  budgetType: BudgetType;
+  /** 截止期间（null 表示按当前数据自然截止） */
+  asOf: string | null;
+  confirmedPeriods: string[];
+  remainingPeriods: string[];
+  budgetTotal: number;
+  actualToDate: number;
+  remainingBudget: number;
+  /** **权威口径**：实际 + 剩余预算 */
+  baselineForecast: number;
+  baselineVariance: number;
+  /** 趋势外推值；仅当偏差超阈值时非 null，**仅作提示** */
+  trendForecast: number | null;
+  trendGap: number | null;
+  executionRate: number | null;
+  needsAttention: boolean;
+  message: string;
+  series: BudgetForecastSeriesItem[];
+}
+
+export interface BudgetVarianceItem {
+  label: string;
+  budgetType: BudgetType;
+  budgetAmount: number;
+  actualAmount: number;
+  variance: number;
+  varianceRate: number | null;
+  /** 费用/资本：实际少为有利；收入：实际多为有利 */
+  favorable: boolean;
+  conclusion: string;
+  requiresExplanation: boolean;
+}
+
+export interface BudgetExpenseRatioResult {
+  budgetRatio: number | null;
+  actualRatio: number | null;
+  ratioDelta: number | null;
+  conclusion: string;
+  needsAttention: boolean;
+}
+
+export interface BudgetCapitalAnalysis {
+  spentPeriods: Array<{ period: string; budget: number; actual: number }>;
+  totalBudget: number;
+  totalActual: number;
+  remaining: number;
+  utilizationRate: number | null;
+  overspent: boolean;
+  message: string;
+}
+
+/** 全面预算总览（三类预算 + 费用率联动 + 差异 + CAPEX 分析） */
+export interface FullBudgetOverview {
+  year: string;
+  asOf: string | null;
+  thresholds: {
+    forecastThreshold: number;
+    varianceThreshold: number;
+    ratioTolerance: number;
+  };
+  forecasts: {
+    expense: BudgetForecastResult;
+    revenue: BudgetForecastResult;
+    capital: BudgetForecastResult;
+  };
+  expenseRatio: BudgetExpenseRatioResult;
+  variances: BudgetVarianceItem[];
+  capitalAnalysis: BudgetCapitalAnalysis;
+  /**
+   * 资本实际数是否为近似值。
+   *
+   * 系统目前没有独立的 CAPEX 支出表，资本实际数取自"费用申请中
+   * expenseCategory 以 capex/资本 开头的已批准单据"。若贵司走采购订单/
+   * 固定资产建卡流程，该数字会偏低 —— 因此**必须**把这个标记透出到界面，
+   * 而不是让使用者以为它是精确值。
+   */
+  capitalActualIsApproximation: boolean;
+  needsAttention: boolean;
+  generatedAt: string;
+}

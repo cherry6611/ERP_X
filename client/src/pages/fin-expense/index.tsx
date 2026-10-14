@@ -5,6 +5,7 @@ import { Button } from '@client/src/components/ui/button';
 import { cn } from '@client/src/lib/utils';
 import BudgetPanel from './components/BudgetPanel';
 import BudgetCommitmentPanel from './components/BudgetCommitmentPanel';
+import FullBudgetPanel from './components/FullBudgetPanel';
 import ExpenseApplyPanel from './components/ExpenseApplyPanel';
 import ExpenseClaimPanel from './components/ExpenseClaimPanel';
 
@@ -12,6 +13,8 @@ const FIN_EXPENSE_TABS = [
   { key: 'budgets', label: '预算' },
   // C-09：预算 − 承诺 − 实际 三算对比（承诺=已签合同/已下采购单/待批申请）
   { key: 'commitments', label: '三算对比' },
+  // D-05：全面预算（收入/资本预算 + 滚动预测 + 差异分析）
+  { key: 'full-budget', label: '全面预算' },
   { key: 'applies', label: '费用申请' },
   { key: 'claims', label: '报销单' },
 ] as const;
@@ -21,6 +24,7 @@ const TAB_SET = new Set(FIN_EXPENSE_TABS.map((t) => t.key));
 const FIN_EXPENSE_TAB_CONTENT: Record<string, React.ReactNode> = {
   budgets: <BudgetPanel />,
   commitments: <BudgetCommitmentPanel />,
+  'full-budget': <FullBudgetPanel />,
   applies: <ExpenseApplyPanel />,
   claims: <ExpenseClaimPanel />,
 };

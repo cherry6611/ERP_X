@@ -1163,6 +1163,17 @@ export const finBudget = pgTable("fin_budget", {
   expenseCategory: varchar("expense_category", { length: 50 }),
   period: varchar("period", { length: 7 }),
   budgetAmount: numeric("budget_amount").default('0'),
+  /**
+   * D-05：预算类型（**全面预算**的扩展点）。
+   *
+   * - `expense`：费用预算，按月考核，实际越少越好；
+   * - `revenue`：收入预算，越**多**越好（有利差异方向与费用相反）；
+   * - `capital`：资本预算（CAPEX），一次性支出，**不按月考核**，只看额度是否够用。
+   *
+   * 为什么在同一张表上用类型区分而不是拆三张表：预算的维度与执行率计算逻辑
+   * 完全相同，拆表会让 C-09 的匹配函数、三算表、导入导出各写三遍。
+   */
+  budgetType: varchar("budget_type", { length: 20 }).notNull().default('expense'),
   remark: text("remark"),
   // System field: Creation time (auto-filled, do not modify)
   createdAt: customTimestamptz("_created_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),

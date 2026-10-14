@@ -9,7 +9,7 @@ import {
   Post,
   Query,
 } from '@nestjs/common';
-import { CanCapability, NeedLogin } from '@server/platform';
+import { CanCapability, CanCapabilityRead, NeedLogin } from '@server/platform';
 import {
   IsNumber,
   IsOptional,
@@ -21,11 +21,15 @@ import {
 } from 'class-validator';
 import { FinBudgetService } from './fin-budget.service';
 import { BudgetCommitmentService } from './budget-commitment.service';
+import { BudgetForecastService } from './budget-forecast.service';
+import { BUDGET_TYPES, type BudgetType } from './budget-forecast-rules';
 import type {
   BudgetCommitmentSummary,
+  BudgetForecastResult,
   BudgetExecution,
   BudgetItem,
   CommitmentGapRow,
+  FullBudgetOverview,
   CreateBudgetDto as ICreateBudgetDto,
   PagedResult,
   UpdateBudgetDto as IUpdateBudgetDto,
@@ -73,7 +77,8 @@ export class UpdateBudgetDto implements IUpdateBudgetDto {
 export class FinBudgetController {
   constructor(
     private readonly finBudgetService: FinBudgetService,
-    private readonly budgetCommitmentService: BudgetCommitmentService
+    private readonly budgetCommitmentService: BudgetCommitmentService,
+    private readonly budgetForecastService: BudgetForecastService
   ) {}
 
   @Get('budgets')
@@ -144,5 +149,67 @@ export class FinBudgetController {
     return this.budgetCommitmentService.gaps(
       period ? { period } : undefined
     );
+  }
+
+  /* ========== D-05 全面预算：滚动预测与差异分析 ========== */
+
+  /**
+   * 全面预算总览：费用/收入/资本三类预算的滚动预测 + 费用率联动 + 差异 + CAPEX 分析。
+   *
+   * 一次返回三类的原因：**费用率必须同时看收入与费用**，分两次请求会因
+   * 期间/过滤条件不一致而算错费用率。
+   */
+  @CanCapabilityRead('finance')
+  @Get('full-overview')
+  async fullOverview(
+    @Query('year') year?: string,
+    @Query('asOf') asOf?: string,
+    @Query('projectId') projectId?: string,
+    @Query('departmentId') departmentId?: string
+  ): Promise<FullBudgetOverview> {
+    return this.budgetForecastService.overview({
+      year: this.assertBudgetYear(year),
+      asOf: asOf || undefined,
+      projectId: projectId || undefined,
+      departmentId: departmentId || undefined,
+    });
+  }
+
+  /** 单类型滚动预测（费用/收入/资本） */
+  @CanCapabilityRead('finance')
+  @Get('forecast')
+  async forecast(
+    @Query('year') year?: string,
+    @Query('budgetType') budgetType?: string,
+    @Query('asOf') asOf?: string,
+    @Query('projectId') projectId?: string,
+    @Query('departmentId') departmentId?: string
+  ): Promise<BudgetForecastResult> {
+    if (!BUDGET_TYPES.includes(budgetType as BudgetType)) {
+      throw new BadRequestException(
+        `budgetType 仅支持 ${BUDGET_TYPES.join(' / ')}`
+      );
+    }
+    return this.budgetForecastService.forecast({
+      year: this.assertBudgetYear(year),
+      budgetType: budgetType as BudgetType,
+      asOf: asOf || undefined,
+      projectId: projectId || undefined,
+      departmentId: departmentId || undefined,
+    });
+  }
+
+  /** 会计年度校验：只接受 YYYY，缺省用当前业务年度 */
+  private assertBudgetYear(year?: string): string {
+    if (!year) {
+      return new Intl.DateTimeFormat('en-CA', {
+        timeZone: 'Asia/Shanghai',
+        year: 'numeric',
+      }).format(new Date());
+    }
+    if (!/^\d{4}$/.test(year)) {
+      throw new BadRequestException('year 必须为 YYYY');
+    }
+    return year;
   }
 }
