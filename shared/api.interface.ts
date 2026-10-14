@@ -4270,3 +4270,62 @@ export interface UpsertBiAlertSubscriptionDto {
   enabled?: boolean;
   remark?: string;
 }
+
+/* ========== 批次二 C-09：预算承诺与「三算对比」 ========== */
+
+/** 承诺来源：采购订单 / 已生效合同 / 待批费用申请 */
+export type CommitmentSourceType = 'purchase_order' | 'contract' | 'expense_apply';
+
+/** 单条承诺明细（可下钻到具体单据） */
+export interface BudgetCommitmentRow {
+  sourceType: CommitmentSourceType;
+  sourceId: string;
+  sourceCode: string;
+  sourceTitle: string;
+  projectId: string | null;
+  departmentId: string | null;
+  expenseCategory: string | null;
+  /** 归属期间 YYYY-MM */
+  period: string;
+  amount: number;
+  status: string;
+  signedAt: string | null;
+}
+
+/** 三算对比的一行（维度：期间 × 部门 × 项目 × 费用类别） */
+export interface BudgetCommitmentSummaryRow {
+  period: string;
+  departmentId: string | null;
+  departmentName: string | null;
+  projectId: string | null;
+  projectName: string | null;
+  expenseCategory: string;
+  /** 预算金额 */
+  budgetAmount: number;
+  /** 承诺金额（已签合同/已下采购单/待批申请，钱还没花但已不能挪用） */
+  committedAmount: number;
+  /** 实际金额（已批准报销 + 已批准费用申请） */
+  actualAmount: number;
+  /** 可用余额 = 预算 − 承诺 − 实际（可为负） */
+  availableAmount: number;
+  /** 承诺 + 实际 已超预算 */
+  overCommitted: boolean;
+  /** 仅承诺就已超预算（最紧急：签约阶段即失控） */
+  commitmentAloneExceedsBudget: boolean;
+}
+
+export interface BudgetCommitmentSummary {
+  generatedAt: string;
+  /** 过滤的期间；null 表示全部期间 */
+  period: string | null;
+  totals: {
+    budgetAmount: number;
+    committedAmount: number;
+    actualAmount: number;
+    availableAmount: number;
+  };
+  rows: BudgetCommitmentSummaryRow[];
+}
+
+/** 孤儿承诺：没有任何预算行覆盖的承诺（三算表里看不到，风险最高） */
+export type CommitmentGapRow = BudgetCommitmentRow;

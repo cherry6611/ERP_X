@@ -1,9 +1,11 @@
 import { axiosForBackend } from '@client/src/platform/request';
 import { ensureNotForbidden } from '@client/src/utils/api-error';
 import type {
+  BudgetCommitmentSummary,
   BudgetExecution,
   BudgetItem,
   BudgetListParams,
+  CommitmentGapRow,
   CreateBudgetDto,
   PagedResult,
   UpdateBudgetDto,
@@ -43,6 +45,28 @@ export async function updateBudget(
 export async function getExecutions(): Promise<BudgetExecution[]> {
   const resp = await axiosForBackend.get<BudgetExecution[]>(
     '/api/fin-budget/executions',
+  );
+  return resp.data;
+}
+
+/* ========== C-09 预算承诺与三算对比 ========== */
+
+export async function getCommitments(
+  period?: string,
+): Promise<BudgetCommitmentSummary> {
+  const resp = await axiosForBackend.get<BudgetCommitmentSummary>(
+    '/api/fin-budget/commitments',
+    { params: period ? { period } : undefined },
+  );
+  return resp.data;
+}
+
+export async function getCommitmentGaps(
+  period?: string,
+): Promise<CommitmentGapRow[]> {
+  const resp = await axiosForBackend.get<CommitmentGapRow[]>(
+    '/api/fin-budget/commitment-gaps',
+    { params: period ? { period } : undefined },
   );
   return resp.data;
 }
