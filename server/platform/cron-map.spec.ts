@@ -7,6 +7,8 @@ describe('cron map', () => {
       'ar_due_reminder_daily',
       // D-12：BI 指标预警扫描（每日 08:30）
       'bi_alert_daily',
+      // C-10：合同到期提醒（每日 09:15）
+      'contract_expiry_remind',
       'customer_credit_alert',
       'delivery_warning_weekly',
       'feishu_contact_full',
@@ -42,5 +44,11 @@ describe('cron map', () => {
     // D-12 预警必须在工作时间开始前跑完，否则业务方上午看不到提醒
     expect(CRON_BY_TRIGGER.bi_alert_daily).toBe('30 8 * * *');
     expect(CRON_BY_TRIGGER.note_due_reminder_daily).toBe('0 9 * * *');
+    // C-10 与应收提醒错开 15 分钟：同点推送会让业务方一次收到多条，
+    // 反而容易漏看（与票据提醒同属 09:00 时段，故排在 09:15）
+    expect(CRON_BY_TRIGGER.contract_expiry_remind).toBe('15 9 * * *');
+    expect(CRON_BY_TRIGGER.contract_expiry_remind).not.toBe(
+      CRON_BY_TRIGGER.ar_due_reminder_daily
+    );
   });
 });

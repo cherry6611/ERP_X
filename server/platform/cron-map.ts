@@ -20,4 +20,6 @@ export const CRON_BY_TRIGGER: Record<string, string> = {
   bi_alert_daily: '30 8 * * *',
   /** C-04 / D-02：票据到期提醒（每日 09:00，逾期与 15 天内到期） */
   note_due_reminder_daily: '0 9 * * *',
+  /** C-10：合同到期提醒（每日 09:15，30/15/3 天三档；与应收提醒错开 15 分钟避免同时推送） */
+  contract_expiry_remind: '15 9 * * *',
 };
