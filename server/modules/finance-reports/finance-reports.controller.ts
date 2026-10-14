@@ -14,7 +14,9 @@ import {
   IsBoolean,
   IsIn,
   IsNotEmpty,
+  IsArray,
   IsInt,
+  IsNumber,
   IsOptional,
   IsString,
   IsUUID,
@@ -30,7 +32,9 @@ import { YearEndService } from './year-end.service';
 import { VatDeclarationService } from './vat-declaration.service';
 import { AuxiliaryService } from './auxiliary.service';
 import { TaxRiskService } from './tax-risk.service';
+import { AuxCombinationService } from './aux-combination.service';
 import type {
+  AuxAllocationArgs as IAuxAllocationArgs,
   CreateAuxDimensionDto as ICreateAuxDimensionDto,
   ToggleAuxDimensionDto as IToggleAuxDimensionDto,
 } from '@shared/api.interface';
@@ -106,6 +110,37 @@ export class ToggleAuxDimensionBodyDto implements IToggleAuxDimensionDto {
   enabled!: boolean;
 }
 
+/**
+ * D-03：成本分摊试算入参。
+ *
+ * `weights` 用 `@IsArray()` + `@IsNumber({}, { each: true })` 逐项校验 ——
+ * 只校验"是数组"会让 `['a','b']` 通过，进而在服务端变成 NaN 分摊额。
+ */
+export class AuxAllocationPreviewDto implements IAuxAllocationArgs {
+  @IsNumber({ maxDecimalPlaces: 2 })
+  amount!: number;
+
+  @IsArray()
+  @IsNumber({ maxDecimalPlaces: 6 }, { each: true })
+  weights!: number[];
+
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  targets?: string[];
+
+  @IsOptional()
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @Min(0)
+  taxRate?: number;
+
+  @IsOptional()
+  @IsIn(['equal', 'reject'], {
+    message: 'fallback 仅支持 equal（平均分摊）/ reject（报错）',
+  })
+  fallback?: 'equal' | 'reject';
+}
+
 @NeedLogin()
 @Controller('api/finance')
 export class FinanceReportsController {
@@ -116,11 +151,12 @@ export class FinanceReportsController {
     private readonly vatService: VatDeclarationService,
     private readonly auxiliaryService: AuxiliaryService,
     private readonly taxRiskService: TaxRiskService,
+    private readonly auxCombinationService: AuxCombinationService,
   ) {}
 
-  private assertPeriod(period: string | undefined): string {
+  private assertPeriod(period: string | undefined, field = 'period'): string {
     if (!period || !PERIOD_PATTERN.test(period)) {
-      throw new BadRequestException('period 必填且格式为 YYYY-MM');
+      throw new BadRequestException(`${field} 必填且格式为 YYYY-MM`);
     }
     return period;
   }
@@ -421,6 +457,104 @@ export class FinanceReportsController {
   @Get('tax-risk-vat-movement')
   vatAccountMovement(@Query('period') period?: string) {
     return this.taxRiskService.vatAccountMovement(this.assertPeriod(period));
+  }
+
+  /* ========== D-03 辅助核算深化 ========== */
+
+  /**
+   * 多维度组合余额。
+   *
+   * 必须同时看 `coverage`：组合金额之和通常小于科目总额（部分分录只挂了
+   * 部分维度），不告知覆盖率就是给使用者一份看似完整实则缺口的表。
+   */
+  @CanCapability('finance')
+  @Get('ledgers/aux-combination')
+  auxCombination(
+    @Query('period') period?: string,
+    @Query('dimensions') dimensions?: string,
+    @Query('taxEntityId') taxEntityId?: string,
+    @Query('accountCode') accountCode?: string,
+  ) {
+    return this.auxCombinationService.multiDimensionBalance({
+      period: this.assertPeriod(period),
+      dimensionCodes: (dimensions ?? '')
+        .split(',')
+        .map((item) => item.trim())
+        .filter(Boolean),
+      taxEntityId: taxEntityId || undefined,
+      accountCode: accountCode || undefined,
+    });
+  }
+
+  /** 区间多维度组合（用于"某项目全年投入"这类跨月问题） */
+  @CanCapability('finance')
+  @Get('ledgers/aux-combination-range')
+  auxCombinationRange(
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+    @Query('dimensions') dimensions?: string,
+    @Query('taxEntityId') taxEntityId?: string,
+    @Query('accountCode') accountCode?: string,
+  ) {
+    return this.auxCombinationService.multiDimensionRange({
+      from: this.assertPeriod(from, 'from'),
+      to: this.assertPeriod(to, 'to'),
+      dimensionCodes: (dimensions ?? '')
+        .split(',')
+        .map((item) => item.trim())
+        .filter(Boolean),
+      taxEntityId: taxEntityId || undefined,
+      accountCode: accountCode || undefined,
+    });
+  }
+
+  /** 跨维度结构对比（各维度余额并列 + 结构占比） */
+  @CanCapability('finance')
+  @Get('ledgers/aux-cross-dimension')
+  auxCrossDimension(
+    @Query('period') period?: string,
+    @Query('dimensions') dimensions?: string,
+    @Query('taxEntityId') taxEntityId?: string,
+    @Query('accountCode') accountCode?: string,
+  ) {
+    return this.auxCombinationService.crossDimension({
+      period: this.assertPeriod(period),
+      dimensionCodes: (dimensions ?? '')
+        .split(',')
+        .map((item) => item.trim())
+        .filter(Boolean),
+      taxEntityId: taxEntityId || undefined,
+      accountCode: accountCode || undefined,
+    });
+  }
+
+  /** 某维度在本期的取值范围与余额（供前端下拉，选之前就知道金额） */
+  @CanCapability('finance')
+  @Get('ledgers/aux-dimension-values')
+  auxDimensionValues(
+    @Query('period') period?: string,
+    @Query('dimensionCode') dimensionCode?: string,
+  ) {
+    if (!dimensionCode) {
+      throw new BadRequestException('dimensionCode 必填');
+    }
+    return this.auxCombinationService.dimensionValues({
+      period: this.assertPeriod(period),
+      dimensionCode,
+    });
+  }
+
+  /**
+   * 成本分摊试算（**只算不落库**）。
+   *
+   * 分摊结果入账属于业务动作，应由费用/成本模块在确认后调用；
+   * 本接口只回答"按这些权重该分多少"，并用最大余数法保证
+   * `sum(shares) === amount`（否则凭证借贷不平）。
+   */
+  @CanCapability('finance')
+  @Post('ledgers/aux-allocation-preview')
+  auxAllocationPreview(@Body() dto: AuxAllocationPreviewDto) {
+    return this.auxCombinationService.previewAllocation(dto);
   }
 
   /* ========== A-05 辅助核算维度维护 ========== */

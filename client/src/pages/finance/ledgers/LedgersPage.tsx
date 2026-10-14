@@ -35,6 +35,7 @@ import {
   TableRow,
 } from '@client/src/components/ui/table';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@client/src/components/ui/tabs';
+import AuxCombinationPanel from './AuxCombinationPanel';
 import {
   exportRowsToXlsx,
   type ExcelSheetColumn,
@@ -60,7 +61,7 @@ import type {
 const ALL_ENTITIES = '__all__';
 const PAGE_SIZE = 50;
 
-type LedgerTab = 'balance' | 'general' | 'detail' | 'aux';
+type LedgerTab = 'balance' | 'general' | 'detail' | 'aux' | 'aux-combination';
 
 const DIRECTION_LABELS: Record<string, string> = {
   debit: '借',
@@ -972,6 +973,8 @@ const LedgersPage: React.FC = () => {
           <TabsTrigger value="general">总账</TabsTrigger>
           <TabsTrigger value="detail">明细账</TabsTrigger>
           <TabsTrigger value="aux">辅助余额表</TabsTrigger>
+          {/* D-03：多维度组合账 / 跨维度结构对比 / 成本分摊试算 */}
+          <TabsTrigger value="aux-combination">组合与分摊</TabsTrigger>
         </TabsList>
         <TabsContent value="balance" className="flex flex-col gap-4">
           {renderBalance()}
@@ -984,6 +987,9 @@ const LedgersPage: React.FC = () => {
         </TabsContent>
         <TabsContent value="aux" className="flex flex-col gap-4">
           {renderAux()}
+        </TabsContent>
+        <TabsContent value="aux-combination" className="flex flex-col gap-4">
+          <AuxCombinationPanel period={period} />
         </TabsContent>
       </Tabs>
     </PageShell>

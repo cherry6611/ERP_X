@@ -9,6 +9,7 @@ import { YearEndService } from './year-end.service';
 import { VatDeclarationService } from './vat-declaration.service';
 import { AuxiliaryService } from './auxiliary.service';
 import { TaxRiskService } from './tax-risk.service';
+import { AuxCombinationService } from './aux-combination.service';
 import { YearEndReminderAutomationTasksService } from './year-end-reminder.automation';
 
 @Module({
@@ -22,8 +23,16 @@ import { YearEndReminderAutomationTasksService } from './year-end-reminder.autom
     AuxiliaryService,
     // D-06：税务风险扫描（复用 A-06 底稿作为进销项匹配的输入，不重算）
     TaxRiskService,
+    // D-03：辅助核算深化（多维度组合 / 跨维度分析 / 成本分摊）
+    AuxCombinationService,
     YearEndReminderAutomationTasksService,
   ],
-  exports: [LedgersService, ReportsService, YearEndService, TaxRiskService],
+  exports: [
+    LedgersService,
+    ReportsService,
+    YearEndService,
+    TaxRiskService,
+    AuxCombinationService,
+  ],
 })
 export class FinanceReportsModule {}

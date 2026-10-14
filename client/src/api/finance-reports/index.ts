@@ -2,6 +2,11 @@ import { axiosForBackend } from '@client/src/platform/request';
 import { ensureNotForbidden } from '@client/src/utils/api-error';
 import type {
   AccountBalanceSheet,
+  AuxAllocationArgs,
+  AuxAllocationPreview,
+  AuxCrossDimensionResult,
+  AuxMultiDimensionBalance,
+  AuxPeriodValue,
   AuxBalanceQueryArgs,
   AuxBalanceSheet,
   AuxDimensionItem,
@@ -293,5 +298,72 @@ export async function getVatAccountMovement(period: string): Promise<{
     outputTaxCredit: number;
     inputTaxDebit: number;
   }>('/api/finance/tax-risk-vat-movement', { params: { period } });
+  return resp.data;
+}
+/* ========== D-03 辅助核算深化 ========== */
+
+/** 多维度组合余额（含覆盖度 —— 组合金额之和通常小于科目总额） */
+export async function getAuxCombination(params: {
+  period: string;
+  dimensions: string[];
+  taxEntityId?: string;
+  accountCode?: string;
+}): Promise<AuxMultiDimensionBalance> {
+  const resp = await axiosForBackend.get<AuxMultiDimensionBalance>(
+    '/api/finance/ledgers/aux-combination',
+    { params: { ...params, dimensions: params.dimensions.join(',') } },
+  );
+  return resp.data;
+}
+
+/** 区间多维度组合（跨月，用于"某项目全年投入"这类问题） */
+export async function getAuxCombinationRange(params: {
+  from: string;
+  to: string;
+  dimensions: string[];
+  taxEntityId?: string;
+  accountCode?: string;
+}): Promise<AuxMultiDimensionBalance> {
+  const resp = await axiosForBackend.get<AuxMultiDimensionBalance>(
+    '/api/finance/ledgers/aux-combination-range',
+    { params: { ...params, dimensions: params.dimensions.join(',') } },
+  );
+  return resp.data;
+}
+
+/** 跨维度结构对比（各维度余额并列 + 结构占比） */
+export async function getAuxCrossDimension(params: {
+  period: string;
+  dimensions: string[];
+  taxEntityId?: string;
+  accountCode?: string;
+}): Promise<AuxCrossDimensionResult> {
+  const resp = await axiosForBackend.get<AuxCrossDimensionResult>(
+    '/api/finance/ledgers/aux-cross-dimension',
+    { params: { ...params, dimensions: params.dimensions.join(',') } },
+  );
+  return resp.data;
+}
+
+/** 某维度本期取值范围与余额（下拉用） */
+export async function getAuxDimensionValues(params: {
+  period: string;
+  dimensionCode: string;
+}): Promise<AuxPeriodValue[]> {
+  const resp = await axiosForBackend.get<AuxPeriodValue[]>(
+    '/api/finance/ledgers/aux-dimension-values',
+    { params },
+  );
+  return resp.data;
+}
+
+/** 成本分摊试算（只算不落库；分摊额合计服务端已自检严格等于总额） */
+export async function previewAuxAllocation(
+  args: AuxAllocationArgs,
+): Promise<AuxAllocationPreview> {
+  const resp = await axiosForBackend.post<AuxAllocationPreview>(
+    '/api/finance/ledgers/aux-allocation-preview',
+    args,
+  );
   return resp.data;
 }

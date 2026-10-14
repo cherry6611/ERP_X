@@ -5045,3 +5045,114 @@ export interface TaxRiskScanResult {
   /** 哪些扫描方向因取数失败被跳过（部分失败也要如实告知） */
   skipped: string[];
 }
+
+/* ========== 批次三 D-03：辅助核算深化（多维度组合 / 跨维度分析 / 分摊） ========== */
+
+/** 维度组合单元格里的一项取值 */
+export interface AuxCombinationValue {
+  dimensionCode: string;
+  dimensionId: string | null;
+  dimensionValue: string | null;
+}
+
+/** 多维度组合的一个单元格（= 一种维度取值组合） */
+export interface AuxCombinationCell {
+  /** 组合键（稳定，可作前端 key） */
+  key: string;
+  values: AuxCombinationValue[];
+  debit: number;
+  credit: number;
+  balance: number;
+  /** 构成该单元格的分录行数（供核对） */
+  lineCount: number;
+}
+
+/** 组合覆盖度：组合金额能否代表全部账 */
+export interface AuxCombinationCoverage {
+  /** 已挂全所选维度的发生额占比（%） */
+  coverageRate: number;
+  complete: boolean;
+  /** 可读中文说明（不完整时含未覆盖金额与行数） */
+  message: string;
+}
+
+/** 多维度组合余额结果 */
+export interface AuxMultiDimensionBalance {
+  /** 单期时为 YYYY-MM；区间时为 `YYYY-MM~YYYY-MM` */
+  period: string;
+  dimensionCodes: string[];
+  /** 与 `dimensionCodes` 一一对应的中文名 */
+  dimensionNames: string[];
+  cells: AuxCombinationCell[];
+  covered: { debit: number; credit: number; balance: number };
+  /** 只挂了部分维度的行 —— 必须显式暴露，否则"加起来不等于总量" */
+  uncovered: {
+    debit: number;
+    credit: number;
+    balance: number;
+    lineCount: number;
+  };
+  total: { debit: number; credit: number; balance: number };
+  coverage: AuxCombinationCoverage;
+}
+
+/** 跨维度结构对比的一行 */
+export interface AuxCrossDimensionRow {
+  dimensionCode: string;
+  dimensionValue: string;
+  balance: number;
+  /** 占该维度合计的百分比（分母是本维度合计，不是全局合计） */
+  shareOfDimension: number;
+}
+
+export interface AuxCrossDimensionResult {
+  period: string;
+  rows: AuxCrossDimensionRow[];
+  totalsByDimension: Array<{
+    dimensionCode: string;
+    dimensionName: string;
+    total: number;
+    valueCount: number;
+  }>;
+}
+
+/** 某维度在某期间的取值及余额（供前端下拉，选之前就知道金额） */
+export interface AuxPeriodValue {
+  dimensionId: string | null;
+  dimensionValue: string;
+  debit: number;
+  credit: number;
+  balance: number;
+}
+
+/** 成本分摊试算入参 */
+export interface AuxAllocationArgs {
+  /** 待分摊总额（可为负，表示冲回） */
+  amount: number;
+  /** 分摊权重（与 `targets` 一一对应） */
+  weights: number[];
+  /** 分摊对象标签（部门/项目名等），仅用于回显 */
+  targets?: string[];
+  /** 可选的税率（%），提供后额外给出不含税净额 */
+  taxRate?: number;
+  /** 权重全为 0 时的策略：equal=平均分摊（默认）/ reject=报错 */
+  fallback?: 'equal' | 'reject';
+}
+
+/** 成本分摊试算结果（**只算不落库**） */
+export interface AuxAllocationPreview {
+  amount: number;
+  totalWeight: number;
+  equalFallback: boolean;
+  /** 因四舍五入被调整的项数（解释尾差去向） */
+  adjustedCount: number;
+  /** 分摊额合计 —— 必须严格等于 `amount`，服务端已自检 */
+  sharesSum: number;
+  lines: Array<{
+    target: string;
+    weight: number;
+    share: number;
+    /** 不含税净额；未传税率时为 null */
+    netShare: number | null;
+  }>;
+}
