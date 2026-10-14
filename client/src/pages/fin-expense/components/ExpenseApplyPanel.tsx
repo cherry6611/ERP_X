@@ -6,7 +6,7 @@ import { z } from 'zod';
 import { toast } from 'sonner';
 import { Plus } from 'lucide-react';
 import { Table, TableColumnsType } from 'antd';
-import { CanRole } from '@client/src/platform/auth';
+import { CanCapability } from '@client/src/platform/auth';
 import DateField from '@client/src/components/erp/DateField';
 import { Button } from '@client/src/components/ui/button';
 import {
@@ -238,7 +238,7 @@ const ExpenseApplyPanel: React.FC = () => {
           >
             详情
           </Button>
-          <CanRole roles={['admin']}>
+          <CanCapability capability="finance_write">
             <div className="flex gap-1">
               {record.status === 'pending' ? (
                 <>
@@ -272,7 +272,7 @@ const ExpenseApplyPanel: React.FC = () => {
                 </Button>
               ) : null}
             </div>
-          </CanRole>
+          </CanCapability>
         </div>
       ),
     },

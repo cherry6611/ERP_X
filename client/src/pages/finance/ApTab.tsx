@@ -5,7 +5,7 @@ import { z } from 'zod';
 import { toast } from 'sonner';
 import { Download, Plus } from 'lucide-react';
 import { Table, TableColumnsType } from 'antd';
-import { CanRole } from '@client/src/platform/auth';
+import { CanCapability } from '@client/src/platform/auth';
 import DateField from '@client/src/components/erp/DateField';
 import { DataState } from '@client/src/components/DataState';
 import { SectionTitle } from '@client/src/components/SectionTitle';
@@ -441,7 +441,7 @@ const ApTab: React.FC = () => {
               sourceNote: '数据来源：应付付款台账',
             })}
           />
-          <CanRole roles={['admin']}>
+          <CanCapability capability="finance_write">
             <div className="flex gap-1">
               {record.status === 'pending' ? (
                 <>
@@ -485,7 +485,7 @@ const ApTab: React.FC = () => {
                 </Button>
               ) : null}
             </div>
-          </CanRole>
+          </CanCapability>
         </div>
       ),
     },
@@ -510,29 +510,29 @@ const ApTab: React.FC = () => {
             </SelectContent>
           </Select>
         </div>
-        <CanRole roles={['admin']}>
+        <CanCapability capability="finance_write">
           <Button onClick={() => setApOpen(true)}>
             <Plus className="h-4 w-4" />
             登记应付
           </Button>
-        </CanRole>
-        <CanRole roles={['admin']}>
+        </CanCapability>
+        <CanCapability capability="finance_write">
           <Button variant="outline" onClick={() => setPaymentOpen(true)}>
             <Plus className="h-4 w-4" />
             付款申请
           </Button>
-        </CanRole>
-        <CanRole roles={['admin']}>
+        </CanCapability>
+        <CanCapability capability="finance_write">
           <Button variant="outline" onClick={() => setWriteoffOpen(true)}>
             付款核销
           </Button>
-        </CanRole>
-        <CanRole roles={['admin']}>
+        </CanCapability>
+        <CanCapability capability="finance_write">
           <Button onClick={() => setVendorSettlementOpen(true)}>
             <Plus className="h-4 w-4" />
             外协结算
           </Button>
-        </CanRole>
+        </CanCapability>
         <Button variant="outline" onClick={handleExport}>
           <Download className="h-4 w-4" />
           导出 Excel

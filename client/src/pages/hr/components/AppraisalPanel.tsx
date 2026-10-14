@@ -5,7 +5,7 @@ import { z } from 'zod';
 import { toast } from 'sonner';
 import { Plus } from 'lucide-react';
 import { Table, TableColumnsType } from 'antd';
-import { CanRole } from '@client/src/platform/auth';
+import { CanCapability } from '@client/src/platform/auth';
 import HrStatusBadge, { APPRAISAL_STATUS_LABELS } from './HrStatusBadge';
 import { Button } from '@client/src/components/ui/button';
 import {
@@ -124,11 +124,11 @@ const AppraisalPanel: React.FC = () => {
       width: 90,
       render: (_: unknown, record: AppraisalItem) =>
         record.status === 'draft' ? (
-          <CanRole roles={['admin']}>
+          <CanCapability capability="hr_write">
             <Button variant="ghost" size="sm" onClick={() => void doConfirm(record)}>
               确认
             </Button>
-          </CanRole>
+          </CanCapability>
         ) : (
           <span className="text-sm text-muted-foreground">-</span>
         ),
@@ -148,12 +148,12 @@ const AppraisalPanel: React.FC = () => {
             onChange={(e: React.ChangeEvent<HTMLInputElement>) => setPeriod(e.target.value)}
           />
         </div>
-        <CanRole roles={['admin']}>
+        <CanCapability capability="hr_write">
           <Button onClick={() => setCreateOpen(true)}>
             <Plus className="h-4 w-4" />
             新建考核
           </Button>
-        </CanRole>
+        </CanCapability>
       </div>
       {error ? (
         <p className="text-sm text-destructive">

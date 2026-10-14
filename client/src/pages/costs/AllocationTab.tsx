@@ -4,7 +4,7 @@ import { useForm } from 'react-hook-form';
 import { z } from 'zod';
 import { toast } from 'sonner';
 import { Table, TableColumnsType } from 'antd';
-import { CanRole } from '@client/src/platform/auth';
+import { CanCapability } from '@client/src/platform/auth';
 import { SectionTitle } from '@client/src/components/SectionTitle';
 import { Button } from '@client/src/components/ui/button';
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from '@/components/ui/form';
@@ -183,9 +183,9 @@ const AllocationTab: React.FC = () => {
               </FormItem>
             )}
           />
-          <CanRole roles={['admin']}>
+          <CanCapability capability="projects_write">
             <Button type="submit">登记分摊</Button>
-          </CanRole>
+          </CanCapability>
         </form>
       </Form>
       {error ? (

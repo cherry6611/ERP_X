@@ -20,7 +20,7 @@ import {
   Wrench,
 } from 'lucide-react';
 import { Table, TableColumnsType } from 'antd';
-import { CanRole } from '@client/src/platform/auth';
+import { CanCapability } from '@client/src/platform/auth';
 import DateField from '@client/src/components/erp/DateField';
 import { AttachmentField } from '@client/src/components/attachments/AttachmentField';
 import { DataState } from '@client/src/components/DataState';
@@ -322,12 +322,12 @@ const CostsTab: React.FC = () => {
             </SelectContent>
           </Select>
         </div>
-        <CanRole roles={['admin']}>
+        <CanCapability capability="projects_write">
           <Button onClick={() => setCreateOpen(true)}>
             <Plus className="h-4 w-4" />
             归集成本
           </Button>
-        </CanRole>
+        </CanCapability>
         <Button variant="outline" onClick={handleExport}>
           <Download className="h-4 w-4" />
           导出 Excel

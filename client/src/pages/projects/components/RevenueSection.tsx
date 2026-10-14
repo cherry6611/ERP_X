@@ -5,7 +5,7 @@ import { z } from 'zod';
 import { toast } from 'sonner';
 import { BadgeCheck, Plus } from 'lucide-react';
 import { Table, TableColumnsType } from 'antd';
-import { CanRole } from '@client/src/platform/auth';
+import { CanCapability } from '@client/src/platform/auth';
 import StatusBadge from '@client/src/components/erp/StatusBadge';
 import { Button } from '@/components/ui/button';
 import {
@@ -136,12 +136,12 @@ const RevenueSection: React.FC<RevenueSectionProps> = ({ projectId, onChanged })
             已确认收入 {formatMoney(recognizedRevenue)}，毛利 {formatMoney(grossMargin)}
           </CardDescription>
         </div>
-        <CanRole roles={['admin']}>
+        <CanCapability capability="projects_write">
           <Button onClick={() => setCreateOpen(true)}>
             <BadgeCheck className="h-4 w-4" />
             确认收入
           </Button>
-        </CanRole>
+        </CanCapability>
       </CardHeader>
       <CardContent>
         {error ? (

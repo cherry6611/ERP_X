@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { toast } from 'sonner';
 import { Calculator } from 'lucide-react';
 import { Table, TableColumnsType } from 'antd';
-import { CanRole } from '@client/src/platform/auth';
+import { CanCapability } from '@client/src/platform/auth';
 import { Button } from '@client/src/components/ui/button';
 import { Badge } from '@client/src/components/ui/badge';
 import { Input } from '@client/src/components/ui/input';
@@ -132,7 +132,7 @@ const AssetDepreciationPanel: React.FC = () => {
               setDepreciatePeriod(e.target.value.trim())
             }
           />
-          <CanRole roles={['admin']}>
+          <CanCapability capability="pur_asset">
             <Button
               onClick={() => void onDepreciate()}
               disabled={operating}
@@ -141,7 +141,7 @@ const AssetDepreciationPanel: React.FC = () => {
               <Calculator className="mr-1 h-4 w-4" />
               按月计提折旧
             </Button>
-          </CanRole>
+          </CanCapability>
         </div>
       </div>
 

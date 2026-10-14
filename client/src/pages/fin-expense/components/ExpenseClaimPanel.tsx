@@ -6,7 +6,7 @@ import { z } from 'zod';
 import { toast } from 'sonner';
 import { Plus } from 'lucide-react';
 import { Table, TableColumnsType } from 'antd';
-import { CanRole } from '@client/src/platform/auth';
+import { CanCapability } from '@client/src/platform/auth';
 import DateField from '@client/src/components/erp/DateField';
 import { Button } from '@client/src/components/ui/button';
 import {
@@ -251,7 +251,7 @@ const ExpenseClaimPanel: React.FC = () => {
             详情
           </Button>
           {record.status === 'pending' || record.status === 'escalated' ? (
-            <CanRole roles={['admin']}>
+            <CanCapability capability="finance_write">
               <Button
                 variant="ghost"
                 size="sm"
@@ -269,7 +269,7 @@ const ExpenseClaimPanel: React.FC = () => {
               >
                 驳回
               </Button>
-            </CanRole>
+            </CanCapability>
           ) : null}
         </div>
       ),

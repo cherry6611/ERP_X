@@ -22,6 +22,12 @@ jobs:
       # 写方法不得使用只读装饰器、控制器必须标注 @NeedLogin/@Public
       - name: rbac consistency
         run: npm run check:rbac
+      # B-01（前端）：<CanRole> 必须登记理由、<CanCapability> 的能力码必须在册。
+      # 拼错的能力码不会报错，只会让元素永久隐藏（静默失效），typecheck 拦不住
+      # —— CanCapability 的 prop 类型是 `Capability | string`，`| string` 让任意
+      # 字符串都能通过，因此必须用运行时清单核对。
+      - name: frontend rbac consistency
+        run: npm run check:rbac:frontend
       # B-10/B-11：无真实数据库时用 pglite（WASM PostgreSQL）验证迁移链；
       # 任一条迁移失败即退出码 1（白名单为空，不存在静默跳过）
       - name: migrate dryrun (pglite)

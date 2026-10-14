@@ -6,7 +6,7 @@ import { toast } from 'sonner';
 import { Download, Plus } from 'lucide-react';
 import { Table, TableColumnsType } from 'antd';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { CanRole } from '@client/src/platform/auth';
+import { CanCapability } from '@client/src/platform/auth';
 import { DataState } from '@client/src/components/DataState';
 import FilterBar from '@client/src/components/erp/FilterBar';
 import StatusBadge from '@client/src/components/erp/StatusBadge';
@@ -170,7 +170,7 @@ const LeadsTab: React.FC = () => {
           >
             详情
           </Button>
-          <CanRole roles={['admin']}>
+          <CanCapability capability="crm_write">
             <Button variant="ghost" size="sm" onClick={() => openFollow(record)}>
               跟进
             </Button>
@@ -198,7 +198,7 @@ const LeadsTab: React.FC = () => {
                 转商机
               </Button>
             ) : null}
-          </CanRole>
+          </CanCapability>
         </div>
       ),
     },

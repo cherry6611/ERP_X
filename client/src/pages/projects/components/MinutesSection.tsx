@@ -4,7 +4,7 @@ import { useForm } from 'react-hook-form';
 import { z } from 'zod';
 import { toast } from 'sonner';
 import { Loader2, Paperclip, Plus, Trash2 } from 'lucide-react';
-import { CanRole } from '@client/src/platform/auth';
+import { CanCapability } from '@client/src/platform/auth';
 import { DataState } from '@client/src/components/DataState';
 import { SectionTitle } from '@client/src/components/SectionTitle';
 import DateField from '@client/src/components/erp/DateField';
@@ -151,12 +151,12 @@ const MinutesSection: React.FC<MinutesSectionProps> = ({ projectId, onChanged })
     <div className="flex flex-col gap-3">
       <div className="flex items-center justify-between">
         <SectionTitle>周报/纪要</SectionTitle>
-        <CanRole roles={['admin']}>
+        <CanCapability capability="projects_write">
           <Button size="sm" variant="outline" onClick={() => setAddOpen(true)}>
             <Plus className="h-4 w-4" />
             新增纪要
           </Button>
-        </CanRole>
+        </CanCapability>
       </div>
       <DataState
         loading={loading}
@@ -193,7 +193,7 @@ const MinutesSection: React.FC<MinutesSectionProps> = ({ projectId, onChanged })
                   <Paperclip className="mr-1 h-4 w-4" />
                   附件
                 </Button>
-                <CanRole roles={['admin']}>
+                <CanCapability capability="projects_write">
                   <Button
                     type="button"
                     variant="ghost"
@@ -208,7 +208,7 @@ const MinutesSection: React.FC<MinutesSectionProps> = ({ projectId, onChanged })
                       <Trash2 className="h-4 w-4 text-destructive" />
                     )}
                   </Button>
-                </CanRole>
+                </CanCapability>
               </li>
             );
           })}

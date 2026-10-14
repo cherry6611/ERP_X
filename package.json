@@ -140,6 +140,7 @@
     "check:contract": "node ./scripts/check-contract.mjs",
     "check:need-login": "node ./scripts/check-need-login.mjs",
     "check:rbac": "node ./scripts/check-rbac-consistency.mjs",
+    "check:rbac:frontend": "node ./scripts/check-frontend-rbac.mjs",
     "db:generate": "tsx ./scripts/emit-baseline.ts",
     "db:migrate": "node ./scripts/db-migrate.mjs",
     "dev": "node ./scripts/dev.js",

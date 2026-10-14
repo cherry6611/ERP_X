@@ -8,7 +8,7 @@ import { Table, TableColumnsType } from 'antd';
 import PageShell from '@client/src/components/PageShell';
 import { DataState } from '@client/src/components/DataState';
 import StatusBadge from '@client/src/components/erp/StatusBadge';
-import { CanRole } from '@client/src/platform/auth';
+import { CanCapability } from '@client/src/platform/auth';
 import { Button } from '@client/src/components/ui/button';
 import {
   Dialog,
@@ -337,7 +337,7 @@ const SuppliersPage: React.FC = () => {
       fixed: 'right',
       width: 160,
       render: (_, record) => (
-        <CanRole roles={['admin']}>
+        <CanCapability capability="crm_write">
           <div className="flex gap-1">
             <Button variant="ghost" size="sm" onClick={() => openEdit(record)}>
               编辑
@@ -350,7 +350,7 @@ const SuppliersPage: React.FC = () => {
               {record.status === 'inactive' ? '启用' : '停用'}
             </Button>
           </div>
-        </CanRole>
+        </CanCapability>
       ),
     },
   ];
@@ -368,12 +368,12 @@ const SuppliersPage: React.FC = () => {
         {debouncing ? (
           <span className="text-xs text-muted-foreground">筛选中…</span>
         ) : null}
-        <CanRole roles={['admin']}>
+        <CanCapability capability="crm_write">
           <Button onClick={openCreate}>
             <Plus className="h-4 w-4" />
             新建供应商
           </Button>
-        </CanRole>
+        </CanCapability>
         <Button variant="outline" onClick={handleExport}>
           <Download className="h-4 w-4" />
           导出 Excel

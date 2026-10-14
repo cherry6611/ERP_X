@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { toast } from 'sonner';
-import { CanRole } from '@client/src/platform/auth';
+import { CanCapability } from '@client/src/platform/auth';
 import { Badge } from '@client/src/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@client/src/components/ui/card';
 import { Switch } from '@client/src/components/ui/switch';
@@ -67,7 +67,7 @@ const AdminAutomationPage: React.FC = () => {
                   ) : (
                     <Badge variant="secondary">已停用</Badge>
                   )}
-                  <CanRole roles={['admin']}>
+                  <CanCapability capability="admin_ops">
                     <Switch
                       checked={item.enabled}
                       disabled={operatingKey === item.taskKey}
@@ -76,7 +76,7 @@ const AdminAutomationPage: React.FC = () => {
                       }
                       aria-label={`${item.enabled ? '停用' : '启用'}任务 ${item.taskName}`}
                     />
-                  </CanRole>
+                  </CanCapability>
                 </div>
               </CardHeader>
               <CardContent className="flex flex-col gap-1">

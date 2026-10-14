@@ -4,7 +4,7 @@ import { useForm } from 'react-hook-form';
 import { z } from 'zod';
 import { toast } from 'sonner';
 import { CheckCircle2 } from 'lucide-react';
-import { CanRole } from '@client/src/platform/auth';
+import { CanCapability } from '@client/src/platform/auth';
 import { DataState } from '@client/src/components/DataState';
 import { SectionTitle } from '@client/src/components/SectionTitle';
 import { Button } from '@client/src/components/ui/button';
@@ -131,14 +131,14 @@ const CloseProjectSection: React.FC<CloseProjectSectionProps> = ({ projectId, on
 
   return (
     <div className="flex flex-col gap-3">
-      <CanRole roles={['admin']}>
+      <CanCapability capability="projects_write">
         <div>
           <Button size="sm" onClick={openCloseProject}>
             <CheckCircle2 className="h-4 w-4" />
             结项
           </Button>
         </div>
-      </CanRole>
+      </CanCapability>
 
       <Dialog open={closeOpen} onOpenChange={setCloseOpen}>
         <DialogContent className="max-w-md">

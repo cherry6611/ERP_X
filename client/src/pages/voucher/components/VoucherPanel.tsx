@@ -6,7 +6,7 @@ import { z } from 'zod';
 import { toast } from 'sonner';
 import { Download, Plus, Trash2 } from 'lucide-react';
 import { Table, TableColumnsType } from 'antd';
-import { CanRole } from '@client/src/platform/auth';
+import { CanCapability } from '@client/src/platform/auth';
 import {
   VoucherStatusBadge,
   VOUCHER_SOURCE_LABELS,
@@ -314,7 +314,7 @@ const VoucherPanel: React.FC = () => {
           <Button variant="ghost" size="sm" onClick={() => navigate(`/voucher/${record.id}`, { state: { item: record } })}>
             详情
           </Button>
-          <CanRole roles={['admin']}>
+          <CanCapability capability="finance_write">
             {record.status === 'draft' ? (
               <Button
                 variant="ghost"
@@ -334,7 +334,7 @@ const VoucherPanel: React.FC = () => {
                 作废
               </Button>
             ) : null}
-          </CanRole>
+          </CanCapability>
         </div>
       ),
     },
@@ -436,12 +436,12 @@ const VoucherPanel: React.FC = () => {
             <Download className="h-4 w-4" />
             导出 Excel
           </Button>
-          <CanRole roles={['admin']}>
+          <CanCapability capability="finance_write">
             <Button onClick={() => setCreateOpen(true)}>
               <Plus className="h-4 w-4" />
               新增手工凭证
             </Button>
-          </CanRole>
+          </CanCapability>
         </div>
       </div>
       {error ? (

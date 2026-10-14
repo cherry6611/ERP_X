@@ -3,7 +3,7 @@ import { toast } from 'sonner';
 import { Download, Plus } from 'lucide-react';
 import { Table, TableColumnsType } from 'antd';
 import { useSearchParams } from 'react-router-dom';
-import { CanRole } from '@client/src/platform/auth';
+import { CanCapability } from '@client/src/platform/auth';
 import { DataState } from '@client/src/components/DataState';
 import FilterBar from '@client/src/components/erp/FilterBar';
 import StatusBadge from '@client/src/components/erp/StatusBadge';
@@ -173,13 +173,13 @@ const QuotationsTab: React.FC = () => {
           <Button variant="ghost" size="sm" onClick={() => setDetailTarget(record)}>
             详情
           </Button>
-          <CanRole roles={['admin']}>
+          <CanCapability capability="crm_write">
             {record.status === 'draft' ? (
               <Button variant="ghost" size="sm" onClick={() => openEdit(record)}>
                 编辑
               </Button>
             ) : null}
-          </CanRole>
+          </CanCapability>
         </div>
       ),
     },

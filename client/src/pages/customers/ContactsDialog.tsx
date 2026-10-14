@@ -5,7 +5,7 @@ import { z } from 'zod';
 import { toast } from 'sonner';
 import { Plus } from 'lucide-react';
 import { Table, TableColumnsType } from 'antd';
-import { CanRole } from '@client/src/platform/auth';
+import { CanCapability } from '@client/src/platform/auth';
 import {
   Dialog,
   DialogContent,
@@ -165,12 +165,12 @@ const ContactsDialog: React.FC<ContactsDialogProps> = ({
           <p className="text-sm text-muted-foreground">
             每个客户仅一个主联系人，删除联系人不可恢复
           </p>
-          <CanRole roles={['admin']}>
+          <CanCapability capability="crm_write">
             <Button size="sm" onClick={openCreate}>
               <Plus className="h-4 w-4" />
               添加联系人
             </Button>
-          </CanRole>
+          </CanCapability>
         </div>
         {error ? <p className="text-sm text-destructive">{error}</p> : null}
         <Table

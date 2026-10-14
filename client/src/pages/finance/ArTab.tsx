@@ -5,7 +5,7 @@ import { z } from 'zod';
 import { toast } from 'sonner';
 import { Download, Plus } from 'lucide-react';
 import { Table, TableColumnsType } from 'antd';
-import { CanRole } from '@client/src/platform/auth';
+import { CanCapability } from '@client/src/platform/auth';
 import { DataState } from '@client/src/components/DataState';
 import { SectionTitle } from '@client/src/components/SectionTitle';
 import StatusBadge from '@client/src/components/erp/StatusBadge';
@@ -314,7 +314,7 @@ const ArTab: React.FC = () => {
             })}
           />
           {record.status !== 'voided' ? (
-            <CanRole roles={['admin']}>
+            <CanCapability capability="finance_write">
               <Button
                 variant="ghost"
                 size="sm"
@@ -336,7 +336,7 @@ const ArTab: React.FC = () => {
               >
                 作废
               </Button>
-            </CanRole>
+            </CanCapability>
           ) : null}
         </div>
       ),
@@ -364,23 +364,23 @@ const ArTab: React.FC = () => {
             </SelectContent>
           </Select>
         </div>
-        <CanRole roles={['admin']}>
+        <CanCapability capability="finance_write">
           <Button onClick={() => setArOpen(true)}>
             <Plus className="h-4 w-4" />
             登记应收
           </Button>
-        </CanRole>
-        <CanRole roles={['admin']}>
+        </CanCapability>
+        <CanCapability capability="finance_write">
           <Button variant="outline" onClick={() => setReceiptOpen(true)}>
             <Plus className="h-4 w-4" />
             登记回款
           </Button>
-        </CanRole>
-        <CanRole roles={['admin']}>
+        </CanCapability>
+        <CanCapability capability="finance_write">
           <Button variant="outline" onClick={() => setWriteoffOpen(true)}>
             回款核销
           </Button>
-        </CanRole>
+        </CanCapability>
         <Button variant="outline" onClick={handleExport}>
           <Download className="h-4 w-4" />
           导出 Excel

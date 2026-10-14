@@ -3,7 +3,7 @@ import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
 import { Download, Plus } from 'lucide-react';
 import { Table, TableColumnsType } from 'antd';
-import { CanRole } from '@client/src/platform/auth';
+import { CanCapability } from '@client/src/platform/auth';
 import { DataState } from '@client/src/components/DataState';
 import FilterBar from '@client/src/components/erp/FilterBar';
 import StatusBadge from '@client/src/components/erp/StatusBadge';
@@ -165,13 +165,13 @@ const OpportunitiesTab: React.FC = () => {
           >
             详情
           </Button>
-          <CanRole roles={['admin']}>
+          <CanCapability capability="crm_write">
             {record.stage === 'won' && !record.contractId ? (
               <Button variant="ghost" size="sm" onClick={() => void convert(record)}>
                 转合同
               </Button>
             ) : null}
-          </CanRole>
+          </CanCapability>
         </div>
       ),
     },

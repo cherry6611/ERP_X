@@ -5,7 +5,7 @@ import { z } from 'zod';
 import { toast } from 'sonner';
 import { Download, Plus, Upload } from 'lucide-react';
 import { Table, TableColumnsType } from 'antd';
-import { CanRole } from '@client/src/platform/auth';
+import { CanCapability } from '@client/src/platform/auth';
 import DateField from '@client/src/components/erp/DateField';
 import HrStatusBadge, {
   EMPLOYEE_STATUS_LABELS,
@@ -459,7 +459,7 @@ const EmployeePanel: React.FC = () => {
       key: 'action',
       width: 200,
       render: (_: unknown, record: Employee) => (
-        <CanRole roles={['admin']}>
+        <CanCapability capability="hr_write">
           <div className="flex gap-1">
             <Button
               variant="ghost"
@@ -488,7 +488,7 @@ const EmployeePanel: React.FC = () => {
               </Button>
             ) : null}
           </div>
-        </CanRole>
+        </CanCapability>
       ),
     },
   ];
@@ -637,7 +637,7 @@ const EmployeePanel: React.FC = () => {
             <Download className="h-4 w-4" />
             导出 Excel
           </Button>
-          <CanRole roles={['admin']}>
+          <CanCapability capability="hr_write">
             <Button variant="outline" onClick={() => setImportOpen(true)}>
               <Upload className="h-4 w-4" />
               导入 Excel
@@ -646,7 +646,7 @@ const EmployeePanel: React.FC = () => {
               <Plus className="h-4 w-4" />
               新建员工
             </Button>
-          </CanRole>
+          </CanCapability>
         </div>
       </div>
       {error ? (

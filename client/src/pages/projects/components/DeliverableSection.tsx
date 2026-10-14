@@ -6,7 +6,7 @@ import { z } from 'zod';
 import { toast } from 'sonner';
 import { Plus } from 'lucide-react';
 import { Table, TableColumnsType } from 'antd';
-import { CanRole } from '@client/src/platform/auth';
+import { CanCapability } from '@client/src/platform/auth';
 import { AttachmentField } from '@client/src/components/attachments/AttachmentField';
 import { DataState } from '@client/src/components/DataState';
 import { SectionTitle } from '@client/src/components/SectionTitle';
@@ -351,7 +351,7 @@ const DeliverableSection: React.FC<DeliverableSectionProps> = ({ projectId, onCh
               sourceNote: '数据来源：项目交付模块',
             })}
           />
-          <CanRole roles={['admin']}>
+          <CanCapability capability="projects_write">
             <div className="flex gap-1">
               {record.status === 'pending' || record.status === 'returned' ? (
                 <Button variant="ghost" size="sm" onClick={() => void submitDeliverableAction(record)}>
@@ -374,7 +374,7 @@ const DeliverableSection: React.FC<DeliverableSectionProps> = ({ projectId, onCh
                 </Button>
               ) : null}
             </div>
-          </CanRole>
+          </CanCapability>
         </div>
       ),
     },
@@ -384,12 +384,12 @@ const DeliverableSection: React.FC<DeliverableSectionProps> = ({ projectId, onCh
     <div className="flex flex-col gap-3">
       <div className="flex items-center justify-between">
         <SectionTitle>项目交付物</SectionTitle>
-        <CanRole roles={['admin']}>
+        <CanCapability capability="projects_write">
           <Button size="sm" variant="outline" onClick={() => setAddOpen(true)}>
             <Plus className="h-4 w-4" />
             添加交付物
           </Button>
-        </CanRole>
+        </CanCapability>
       </div>
       <DataState loading={loading} error={error} skeleton="table">
         <Table

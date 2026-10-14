@@ -5,7 +5,7 @@ import { z } from 'zod';
 import { toast } from 'sonner';
 import { Plus, UserPlus } from 'lucide-react';
 import { Table, TableColumnsType } from 'antd';
-import { CanRole } from '@client/src/platform/auth';
+import { CanCapability } from '@client/src/platform/auth';
 import { SectionTitle } from '@client/src/components/SectionTitle';
 import DateField from '@client/src/components/erp/DateField';
 import HrStatusBadge, { TRAINING_STATUS_LABELS } from './HrStatusBadge';
@@ -156,7 +156,7 @@ const TrainingPanel: React.FC = () => {
       render: (_: unknown, record: Training) =>
         record.status === 'planned' ? (
           <div className="flex gap-1">
-            <CanRole roles={['admin']}>
+            <CanCapability capability="hr_write">
               <Button
                 variant="ghost"
                 size="sm"
@@ -165,12 +165,12 @@ const TrainingPanel: React.FC = () => {
                 <UserPlus className="h-4 w-4" />
                 参训人员
               </Button>
-            </CanRole>
-            <CanRole roles={['admin']}>
+            </CanCapability>
+            <CanCapability capability="hr_write">
               <Button variant="ghost" size="sm" onClick={() => void doFinish(record)}>
                 结课
               </Button>
-            </CanRole>
+            </CanCapability>
           </div>
         ) : (
           <span className="text-sm text-muted-foreground">-</span>
@@ -182,12 +182,12 @@ const TrainingPanel: React.FC = () => {
     <div className="flex flex-col gap-4">
       <div className="flex items-center justify-between gap-3">
         <SectionTitle>培训课程</SectionTitle>
-        <CanRole roles={['admin']}>
+        <CanCapability capability="hr_write">
           <Button onClick={() => setCreateOpen(true)}>
             <Plus className="h-4 w-4" />
             新建培训
           </Button>
-        </CanRole>
+        </CanCapability>
       </div>
       {error ? (
         <p className="text-sm text-destructive">
