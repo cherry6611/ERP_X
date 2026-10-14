@@ -12,6 +12,31 @@ import {
 const REPO_ROOT = resolve(__dirname, '../../..');
 
 /**
+ * 提取源码中的 **SQL 模板片段**。
+ *
+ * 做两件事：
+ * 1. 去掉注释（避免把文档注释里的示例当成真实 SQL）；
+ * 2. 取出反引号模板里含 SQL 关键字的片段。
+ *
+ * 为什么不是"扫全文 + 列名黑名单"：本仓 SQL 别名惯例是小写单字母，
+ * 与 TypeScript 回调参数（`(t) => t.weight`）完全同名，无法靠列名区分。
+ * 限定到 SQL 片段后这类误报从根上消失，且不需要维护黑名单。
+ */
+function extractSqlTemplateRegions(text: string): string[] {
+  const noComments = text
+    .replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, ' '))
+    .replace(/\/\/[^\n]*/g, (m) => m.replace(/[^\n]/g, ' '));
+  const regions: string[] = [];
+  // 反引号模板（含 sql`...` 与普通模板）；非贪婪跨行
+  for (const match of noComments.matchAll(/`([^`]*)`/gs)) {
+    const body = match[1];
+    // 只保留看起来是 SQL 的片段：出现 FROM/JOIN 且出现表名
+    if (/\b(FROM|JOIN)\s+[a-z_]/i.test(body)) regions.push(body);
+  }
+  return regions;
+}
+
+/**
  * A-01/A-06 修复回归：**代码引用的列必须在库里真实存在**。
  *
  * ## 为什么需要这个 spec
@@ -96,33 +121,42 @@ describe('A-01/A-06 列引用一致性审计', () => {
 
     const problems: string[] = [];
     for (const file of files) {
-      const text = readFileSync(file, 'utf8');
-      // 只审计 SQL 模板里的引用：先建立 别名 → 表 映射
-      const aliasToTable = new Map<string, string>();
-      for (const match of text.matchAll(
-        /(?:FROM|JOIN)\s+([a-z_][a-z0-9_]*)\s+(?:AS\s+)?([a-z]{1,4})\b/gi
-      )) {
-        const [, table, alias] = match;
-        if (byTable.has(table)) aliasToTable.set(alias.toLowerCase(), table);
-      }
-      if (aliasToTable.size === 0) continue;
+      const raw = readFileSync(file, 'utf8');
+      // ⚠️ 只审计**真正的 SQL 片段**，不能扫全文。
+      //
+      // 原因（实测踩到）：本仓 SQL 别名惯例是**小写单字母**（`v` / `l` / `a` / `c` …），
+      // 而 TypeScript 回调参数也大量用小写单字母。扫全文时
+      // `dto.targets.map((t) => t.weight)` 会被误判成"表别名 t 的 weight 列"
+      // （更巧的是同一文件里确实有 `FROM erp_timesheet t`，于是 t 被登记成别名）。
+      // 曾用"列名黑名单"挡这类误报，但黑名单天生不全 —— `weight` 就漏了。
+      //
+      // 正确做法是**限定作用域**：只在反引号模板中、且内容含 SQL 关键字的片段里找引用。
+      // 这样 TS 代码天然被排除，无需维护黑名单。
+      const sqlRegions = extractSqlTemplateRegions(raw);
+      for (const region of sqlRegions) {
+        // ① 别名 → 表
+        const aliasToTable = new Map<string, string>();
+        for (const match of region.matchAll(
+          /(?:FROM|JOIN)\s+([a-z_][a-z0-9_]*)\s+(?:AS\s+)?([a-z][a-z0-9_]*)\b/gi
+        )) {
+          const [, table, alias] = match;
+          if (byTable.has(table)) aliasToTable.set(alias.toLowerCase(), table);
+        }
+        if (aliasToTable.size === 0) continue;
 
-      for (const match of text.matchAll(/\b([a-z]{1,4})\.([a-z][a-z0-9_]{3,})\b/g)) {
-        const alias = match[1].toLowerCase();
-        const column = match[2];
-        const table = aliasToTable.get(alias);
-        if (!table) continue;
-        // 排除 TypeScript 里同名的数组/对象参数误报：只审计下划线命名或
-        // 明确不在 TS 常见标识符集合里的列名
-        const tsNoise = new Set([
-          'level', 'code', 'name', 'value', 'length', 'filter', 'map',
-          'includes', 'forEach', 'reduce', 'slice', 'push', 'sort',
-        ]);
-        if (tsNoise.has(column)) continue;
-        if (!byTable.get(table)!.has(column)) {
-          problems.push(
-            `${file.replace(REPO_ROOT, '')}: ${alias}.${column} 指向表 ${table}，但该表没有列 ${column}`
-          );
+        // ② 别名.列
+        for (const match of region.matchAll(
+          /\b([a-z][a-z0-9_]*)\.([a-z][a-z0-9_]{3,})\b/g
+        )) {
+          const alias = match[1].toLowerCase();
+          const column = match[2];
+          const table = aliasToTable.get(alias);
+          if (!table) continue;
+          if (!byTable.get(table)!.has(column)) {
+            problems.push(
+              `${file.replace(REPO_ROOT, '')}: ${alias}.${column} 指向表 ${table}，但该表没有列 ${column}`
+            );
+          }
         }
       }
     }

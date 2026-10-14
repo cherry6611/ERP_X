@@ -21,9 +21,14 @@ import {
   Min,
 } from 'class-validator';
 import { CostsService } from './costs.service';
-import { CreateAllocationDto, CreateLaborRateDto } from './costs.dto';
+import {
+  CreateAllocationDto,
+  CreateCostAllocationBatchDto,
+  CreateLaborRateDto,
+} from './costs.dto';
 import type {
   CostAllocation,
+  CostAllocationBatchResult,
   CostDimension,
   CostDimensionSummary,
   CostItem,
@@ -206,5 +211,19 @@ export class CostsController {
     @Body() dto: CreateAllocationDto
   ): Promise<CostAllocation> {
     return this.costsService.createAllocation(dto);
+  }
+
+  /**
+   * D-07：一笔公共成本按**权重**分摊到多个项目（作业成本法 ABC 的核心动作）。
+   *
+   * 金额由服务端用最大余数法计算，保证 Σ amount === 请求的 amount（到分）——
+   * 手工拆 N 笔极易出现合计差 1 分，而分摊合计与被分摊总额不等会让凭证不平。
+   */
+  @CanCapability('projects_write')
+  @Post('allocations/batch')
+  async createAllocationBatch(
+    @Body() dto: CreateCostAllocationBatchDto
+  ): Promise<CostAllocationBatchResult> {
+    return this.costsService.createAllocationBatch(dto);
   }
 }

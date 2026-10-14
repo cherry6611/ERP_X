@@ -690,6 +690,50 @@ export interface CostAllocation {
   remark: string | null;
 }
 
+/**
+ * D-07：一笔公共成本按**权重**分摊到多个项目。
+ *
+ * 为什么需要：原先 `CreateAllocationDto` 只能指定**一个**
+ * `targetProjectId` + 一个 `amount`，把一笔公共成本拆到 N 个项目
+ * 就要手工算 N 次金额、发 N 次请求 —— 金额靠人手算，
+ * 而分摊额之和必须严格等于被分摊总额（差 1 分凭证就不平），
+ * 这种人工算术正是最容易出错的地方。
+ *
+ * 现在可以给出权重，由服务端用**最大余数法**分摊并保证
+ * `Σ share === amount`（到分），一个请求生成 N 条分摊记录。
+ */
+export interface CostAllocationTarget {
+  projectId: string;
+  /** 分摊权重（如工时、收入占比、机时）。必须 > 0 */
+  weight: number;
+}
+
+export interface CreateCostAllocationBatchDto {
+  sourceDesc: string;
+  costType: CostType;
+  /** 待分摊总额（含税口径与单目标模式一致） */
+  amount: number;
+  period: string;
+  sourceRef: string;
+  /** 分摊目标与权重，至少 1 项 */
+  targets: CostAllocationTarget[];
+  remark?: string;
+}
+
+/** 分摊结果：每个目标实际分到的金额（`Σ amount === 请求的 amount`） */
+export interface CostAllocationBatchResult {
+  /** 本批生成的公共成本分摊单编号（与 targets 一一对应） */
+  allocations: CostAllocation[];
+  /** 分摊前总额（= 请求的 amount） */
+  totalAmount: number;
+  /** 分配合计（服务端保证等于 totalAmount，供调用方自检） */
+  allocatedAmount: number;
+  /** 因四舍五入被补齐 1 分的项数（向使用者解释尾差去向） */
+  adjustedCount: number;
+  /** 权重合计为 0 时是否退化为平均分摊 */
+  equalFallback: boolean;
+}
+
 export interface CostTypeSummary {
   costType: CostType;
   amount: number;

@@ -6,6 +6,7 @@ import { toast } from 'sonner';
 import { Table, TableColumnsType } from 'antd';
 import { CanCapability, CanCapabilityWrite } from '@client/src/platform/auth';
 import { SectionTitle } from '@client/src/components/SectionTitle';
+import BatchAllocationPanel from './components/BatchAllocationPanel';
 import { Button } from '@client/src/components/ui/button';
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from '@/components/ui/form';
 import { Input } from '@client/src/components/ui/input';
@@ -101,6 +102,10 @@ const AllocationTab: React.FC = () => {
       <p className="text-sm text-muted-foreground">
         公共成本（如公共云资源、工具订阅）登记后直接分摊到指定项目成本。
       </p>
+
+      <BatchAllocationPanel projects={projects ?? []} onDone={reload} />
+
+      <SectionTitle>单项目分摊</SectionTitle>
       <Form {...form}>
         <form onSubmit={onSubmit} className="flex flex-wrap items-end gap-4">
           <FormField

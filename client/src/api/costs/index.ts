@@ -6,7 +6,9 @@ import type {
   CostDimensionSummary,
   CostItem,
   CostTypeSummary,
+  CostAllocationBatchResult,
   CreateAllocationDto,
+  CreateCostAllocationBatchDto,
   CreateCostDto,
   CreateLaborRateDto,
   CreateTimesheetDto,
@@ -83,5 +85,22 @@ export async function createLaborRate(dto: CreateLaborRateDto): Promise<LaborRat
 
 export async function createAllocation(dto: CreateAllocationDto): Promise<CostAllocation> {
   const resp = await axiosForBackend.post<CostAllocation>('/api/costs/allocations', dto);
+  return resp.data;
+}
+
+/**
+ * D-07：一笔公共成本按**权重**分摊到多个项目（一个请求生成 N 条分摊记录）。
+ *
+ * 金额由服务端用最大余数法计算，保证 `Σ amount === 请求的 amount`（到分）——
+ * 前端**不要**自己算每项金额再逐笔提交：手工分摊的合计极易差 1 分，
+ * 而分摊合计与被分摊总额不等会让凭证不平。
+ */
+export async function createAllocationBatch(
+  dto: CreateCostAllocationBatchDto,
+): Promise<CostAllocationBatchResult> {
+  const resp = await axiosForBackend.post<CostAllocationBatchResult>(
+    '/api/costs/allocations/batch',
+    dto,
+  );
   return resp.data;
 }

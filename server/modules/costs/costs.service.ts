@@ -9,7 +9,8 @@ import {
   DRIZZLE_DATABASE,
   type PostgresJsDatabase,
 } from '@server/platform';
-import { and, asc, desc, eq, lte, or, sql, type SQL } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, lte, or, sql, type SQL } from 'drizzle-orm';
+import { Logger } from '@nestjs/common';
 import {
   erpContract,
   erpCostAllocation,
@@ -23,6 +24,8 @@ import {
   mdSupplier,
 } from '@server/database/schema';
 import { generateBizCode } from '@server/common/utils/biz-code';
+// D-07：复用 D-03 的最大余数法分摊引擎（保证 Σ share === amount）
+import { allocateAmount } from '@server/modules/finance-reports/aux-combination-rules';
 import { VoucherHookService } from '@server/modules/voucher/voucher-hook.service';
 import { costConfirmLines } from '@server/common/tax/posting';
 import { todayInShanghai, monthInShanghai } from '@server/common/utils/biz-date';
@@ -34,12 +37,14 @@ import {
 } from './redflush-ref';
 import type {
   CostAllocation,
+  CostAllocationBatchResult,
   CostDimension,
   CostDimensionSummary,
   CostItem,
   CostType,
   CostTypeSummary,
   CreateAllocationDto,
+  CreateCostAllocationBatchDto,
   CreateCostDto,
   CreateLaborRateDto,
   CreateTimesheetDto,
@@ -61,6 +66,11 @@ const COST_TYPES: CostType[] = [
 
 const FLEX_EMPLOYMENT_TYPES = ['part_time', 'flex'];
 
+/** 金额四舍五入到分（与本仓其他地方口径一致） */
+function round2(value: number): number {
+  return Math.round(value * 100) / 100;
+}
+
 const COST_TYPE_LABELS: Record<string, string> = {
   labor: '人力成本',
   outsource: '外包成本',
@@ -77,6 +87,8 @@ function currentPeriod(): string {
 
 @Injectable()
 export class CostsService {
+  private readonly logger = new Logger(CostsService.name);
+
   constructor(
     @Inject(DRIZZLE_DATABASE) private readonly db: PostgresJsDatabase,
     private readonly actorAccess: ActorAccessService,
@@ -784,6 +796,200 @@ export class CostsService {
       period: row.allocation.period ?? '',
       sourceRef: row.allocation.sourceRef ?? '',
       remark: row.allocation.remark,
+    };
+  }
+
+  /**
+   * D-07：把一笔公共成本按**权重**分摊到多个项目（作业成本法 ABC 的核心动作）。
+   *
+   * ## 为什么需要它
+   *
+   * 原 `createAllocation` 一次只能指定一个 `targetProjectId` + 一个 `amount`。
+   * 把一笔公共成本拆到 N 个项目就要**手工算 N 次金额、发 N 次请求**。
+   * 而分摊额之和必须严格等于被分摊总额（差 1 分凭证就不平）——
+   * **这种人工算术正是最容易出错的地方**，且出错后很难发现
+   * （每个项目的成本都"看起来合理"，只有合计对不上）。
+   *
+   * 本方法复用 D-03 已实现的**最大余数法**分摊引擎
+   * （`allocateAmount`，见 `finance-reports/aux-combination-rules.ts`），
+   * 逐项补齐分位以保证 `Σ share === amount`。
+   *
+   * ## 事务与凭证
+   *
+   * - 分摊计算是**纯函数、不碰数据库**，放在事务外先算完；
+   * - 全部插入放在**一个事务**内：要么整批成功、要么都不落库 ——
+   *   部分成功会让"被分摊总额"与"已分摊合计"永久对不上，比整批失败难处理得多；
+   * - 凭证按项目**逐张生成**（与单目标模式一致：每个项目各自归集成本；
+   *   合并成一张凭证会让项目维度无法下钻）。
+   */
+  async createAllocationBatch(
+    dto: CreateCostAllocationBatchDto
+  ): Promise<CostAllocationBatchResult> {
+    if (!Array.isArray(dto.targets) || dto.targets.length === 0) {
+      throw new BadRequestException('分摊目标至少 1 项');
+    }
+    if (dto.amount <= 0) {
+      throw new BadRequestException('分摊金额必须大于 0');
+    }
+    if (!COST_TYPES.includes(dto.costType)) {
+      throw new BadRequestException('非法的成本类型');
+    }
+    const projectIds = dto.targets.map((t) => t.projectId);
+    if (new Set(projectIds).size !== projectIds.length) {
+      // 同一项目出现两次会生成两笔独立分摊记录，使用者几乎肯定不是这个意思
+      throw new BadRequestException(
+        '分摊目标中存在重复项目；请将同一项目的权重合并后只传一次'
+      );
+    }
+    for (const target of dto.targets) {
+      if (!Number.isFinite(target.weight) || target.weight <= 0) {
+        throw new BadRequestException(
+          `项目 ${target.projectId} 的分摊权重必须大于 0`
+        );
+      }
+    }
+
+    // ① 分摊计算（纯函数，事务外）
+    const allocation = allocateAmount({
+      amount: dto.amount,
+      weights: dto.targets.map((t) => t.weight),
+      // 权重都 > 0，不会走兜底；用 reject 以免掩盖调用方传参错误
+      fallback: 'reject',
+    });
+    const sharesSum = round2(
+      allocation.shares.reduce((sum, value) => sum + value, 0)
+    );
+    if (sharesSum !== allocation.amount) {
+      // 自检：最大余数法保证这一点，违反说明有回归
+      this.logger.error(
+        `分摊自检失败：shares 合计 ${sharesSum} ≠ amount ${allocation.amount}`
+      );
+      throw new BadRequestException(
+        `分摊结果自检失败（合计 ${sharesSum} ≠ 总额 ${allocation.amount}）`
+      );
+    }
+
+    // ② 预取项目信息（事务外读，缩短事务持有时间）
+    const projects = await this.db
+      .select({
+        id: erpProject.id,
+        name: erpProject.name,
+        contractId: erpProject.contractId,
+        deptName: erpProject.deptName,
+      })
+      .from(erpProject)
+      .where(inArray(erpProject.id, projectIds));
+    if (projects.length !== projectIds.length) {
+      const found = new Set(projects.map((p) => p.id));
+      const missing = projectIds.filter((id) => !found.has(id));
+      throw new NotFoundException(`目标项目不存在：${missing.join('、')}`);
+    }
+    const projectById = new Map(projects.map((p) => [p.id, p]));
+
+    const deptNames = [
+      ...new Set(projects.map((p) => p.deptName).filter(Boolean) as string[]),
+    ];
+    const deptRows =
+      deptNames.length > 0
+        ? await this.db
+            .select({ id: hrDepartment.id, name: hrDepartment.name })
+            .from(hrDepartment)
+            .where(inArray(hrDepartment.name, deptNames))
+        : [];
+    const deptIdByName = new Map(deptRows.map((d) => [d.name, d.id]));
+
+    // ③ 整批落库（单事务）
+    const created = await this.db.transaction(async (tx) => {
+      const out: Array<{
+        allocation: typeof erpCostAllocation.$inferSelect;
+        costCode: string;
+        share: number;
+        projectId: string;
+      }> = [];
+      for (let i = 0; i < dto.targets.length; i += 1) {
+        const target = dto.targets[i];
+        const share = allocation.shares[i];
+        const project = projectById.get(target.projectId);
+        const code = await generateBizCode(
+          tx as unknown as PostgresJsDatabase,
+          erpCostAllocation,
+          erpCostAllocation.code,
+          'ALC'
+        );
+        const rows = await tx
+          .insert(erpCostAllocation)
+          .values({
+            code,
+            sourceDesc: dto.sourceDesc,
+            costType: dto.costType,
+            amount: String(share),
+            targetProjectId: target.projectId,
+            period: dto.period,
+            sourceRef: dto.sourceRef,
+            remark: dto.remark,
+          })
+          .returning();
+        const costCode = await generateBizCode(
+          tx as unknown as PostgresJsDatabase,
+          erpProjectCost,
+          erpProjectCost.code,
+          'CST'
+        );
+        await tx.insert(erpProjectCost).values({
+          code: costCode,
+          projectId: target.projectId,
+          costType: dto.costType,
+          amount: String(share),
+          period: dto.period,
+          occurredDate: todayInShanghai(),
+          sourceRef: `allocation:${code}`,
+          departmentId: project?.deptName
+            ? (deptIdByName.get(project.deptName) ?? null)
+            : null,
+          contractId: project?.contractId ?? null,
+          isAccrual: 0,
+          remark: `公共成本分摊：${dto.sourceDesc}`,
+        });
+        out.push({
+          allocation: rows[0],
+          costCode,
+          share,
+          projectId: target.projectId,
+        });
+      }
+      return out;
+    });
+
+    // ④ 凭证逐项生成（事务外；与仓库既有约定一致）
+    for (const row of created) {
+      if (row.share !== 0) {
+        await this.voucherHookService.generateVoucherDraft({
+          sourceType: 'cost',
+          sourceRef: `cost:${row.costCode}`,
+          voucherDate: todayInShanghai(),
+          summary: `公共成本分摊 ${row.allocation.code}`,
+          lines: costConfirmLines(row.share),
+        });
+      }
+    }
+
+    return {
+      allocations: created.map((row) => ({
+        id: row.allocation.id,
+        code: row.allocation.code,
+        sourceDesc: row.allocation.sourceDesc ?? '',
+        costType: (row.allocation.costType ?? 'compute') as CostType,
+        amount: Number(row.allocation.amount ?? 0),
+        targetProjectId: row.allocation.targetProjectId ?? '',
+        targetProjectName: projectById.get(row.projectId)?.name ?? '',
+        period: row.allocation.period ?? '',
+        sourceRef: row.allocation.sourceRef ?? '',
+        remark: row.allocation.remark,
+      })),
+      totalAmount: allocation.amount,
+      allocatedAmount: sharesSum,
+      adjustedCount: allocation.adjustedCount,
+      equalFallback: allocation.equalFallback,
     };
   }
 
