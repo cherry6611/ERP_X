@@ -100,6 +100,18 @@ export class CreateAssetChangeDto implements ICreateAssetChangeDto {
   @IsString()
   afterValue?: string;
 
+  /**
+   * D-08：转交目标（结构化）。`changeType='transfer'` 时**至少填一个**，
+   * 否则审批通过后归属不会变化（服务层会直接拒绝，避免"看起来成功"）。
+   */
+  @IsOptional()
+  @IsUUID()
+  targetDepartmentId?: string;
+
+  @IsOptional()
+  @IsUUID()
+  targetProjectId?: string;
+
   @IsOptional()
   @IsString()
   remark?: string;

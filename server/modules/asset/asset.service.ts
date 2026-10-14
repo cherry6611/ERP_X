@@ -84,6 +84,11 @@ interface AssetChangeRow {
   changeType: string | null;
   beforeValue: string | null;
   afterValue: string | null;
+  /** D-08：转交目标（结构化），审批通过时写回资产 */
+  targetDepartmentId: string | null;
+  targetDepartmentName: string | null;
+  targetProjectId: string | null;
+  targetProjectName: string | null;
   status: string | null;
   remark: string | null;
   createdAt: Date;
@@ -130,6 +135,10 @@ export class AssetService {
       changeType: (row.changeType ?? 'receive') as AssetChangeType,
       beforeValue: row.beforeValue,
       afterValue: row.afterValue,
+      targetDepartmentId: row.targetDepartmentId,
+      targetDepartmentName: row.targetDepartmentName,
+      targetProjectId: row.targetProjectId,
+      targetProjectName: row.targetProjectName,
       status: (row.status ?? 'pending') as AssetChangeItem['status'],
       remark: row.remark,
       createdAt: row.createdAt.toISOString(),
@@ -302,12 +311,18 @@ export class AssetService {
         changeType: astChange.changeType,
         beforeValue: astChange.beforeValue,
         afterValue: astChange.afterValue,
+        targetDepartmentId: astChange.targetDepartmentId,
+        targetDepartmentName: hrDepartment.name,
+        targetProjectId: astChange.targetProjectId,
+        targetProjectName: erpProject.name,
         status: astChange.status,
         remark: astChange.remark,
         createdAt: astChange.createdAt,
       })
       .from(astChange)
       .leftJoin(astAsset, eq(astChange.assetId, astAsset.id))
+      .leftJoin(hrDepartment, eq(astChange.targetDepartmentId, hrDepartment.id))
+      .leftJoin(erpProject, eq(astChange.targetProjectId, erpProject.id))
       .where(where)
       .orderBy(desc(astChange.createdAt))
       .limit(pageSize)
@@ -329,6 +344,37 @@ export class AssetService {
     if (dto.changeType === 'scrap' && status === 'scrapped') {
       throw new BadRequestException('资产已报废，不能再发起变更');
     }
+    // D-08：转交必须有**结构化目标**，否则审批通过后不会发生任何归属变更
+    // —— 转交单会"看起来成功但实际什么都没发生"，属最危险的一类缺陷。
+    if (dto.changeType === 'transfer') {
+      if (!dto.targetDepartmentId && !dto.targetProjectId) {
+        throw new BadRequestException(
+          '转交必须指定目标部门或目标项目（至少一个），否则审批通过后归属不会变化'
+        );
+      }
+      // 目标不存在时提前拒绝，避免把无效 uuid 存进变更单、
+      // 到审批时才因外键失败（那时单据已进入流程，处理成本更高）
+      if (dto.targetDepartmentId) {
+        const dept = await this.db
+          .select({ id: hrDepartment.id })
+          .from(hrDepartment)
+          .where(eq(hrDepartment.id, dto.targetDepartmentId))
+          .limit(1);
+        if (dept.length === 0) {
+          throw new BadRequestException('目标部门不存在');
+        }
+      }
+      if (dto.targetProjectId) {
+        const project = await this.db
+          .select({ id: erpProject.id })
+          .from(erpProject)
+          .where(eq(erpProject.id, dto.targetProjectId))
+          .limit(1);
+        if (project.length === 0) {
+          throw new BadRequestException('目标项目不存在');
+        }
+      }
+    }
     const beforeValue = [
       `状态:${ASSET_STATUS_LABELS[status] ?? status}`,
       `部门:${asset.departmentName ?? '未分配'}`,
@@ -338,6 +384,19 @@ export class AssetService {
     if (!afterValue) {
       if (dto.changeType === 'receive') afterValue = '状态:在用';
       if (dto.changeType === 'scrap') afterValue = '状态:已报废，终止折旧';
+      if (dto.changeType === 'transfer') {
+        // 自动生成可读快照；真实生效靠下面的结构化字段
+        const parts: string[] = [];
+        if (dto.targetDepartmentId) {
+          const name = await this.departmentNameOf(dto.targetDepartmentId);
+          parts.push(`部门:${name ?? dto.targetDepartmentId}`);
+        }
+        if (dto.targetProjectId) {
+          const name = await this.projectNameOf(dto.targetProjectId);
+          parts.push(`项目:${name ?? dto.targetProjectId}`);
+        }
+        afterValue = parts.join('；') || null;
+      }
     }
     const code = await generateBizCode(
       this.db,
@@ -353,6 +412,8 @@ export class AssetService {
         changeType: dto.changeType,
         beforeValue,
         afterValue,
+        targetDepartmentId: dto.targetDepartmentId ?? null,
+        targetProjectId: dto.targetProjectId ?? null,
         status: 'pending',
         remark: dto.remark ?? null,
       })
@@ -411,6 +472,32 @@ export class AssetService {
           .returning({ id: astAsset.id });
         if (applied.length === 0) throw new NotFoundException('资产不存在');
       }
+      // D-08：**转交必须真正写回归属**。
+      //
+      // 这是需求书点名的缺陷（"ast_change 存在但 transfer 不落归属"）：
+      // 原实现只处理 receive / scrap，transfer 审批通过后**什么都不发生**，
+      // 资产仍挂在原部门 —— 折旧分摊与部门成本归集就此错位，
+      // 而界面上单据显示"已批准"，缺陷表现为成功。
+      //
+      // 只写提供了的目标维度：允许"只转部门"或"只转项目"
+      // （例如人跟着项目走但部门不变）；两者都为空的情况在创建时已被拒绝。
+      if (action === 'approve' && change.changeType === 'transfer') {
+        const patch: Record<string, unknown> = { updatedAt: new Date() };
+        if (change.targetDepartmentId) {
+          patch.departmentId = change.targetDepartmentId;
+        }
+        if (change.targetProjectId) {
+          patch.projectId = change.targetProjectId;
+        }
+        if (Object.keys(patch).length > 1) {
+          const applied = await tx
+            .update(astAsset)
+            .set(patch)
+            .where(eq(astAsset.id, change.assetId ?? ''))
+            .returning({ id: astAsset.id });
+          if (applied.length === 0) throw new NotFoundException('资产不存在');
+        }
+      }
     });
     return this.getChangeById(id);
   }
@@ -426,15 +513,41 @@ export class AssetService {
         changeType: astChange.changeType,
         beforeValue: astChange.beforeValue,
         afterValue: astChange.afterValue,
+        targetDepartmentId: astChange.targetDepartmentId,
+        targetDepartmentName: hrDepartment.name,
+        targetProjectId: astChange.targetProjectId,
+        targetProjectName: erpProject.name,
         status: astChange.status,
         remark: astChange.remark,
         createdAt: astChange.createdAt,
       })
       .from(astChange)
       .leftJoin(astAsset, eq(astChange.assetId, astAsset.id))
+      .leftJoin(hrDepartment, eq(astChange.targetDepartmentId, hrDepartment.id))
+      .leftJoin(erpProject, eq(astChange.targetProjectId, erpProject.id))
       .where(eq(astChange.id, id))
       .limit(1);
     if (rows.length === 0) throw new NotFoundException('变更单不存在');
     return this.toAssetChangeItem(rows[0]);
+  }
+
+  /** D-08：按 id 取部门名（仅用于生成变更单的可读 `after_value` 快照） */
+  private async departmentNameOf(id: string): Promise<string | null> {
+    const rows = await this.db
+      .select({ name: hrDepartment.name })
+      .from(hrDepartment)
+      .where(eq(hrDepartment.id, id))
+      .limit(1);
+    return rows[0]?.name ?? null;
+  }
+
+  /** D-08：按 id 取项目名（同上，仅用于可读快照） */
+  private async projectNameOf(id: string): Promise<string | null> {
+    const rows = await this.db
+      .select({ name: erpProject.name })
+      .from(erpProject)
+      .where(eq(erpProject.id, id))
+      .limit(1);
+    return rows[0]?.name ?? null;
   }
 }

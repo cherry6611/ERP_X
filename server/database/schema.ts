@@ -571,6 +571,23 @@ export const astChange = pgTable("ast_change", {
   changeType: varchar("change_type", { length: 20 }).default('receive'),
   beforeValue: varchar("before_value", { length: 200 }),
   afterValue: varchar("after_value", { length: 200 }),
+  /**
+   * D-08：转交后的**目标部门 / 目标项目**（结构化）。
+   *
+   * 为什么必须有结构化目标：`before_value` / `after_value` 是**自由文本快照**
+   * （形如 `状态:在用；部门:研发部`），原先"转交"只把新归属写进这段文本，
+   * 审批通过后**从不写回 `ast_asset`** —— 于是转交单显示"已批准"，
+   * 而资产仍挂在原部门，折旧分摊与部门成本归集全部错位。
+   *
+   * 这类缺陷比功能缺失更危险：**它表现为成功**，只有等到部门成本对不上
+   * 才会被发现，那时往往已跨多个期间。
+   *
+   * 可空表示"本次不改变该维度"（允许只转部门或只转项目）。
+   * `after_value` 文本保留为展示快照，**不再承担数据传递职责**
+   * —— 文本解析不可靠（部门改名、格式微调都会失效）。
+   */
+  targetDepartmentId: uuid("target_department_id"),
+  targetProjectId: uuid("target_project_id"),
   status: varchar("status", { length: 20 }).default('pending'),
   remark: text("remark"),
   // System field: Creation time (auto-filled, do not modify)

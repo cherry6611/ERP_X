@@ -2036,6 +2036,11 @@ export interface AssetChangeItem {
   changeType: AssetChangeType;
   beforeValue: string | null;
   afterValue: string | null;
+  /** D-08：目标部门 / 目标项目（结构化，审批通过后写回资产） */
+  targetDepartmentId: string | null;
+  targetDepartmentName: string | null;
+  targetProjectId: string | null;
+  targetProjectName: string | null;
   status: AssetChangeStatus;
   remark: string | null;
   createdAt: string;
@@ -2064,7 +2069,20 @@ export interface CreateAssetDto {
 export interface CreateAssetChangeDto {
   assetId: string;
   changeType: AssetChangeType;
+  /**
+   * **展示用**的目标说明文本（可选）。不承担数据传递职责
+   * —— 真正生效的是下面两个结构化目标字段。
+   */
   afterValue?: string;
+  /**
+   * D-08：转交后的目标部门 / 目标项目（结构化）。
+   *
+   * `changeType='transfer'` 时**至少填一个**，否则审批通过后没有任何归属变更，
+   * 转交会"看起来成功但实际什么都没发生"。
+   * 可只填一个（允许只转部门或只转项目）。
+   */
+  targetDepartmentId?: string;
+  targetProjectId?: string;
   remark?: string;
 }
 
