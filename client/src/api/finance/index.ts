@@ -20,6 +20,9 @@ import type {
   PaymentAction,
   PaymentItem,
   ReceiptItem,
+  StatementCounterpartyOption,
+  StatementDirection,
+  StatementResult,
   UpdateInvoiceDto,
   VendorSettlementPreview,
 } from '@shared/api.interface';
@@ -268,5 +271,46 @@ export async function bindPurchaseAp(invoiceId: string, apId: string) {
     { apId },
   );
   ensureNotForbidden(resp);
+  return resp.data;
+}
+
+/* ==================== C-11 客户/供应商对账单 ====================
+ *
+ * 与 `recon*`（内部三方勾稽）区分：这里是给对手方确认的对账单。
+ */
+
+/** 可选对手方（只列有业务的），direction 决定查客户还是供应商 */
+export async function listStatementCounterparties(
+  direction: StatementDirection,
+): Promise<StatementCounterpartyOption[]> {
+  const path =
+    direction === 'customer'
+      ? '/api/finance/statement-customers'
+      : '/api/finance/statement-suppliers';
+  const resp = await axiosForBackend.get<StatementCounterpartyOption[]>(path);
+  return resp.data;
+}
+
+/** 客户对账单（`erp_ar` + `erp_receipt` + 销项发票） */
+export async function getCustomerStatement(
+  counterpartyId: string,
+  period: string,
+): Promise<StatementResult> {
+  const resp = await axiosForBackend.get<StatementResult>(
+    '/api/finance/statement/customer',
+    { params: { counterpartyId, period, direction: 'customer' } },
+  );
+  return resp.data;
+}
+
+/** 供应商对账单（`erp_ap_bill` + `erp_payment` + 进项发票） */
+export async function getSupplierStatement(
+  counterpartyId: string,
+  period: string,
+): Promise<StatementResult> {
+  const resp = await axiosForBackend.get<StatementResult>(
+    '/api/finance/statement/supplier',
+    { params: { counterpartyId, period, direction: 'supplier' } },
+  );
   return resp.data;
 }

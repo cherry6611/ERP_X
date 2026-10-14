@@ -14,7 +14,7 @@ import { CanCapability, NeedLogin } from '@server/platform';
 import { FinanceRead } from '@server/common/auth/read-roles';
 import { actorFromRequest } from '@server/common/auth/actor';
 import type { Request } from 'express';
-import { IsIn, IsString } from 'class-validator';
+import { IsIn, IsOptional, IsString, IsUUID, Matches } from 'class-validator';
 import { ArService } from './ar.service';
 import { ApService } from './ap.service';
 import { CashFlowService } from './cash-flow.service';
@@ -22,7 +22,7 @@ import { InvoiceService } from './invoice.service';
 import { FinanceService } from './finance.service';
 import { VendorSettlementService } from './vendor-settlement.service';
 import { ReconciliationService } from './reconciliation.service';
-import { IsOptional, IsUUID } from 'class-validator';
+import { StatementService } from './statement.service';
 import type {
   AgingBucket,
   ApItem,
@@ -33,6 +33,10 @@ import type {
   InvoiceItem,
   PaymentItem,
   ReceiptItem,
+  StatementCounterpartyOption,
+  StatementDirection,
+  StatementQueryDto as IStatementQueryDto,
+  StatementResult,
   VendorSettlementPreview,
 } from '@shared/api.interface';
 import {
@@ -64,6 +68,24 @@ export class BindApDto {
   apId!: string;
 }
 
+/**
+ * C-11 对账单查询参数。
+ *
+ * 虽然没有 `@Body()`，仍按 API-1 用 class DTO 承载 `@Query()`，
+ * 这样校验规则与契约同源（禁止内联对象类型 / interface）。
+ * 期间用 `@Matches` 保证 `YYYY-MM`（与 `statement.logic.ts` 的正则一致）。
+ */
+export class StatementQueryDto implements IStatementQueryDto {
+  @IsUUID()
+  counterpartyId!: string;
+
+  @Matches(/^\d{4}-(0[1-9]|1[0-2])$/, { message: 'period 必须为 YYYY-MM' })
+  period!: string;
+
+  @IsIn(['customer', 'supplier'], { message: 'direction 仅支持 customer / supplier' })
+  direction!: StatementDirection;
+}
+
 @NeedLogin()
 @Controller('api/finance')
 export class FinanceController {
@@ -75,7 +97,53 @@ export class FinanceController {
     private readonly financeService: FinanceService,
     private readonly vendorSettlementService: VendorSettlementService,
     private readonly reconciliationService: ReconciliationService,
+    private readonly statementService: StatementService,
   ) {}
+
+  /* ==================== C-11 客户/供应商对账单 ====================
+   *
+   * 路径刻意用 `statement-*` 前缀，**不占用** `reconciliation/*`：
+   * 后者是内部三方勾稽，本组接口是给对手方确认的对账单，语义不同不可混用。
+   */
+
+  @FinanceRead()
+  @Get('statement-customers')
+  async listStatementCustomers(): Promise<StatementCounterpartyOption[]> {
+    return this.statementService.listCounterparties('customer');
+  }
+
+  @FinanceRead()
+  @Get('statement-suppliers')
+  async listStatementSuppliers(): Promise<StatementCounterpartyOption[]> {
+    return this.statementService.listCounterparties('supplier');
+  }
+
+  @FinanceRead()
+  @Get('statement/customer')
+  async getCustomerStatement(
+    @Req() req: Request,
+    @Query() query: StatementQueryDto
+  ): Promise<StatementResult> {
+    // B-02：对账单按对手方暴露全部发生额，必须在 service 内做行级校验（越权 403）
+    return this.statementService.getCustomerStatement(
+      query.counterpartyId,
+      query.period,
+      actorFromRequest(req)
+    );
+  }
+
+  @FinanceRead()
+  @Get('statement/supplier')
+  async getSupplierStatement(
+    @Req() req: Request,
+    @Query() query: StatementQueryDto
+  ): Promise<StatementResult> {
+    return this.statementService.getSupplierStatement(
+      query.counterpartyId,
+      query.period,
+      actorFromRequest(req)
+    );
+  }
 
   @FinanceRead()
   @Get('cash-flow/forecast')

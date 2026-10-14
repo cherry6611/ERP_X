@@ -14,6 +14,7 @@ import { FinanceService } from './finance.service';
 import { VendorSettlementService } from './vendor-settlement.service';
 import { ArReminderAutomationTasksService } from './ar-reminder.automation';
 import { ReconciliationService } from './reconciliation.service';
+import { StatementService } from './statement.service';
 
 @Module({
   imports: [VoucherModule, NotificationsModule, AutomationConfigModule, TaxModule],
@@ -27,6 +28,8 @@ import { ReconciliationService } from './reconciliation.service';
     VendorSettlementService,
     ArReminderAutomationTasksService,
     ReconciliationService,
+    // C-11：客户/供应商对账单（读既有 AR/AP/回款/付款/发票表，无新增迁移）
+    StatementService,
     DataScopeService,
   ],
   exports: [ArService],

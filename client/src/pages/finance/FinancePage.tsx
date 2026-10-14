@@ -8,6 +8,7 @@ import InvoicesTab from './InvoicesTab';
 import AgingTab from './AgingTab';
 import CashFlowTab from './CashFlowTab';
 import ReconciliationTab from './ReconciliationTab';
+import StatementTab from './StatementTab';
 
 const TAB_VALUES = new Set([
   'ar',
@@ -16,6 +17,7 @@ const TAB_VALUES = new Set([
   'aging',
   'cashflow',
   'recon',
+  'statement',
 ]);
 
 const FinancePage: React.FC = () => {
@@ -44,6 +46,7 @@ const FinancePage: React.FC = () => {
           <TabsTrigger value="ap">应付与付款</TabsTrigger>
           <TabsTrigger value="invoices">发票登记</TabsTrigger>
           <TabsTrigger value="recon">勾稽中心</TabsTrigger>
+          <TabsTrigger value="statement">对账单</TabsTrigger>
           <TabsTrigger value="aging">账龄分析</TabsTrigger>
           <TabsTrigger value="cashflow">现金流</TabsTrigger>
         </TabsList>
@@ -58,6 +61,9 @@ const FinancePage: React.FC = () => {
         </TabsContent>
         <TabsContent value="recon">
           <ReconciliationTab />
+        </TabsContent>
+        <TabsContent value="statement">
+          <StatementTab />
         </TabsContent>
         <TabsContent value="aging">
           <AgingTab />
