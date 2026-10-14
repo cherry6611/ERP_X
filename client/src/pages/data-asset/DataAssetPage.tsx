@@ -5,20 +5,28 @@ import { Button } from '@client/src/components/ui/button';
 import { cn } from '@client/src/lib/utils';
 import DatasetPanel from './components/DatasetPanel';
 import GrantPanel from './components/GrantPanel';
+import DataMaskPanel from './components/DataMaskPanel';
 
 const DATA_ASSET_TABS = [
   { key: 'datasets', label: '数据集目录' },
   { key: 'grants', label: '授权记录' },
+  // C-13：脱敏等级、字段登记、授权回收审计（双人确认 + 销毁凭证）
+  { key: 'mask', label: '脱敏与回收审计' },
 ] as const;
+
+const TAB_SET = new Set(DATA_ASSET_TABS.map((t) => t.key));
 
 const DataAssetPage: React.FC = () => {
   const [params, setParams] = useSearchParams();
-  const tab = params.get('tab') === 'grants' ? 'grants' : 'datasets';
+  const raw = params.get('tab') ?? 'datasets';
+  const tab = TAB_SET.has(raw as (typeof DATA_ASSET_TABS)[number]['key'])
+    ? raw
+    : 'datasets';
 
   return (
     <PageShell
       title="数据资产授权"
-      description="数据集目录、授权记录与到期预警管理，项目立项前自动校验数据集授权"
+      description="数据集目录、授权记录、脱敏等级与授权回收审计，项目立项前自动校验数据集授权"
     >
       <div className="flex gap-2 flex-wrap" data-ai-section-type="card-list">
         {DATA_ASSET_TABS.map((item) => (
@@ -48,7 +56,11 @@ const DataAssetPage: React.FC = () => {
           </Button>
         ))}
       </div>
-      <div>{tab === 'datasets' ? <DatasetPanel /> : <GrantPanel />}</div>
+      <div>
+        {tab === 'datasets' && <DatasetPanel />}
+        {tab === 'grants' && <GrantPanel />}
+        {tab === 'mask' && <DataMaskPanel />}
+      </div>
     </PageShell>
   );
 };

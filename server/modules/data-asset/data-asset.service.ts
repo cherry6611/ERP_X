@@ -2,6 +2,7 @@ import {
   BadRequestException,
   Inject,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import {
@@ -11,23 +12,44 @@ import {
 import { and, asc, count, desc, eq, lte } from 'drizzle-orm';
 import {
   daDataset,
+  daDatasetField,
   daGrant,
+  daGrantRevokeLog,
   erpContract,
   erpProject,
   mdCustomer,
 } from '@server/database/schema';
 import { generateBizCode } from '@server/common/utils/biz-code';
+import {
+  GRANT_REVOKE_REASON_LABELS,
+  MASK_LEVELS,
+  MASK_LEVEL_DESCRIPTIONS,
+  MASK_LEVEL_LABELS,
+  SENSITIVE_FIELD_KINDS,
+  maskRows,
+  normalizeMaskLevel,
+  requiresDestructionProof,
+  validateRevoke,
+  type GrantRevokeReason,
+  type MaskLevel,
+  type SensitiveFieldKind,
+} from './mask-policy';
 import type {
   CreateDatasetDto,
   CreateGrantDto,
   DatasetAction,
+  DatasetFieldItem,
   DatasetItem,
   DatasetStatus,
   GrantItem,
+  GrantRevokeLogItem,
   GrantStatus,
   GrantWarningItem,
   PagedResult,
+  RevokeGrantDto,
+  RevokeGrantResult,
   UpdateDatasetDto,
+  UpsertDatasetFieldDto,
 } from '@shared/api.interface';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -86,6 +108,8 @@ interface GrantRow {
 
 @Injectable()
 export class DataAssetService {
+  private readonly logger = new Logger(DataAssetService.name);
+
   constructor(
     @Inject(DRIZZLE_DATABASE) private readonly db: PostgresJsDatabase
   ) {}
@@ -360,6 +384,282 @@ export class DataAssetService {
       .returning({ id: daGrant.id });
     if (rows.length === 0) throw new NotFoundException('授权记录不存在');
     return this.getGrantById(id);
+  }
+
+  /* ========== C-13 授权回收审计（双人确认 + 销毁凭证） ========== */
+
+  /**
+   * 带审计的授权回收。
+   *
+   * 与 `expireGrant` 的区别：`expireGrant` 是**到期自动失效**（系统行为，无需复核）；
+   * 本方法用于**人工主动回收 / 合同终止 / 违规回收**，必须留痕并能回答
+   * "谁回收的、谁复核的、有没有要求对方删副本"。
+   *
+   * L4 核心数据额外要求：复核人 ≠ 操作人 + 销毁凭证
+   * （应用层校验 + 数据库 CHECK 约束双重兜底，防止绕过接口直连库）。
+   */
+  async revokeGrant(
+    id: string,
+    dto: RevokeGrantDto,
+    operator: string
+  ): Promise<{ grant: GrantItem; logId: string }> {
+    const existing = await this.db
+      .select({
+        id: daGrant.id,
+        code: daGrant.code,
+        status: daGrant.status,
+        datasetId: daGrant.datasetId,
+        datasetName: daDataset.name,
+        maskLevel: daDataset.maskLevel,
+      })
+      .from(daGrant)
+      .leftJoin(daDataset, eq(daGrant.datasetId, daDataset.id))
+      .where(eq(daGrant.id, id))
+      .limit(1);
+    if (existing.length === 0) throw new NotFoundException('授权记录不存在');
+    const grant = existing[0];
+    if ((grant.status ?? 'active') !== 'active') {
+      throw new BadRequestException('授权已失效，不允许重复操作');
+    }
+    const maskLevel = normalizeMaskLevel(grant.maskLevel);
+
+    const errors = validateRevoke({
+      maskLevel,
+      reason: dto.reason,
+      operator,
+      reviewedBy: dto.reviewedBy ?? null,
+      destructionProof: dto.destructionProof ?? null,
+    });
+    if (errors.length > 0) {
+      throw new BadRequestException(errors.join('；'));
+    }
+
+    const destroyRequired = requiresDestructionProof(maskLevel);
+    await this.db
+      .update(daGrant)
+      .set({ status: 'expired', updatedAt: new Date() })
+      .where(eq(daGrant.id, id));
+    const logged = await this.db
+      .insert(daGrantRevokeLog)
+      .values({
+        grantId: grant.id,
+        grantCode: grant.code,
+        datasetId: grant.datasetId ?? '',
+        datasetName: grant.datasetName,
+        maskLevel,
+        reason: dto.reason,
+        operator,
+        reviewedBy: dto.reviewedBy ?? null,
+        destructionProof: dto.destructionProof ?? null,
+        remark: dto.remark ?? null,
+        destroyRequired: destroyRequired ? 1 : 0,
+      })
+      .returning({ id: daGrantRevokeLog.id });
+    this.logger.warn(
+      `授权回收 grant=${grant.code} level=${maskLevel} reason=${dto.reason} operator=${operator} reviewer=${dto.reviewedBy ?? '-'}`
+    );
+    return { grant: await this.getGrantById(id), logId: logged[0].id };
+  }
+
+  /** 授权回收审计记录 */
+  async listRevokeLogs(params: {
+    grantId?: string;
+    datasetId?: string;
+    page?: number;
+    pageSize?: number;
+  }): Promise<PagedResult<GrantRevokeLogItem>> {
+    const page = Math.max(1, params.page ?? 1);
+    const pageSize = Math.min(Math.max(params.pageSize ?? 20, 1), 200);
+    const conditions = [];
+    if (params.grantId) {
+      conditions.push(eq(daGrantRevokeLog.grantId, params.grantId));
+    }
+    if (params.datasetId) {
+      conditions.push(eq(daGrantRevokeLog.datasetId, params.datasetId));
+    }
+    const where = conditions.length > 0 ? and(...conditions) : undefined;
+    const totalRows = await this.db
+      .select({ total: count() })
+      .from(daGrantRevokeLog)
+      .where(where);
+    const rows = await this.db
+      .select()
+      .from(daGrantRevokeLog)
+      .where(where)
+      .orderBy(desc(daGrantRevokeLog.createdAt))
+      .limit(pageSize)
+      .offset((page - 1) * pageSize);
+    return {
+      items: rows.map((row) => ({
+        id: row.id,
+        grantId: row.grantId,
+        grantCode: row.grantCode,
+        datasetId: row.datasetId,
+        datasetName: row.datasetName,
+        maskLevel: row.maskLevel,
+        reason: row.reason as GrantRevokeReason,
+        reasonLabel:
+          GRANT_REVOKE_REASON_LABELS[row.reason as GrantRevokeReason] ??
+          row.reason,
+        operator: row.operator,
+        reviewedBy: row.reviewedBy,
+        destructionProof: row.destructionProof,
+        remark: row.remark,
+        destroyRequired: Number(row.destroyRequired ?? 0) === 1,
+        createdAt: row.createdAt.toISOString(),
+      })),
+      total: Number(totalRows[0]?.total ?? 0),
+      page,
+      pageSize,
+    };
+  }
+
+  /* ========== C-13 脱敏字段登记与预览 ========== */
+
+  async listDatasetFields(datasetId: string): Promise<DatasetFieldItem[]> {
+    await this.ensureDatasetExists(datasetId);
+    const rows = await this.db
+      .select()
+      .from(daDatasetField)
+      .where(eq(daDatasetField.datasetId, datasetId))
+      .orderBy(asc(daDatasetField.columnName));
+    return rows.map((row) => this.toDatasetField(row));
+  }
+
+  /** 登记/更新脱敏字段（列名在数据集内唯一，重复则更新语义） */
+  async upsertDatasetField(
+    datasetId: string,
+    dto: UpsertDatasetFieldDto
+  ): Promise<DatasetFieldItem> {
+    await this.ensureDatasetExists(datasetId);
+    if (!SENSITIVE_FIELD_KINDS.includes(dto.fieldKind)) {
+      throw new BadRequestException(
+        `字段语义仅支持 ${SENSITIVE_FIELD_KINDS.join(' / ')}`
+      );
+    }
+    const existing = await this.db
+      .select({ id: daDatasetField.id })
+      .from(daDatasetField)
+      .where(
+        and(
+          eq(daDatasetField.datasetId, datasetId),
+          eq(daDatasetField.columnName, dto.columnName)
+        )
+      )
+      .limit(1);
+    if (existing.length > 0) {
+      await this.db
+        .update(daDatasetField)
+        .set({
+          fieldKind: dto.fieldKind,
+          fieldLabel: dto.fieldLabel ?? null,
+          remark: dto.remark ?? null,
+          updatedAt: new Date(),
+        })
+        .where(eq(daDatasetField.id, existing[0].id));
+    } else {
+      await this.db.insert(daDatasetField).values({
+        datasetId,
+        columnName: dto.columnName,
+        fieldKind: dto.fieldKind,
+        fieldLabel: dto.fieldLabel ?? null,
+        remark: dto.remark ?? null,
+      });
+    }
+    const list = await this.listDatasetFields(datasetId);
+    return list.find((item) => item.columnName === dto.columnName) ?? list[0];
+  }
+
+  async deleteDatasetField(
+    datasetId: string,
+    columnName: string
+  ): Promise<{ ok: true }> {
+    const removed = await this.db
+      .delete(daDatasetField)
+      .where(
+        and(
+          eq(daDatasetField.datasetId, datasetId),
+          eq(daDatasetField.columnName, columnName)
+        )
+      )
+      .returning({ id: daDatasetField.id });
+    if (removed.length === 0) throw new NotFoundException('字段登记不存在');
+    return { ok: true };
+  }
+
+  /**
+   * 脱敏预览：给出样例数据在该数据集等级下的脱敏结果。
+   *
+   * 存在的意义：让业务方在**导出前**就看到 L3/L4 会变成什么样，
+   * 避免"导出后才发现关键列被抹掉或阻断"而返工。
+   */
+  async previewMasking(
+    datasetId: string,
+    sample: Record<string, unknown>
+  ): Promise<{
+    maskLevel: MaskLevel;
+    maskLevelLabel: string;
+    masked: Record<string, unknown>;
+    blockedColumns: string[];
+  }> {
+    const dataset = await this.getDatasetById(datasetId);
+    const fields = await this.listDatasetFields(datasetId);
+    const fieldKinds: Record<string, SensitiveFieldKind> = {};
+    for (const field of fields) {
+      fieldKinds[field.columnName] = field.fieldKind;
+    }
+    const level = normalizeMaskLevel(dataset.maskLevel);
+    const { rows, blockedColumns } = maskRows([sample], fieldKinds, level);
+    return {
+      maskLevel: level,
+      maskLevelLabel: MASK_LEVEL_LABELS[level],
+      masked: rows[0] ?? {},
+      blockedColumns,
+    };
+  }
+
+  /** 脱敏等级字典（前端下拉与审计报告用） */
+  listMaskLevels(): Array<{
+    level: MaskLevel;
+    label: string;
+    description: string;
+    destroyProofRequired: boolean;
+  }> {
+    return MASK_LEVELS.map((level) => ({
+      level,
+      label: MASK_LEVEL_LABELS[level],
+      description: MASK_LEVEL_DESCRIPTIONS[level],
+      destroyProofRequired: requiresDestructionProof(level),
+    }));
+  }
+
+  private toDatasetField(row: {
+    id: string;
+    datasetId: string;
+    columnName: string;
+    fieldKind: string;
+    fieldLabel: string | null;
+    remark: string | null;
+    createdAt: Date;
+  }): DatasetFieldItem {
+    return {
+      id: row.id,
+      datasetId: row.datasetId,
+      columnName: row.columnName,
+      fieldKind: row.fieldKind as SensitiveFieldKind,
+      fieldLabel: row.fieldLabel,
+      remark: row.remark,
+      createdAt: row.createdAt.toISOString(),
+    };
+  }
+
+  private async ensureDatasetExists(id: string): Promise<void> {
+    const rows = await this.db
+      .select({ id: daDataset.id })
+      .from(daDataset)
+      .where(eq(daDataset.id, id))
+      .limit(1);
+    if (rows.length === 0) throw new NotFoundException('数据集不存在');
   }
 
   private async getGrantById(id: string): Promise<GrantItem> {

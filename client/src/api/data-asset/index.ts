@@ -5,12 +5,19 @@ import type {
   CreateGrantDto,
   DatasetAction,
   DatasetItem,
+  DatasetFieldItem,
   DatasetListParams,
   GrantItem,
+  GrantRevokeLogItem,
+  MaskLevelOption,
+  MaskPreviewResult,
   GrantListParams,
   GrantWarningItem,
   PagedResult,
+  RevokeGrantDto,
+  RevokeGrantResult,
   UpdateDatasetDto,
+  UpsertDatasetFieldDto,
 } from '@shared/api.interface';
 
 /* ========== 数据集目录 ========== */
@@ -91,6 +98,83 @@ export async function expireGrant(id: string): Promise<GrantItem> {
 export async function listGrantWarnings(): Promise<GrantWarningItem[]> {
   const resp = await axiosForBackend.get<GrantWarningItem[]>(
     '/api/data-asset/grant-warnings',
+  );
+  return resp.data;
+}
+
+/* ========== C-13 脱敏等级与授权回收审计 ========== */
+
+export async function listMaskLevels(): Promise<MaskLevelOption[]> {
+  const resp = await axiosForBackend.get<MaskLevelOption[]>(
+    '/api/data-asset/mask-levels',
+  );
+  return resp.data;
+}
+
+export async function listDatasetFields(
+  datasetId: string,
+): Promise<DatasetFieldItem[]> {
+  const resp = await axiosForBackend.get<DatasetFieldItem[]>(
+    `/api/data-asset/datasets/${datasetId}/fields`,
+  );
+  return resp.data;
+}
+
+export async function upsertDatasetField(
+  datasetId: string,
+  dto: UpsertDatasetFieldDto,
+): Promise<DatasetFieldItem> {
+  const resp = await axiosForBackend.post<DatasetFieldItem>(
+    `/api/data-asset/datasets/${datasetId}/fields`,
+    dto,
+  );
+  ensureNotForbidden(resp);
+  return resp.data;
+}
+
+export async function deleteDatasetField(
+  datasetId: string,
+  columnName: string,
+): Promise<{ ok: true }> {
+  const resp = await axiosForBackend.post<{ ok: true }>(
+    `/api/data-asset/datasets/${datasetId}/fields/${encodeURIComponent(columnName)}/delete`,
+  );
+  ensureNotForbidden(resp);
+  return resp.data;
+}
+
+export async function previewMasking(
+  datasetId: string,
+  sample: Record<string, unknown>,
+): Promise<MaskPreviewResult> {
+  const resp = await axiosForBackend.post<MaskPreviewResult>(
+    `/api/data-asset/datasets/${datasetId}/mask-preview`,
+    { sample },
+  );
+  return resp.data;
+}
+
+export async function revokeGrant(
+  id: string,
+  dto: RevokeGrantDto,
+): Promise<RevokeGrantResult> {
+  const resp = await axiosForBackend.post<RevokeGrantResult>(
+    `/api/data-asset/grants/${id}/actions/revoke`,
+    dto,
+  );
+  ensureNotForbidden(resp);
+  return resp.data;
+}
+
+export async function listRevokeLogs(params?: {
+  grantId?: string;
+  datasetId?: string;
+  page?: number;
+  pageSize?: number;
+}): Promise<PagedResult<GrantRevokeLogItem>> {
+  const resp = await axiosForBackend.get<PagedResult<GrantRevokeLogItem>>(
+    '/api/data-asset/grant-revoke-logs',
+    { params },
   );
   return resp.data;
 }

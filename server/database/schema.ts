@@ -476,6 +476,70 @@ export const daGrant = pgTable("da_grant", {
   index("idx_da_grant_status").on(table.status),
 ]);
 
+/**
+ * C-13：数据集脱敏字段登记（列名 → 字段语义）。
+ *
+ * 导出时按 `mask-policy.ts` 的规则逐列脱敏；**未登记的列按 `other` 处理**，
+ * L4 下会被整体阻断 —— 刻意的保守设计，避免新增列悄悄绕过脱敏。
+ */
+export const daDatasetField = pgTable("da_dataset_field", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  datasetId: uuid("dataset_id").notNull(),
+  columnName: varchar("column_name", { length: 100 }).notNull(),
+  fieldKind: varchar("field_kind", { length: 30 }).notNull().default('other'),
+  fieldLabel: varchar("field_label", { length: 100 }),
+  remark: varchar("remark", { length: 500 }),
+  // System field: Creation time (auto-filled, do not modify)
+  createdAt: customTimestamptz("_created_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
+  // System field: Creator (auto-filled, do not modify)
+  createdBy: userProfile("_created_by").default(sql`CASE
+    WHEN (current_setting('app.user_id'::text, true) = ''::text) THEN NULL`),
+  // System field: Update time (auto-filled, do not modify)
+  updatedAt: customTimestamptz("_updated_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
+  // System field: Updater (auto-filled, do not modify)
+  updatedBy: userProfile("_updated_by").default(sql`CASE
+    WHEN (current_setting('app.user_id'::text, true) = ''::text) THEN NULL`),
+}, (table) => [
+  uniqueIndex("uq_da_dataset_field_column").on(table.datasetId, table.columnName),
+  index("idx_da_dataset_field_dataset").on(table.datasetId),
+]);
+
+/**
+ * C-13：授权回收审计。
+ *
+ * 数据库层带两条 CHECK 约束兜底（应用层已校验，这里是防止绕过）：
+ * - `ck_da_grant_revoke_log_l4_dual_control`：L4 必须 reviewed_by ≠ operator 且有销毁凭证；
+ * - `ck_da_grant_revoke_log_violation_proof`：违规回收必须有销毁凭证。
+ */
+export const daGrantRevokeLog = pgTable("da_grant_revoke_log", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  grantId: uuid("grant_id").notNull(),
+  grantCode: varchar("grant_code", { length: 20 }).notNull(),
+  datasetId: uuid("dataset_id").notNull(),
+  datasetName: varchar("dataset_name", { length: 200 }),
+  maskLevel: varchar("mask_level", { length: 4 }).notNull().default('L1'),
+  reason: varchar("reason", { length: 30 }).notNull().default('manual'),
+  operator: varchar("operator", { length: 64 }).notNull(),
+  reviewedBy: varchar("reviewed_by", { length: 64 }),
+  destructionProof: varchar("destruction_proof", { length: 500 }),
+  remark: varchar("remark", { length: 1000 }),
+  destroyRequired: integer("destroy_required").notNull().default(0),
+  // System field: Creation time (auto-filled, do not modify)
+  createdAt: customTimestamptz("_created_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
+  // System field: Creator (auto-filled, do not modify)
+  createdBy: userProfile("_created_by").default(sql`CASE
+    WHEN (current_setting('app.user_id'::text, true) = ''::text) THEN NULL`),
+  // System field: Update time (auto-filled, do not modify)
+  updatedAt: customTimestamptz("_updated_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
+  // System field: Updater (auto-filled, do not modify)
+  updatedBy: userProfile("_updated_by").default(sql`CASE
+    WHEN (current_setting('app.user_id'::text, true) = ''::text) THEN NULL`),
+}, (table) => [
+  index("idx_da_grant_revoke_log_grant").on(table.grantId),
+  index("idx_da_grant_revoke_log_dataset").on(table.datasetId),
+  index("idx_da_grant_revoke_log_created").on(table.createdAt),
+]);
+
 export const daDataset = pgTable("da_dataset", {
   id: uuid("id").primaryKey().defaultRandom(),
   code: varchar("code", { length: 20 }).notNull().unique(),

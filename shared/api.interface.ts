@@ -4329,3 +4329,97 @@ export interface BudgetCommitmentSummary {
 
 /** 孤儿承诺：没有任何预算行覆盖的承诺（三算表里看不到，风险最高） */
 export type CommitmentGapRow = BudgetCommitmentRow;
+
+/* ========== 批次二 C-13：数据资产脱敏等级与授权回收审计 ========== */
+
+/** 脱敏等级（封闭枚举，与 server/modules/data-asset/mask-policy.ts 一致） */
+export type MaskLevel = 'L1' | 'L2' | 'L3' | 'L4';
+
+/** 敏感字段语义 */
+export type SensitiveFieldKind =
+  | 'name'
+  | 'phone'
+  | 'email'
+  | 'id_card'
+  | 'bank_account'
+  | 'address'
+  | 'amount'
+  | 'location'
+  | 'other';
+
+/** 数据集脱敏字段登记项 */
+export interface DatasetFieldItem {
+  id: string;
+  datasetId: string;
+  /** 导出文件/查询结果中的列名 */
+  columnName: string;
+  fieldKind: SensitiveFieldKind;
+  fieldLabel: string | null;
+  remark: string | null;
+  createdAt: string;
+}
+
+export interface UpsertDatasetFieldDto {
+  columnName: string;
+  fieldKind: SensitiveFieldKind;
+  fieldLabel?: string;
+  remark?: string;
+}
+
+/** 脱敏等级字典项 */
+export interface MaskLevelOption {
+  level: MaskLevel;
+  label: string;
+  description: string;
+  /** L4 等核心等级回收授权时需要登记销毁凭证 */
+  destroyProofRequired: boolean;
+}
+
+/** 脱敏预览结果（导出前让业务方确认会变成什么样） */
+export interface MaskPreviewResult {
+  maskLevel: MaskLevel;
+  maskLevelLabel: string;
+  masked: Record<string, unknown>;
+  /** 该等级下被禁止导出的列（调用方必须跳过写入，而不是写空串） */
+  blockedColumns: string[];
+}
+
+/** 授权回收原因 */
+export type GrantRevokeReason =
+  | 'expired'
+  | 'manual'
+  | 'contract_terminated'
+  | 'violation'
+  | 'project_closed';
+
+export interface RevokeGrantDto {
+  reason: GrantRevokeReason;
+  /** L4 数据必填，且必须与操作人不同（双人确认） */
+  reviewedBy?: string;
+  /** L4 数据与"违规回收"必填：对方删除副本的凭证编号/说明 */
+  destructionProof?: string;
+  remark?: string;
+}
+
+export interface GrantRevokeLogItem {
+  id: string;
+  grantId: string;
+  grantCode: string;
+  datasetId: string;
+  datasetName: string | null;
+  maskLevel: string;
+  reason: GrantRevokeReason;
+  reasonLabel: string;
+  operator: string;
+  reviewedBy: string | null;
+  destructionProof: string | null;
+  remark: string | null;
+  destroyRequired: boolean;
+  createdAt: string;
+}
+
+/** 授权回收结果：返回审计记录 id 便于前端跳转凭证 */
+export interface RevokeGrantResult {
+  grant: GrantItem;
+  logId: string;
+}
