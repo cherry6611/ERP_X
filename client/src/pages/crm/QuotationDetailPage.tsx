@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useCallback } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { toast } from 'sonner';
 import { ArrowLeft } from 'lucide-react';
@@ -11,13 +11,16 @@ import { AttachmentField } from '@client/src/components/attachments/AttachmentFi
 import { SectionTitle } from '@client/src/components/SectionTitle';
 import { Button } from '@client/src/components/ui/button';
 import { Card, CardContent, CardHeader } from '@client/src/components/ui/card';
+import { PrintButton } from '@client/src/components/print';
+import type { PrintPackSeed } from '@client/src/components/print';
+import { cellText, compactFields, metaField } from '@client/src/components/print';
 import { crmApi } from '@client/src/api';
 import { useAsyncData } from '@client/src/hooks/useAsyncData';
 import { QUOTATION_STATUS_LABELS } from '@client/src/utils/biz-labels';
 import { formatMoney, formatPercent } from '@client/src/utils/format';
 import { getApiErrorMessage } from '@client/src/utils/api-error-message';
 import { confirmDanger } from '@client/src/utils/confirmDanger';
-import type { Quotation, QuotationItem } from '@shared/api.interface';
+import type { BrandConfig, Quotation, QuotationItem } from '@shared/api.interface';
 
 type QuotationAction = 'submit' | 'approve' | 'reject' | 'void' | 'convert' | 'setWon';
 
@@ -30,6 +33,66 @@ const QuotationDetailPage: React.FC = () => {
   );
 
   usePageEntityName(data ? `${data.code} ${data.title}` : null);
+
+  /** C-06：报价单打印件组包 */
+  const buildPrintPackSeed = useCallback(
+    (_brand: BrandConfig | null): PrintPackSeed | null => {
+      if (!data) return null;
+      return {
+        kind: 'quotation',
+        code: data.code,
+        title: '报价单',
+        subtitle: `报价单编号：${data.code}`,
+        meta: compactFields([
+          metaField('客户', data.customerName),
+          metaField('报价标题', data.title),
+          metaField('关联商机', data.opportunityTitle),
+          metaField('报价日期', data.quoteDate),
+          metaField('有效期至', data.validUntil),
+          metaField('整单折扣', formatPercent(data.discountPct)),
+          metaField(
+            '状态',
+            QUOTATION_STATUS_LABELS[data.status] ?? data.status,
+          ),
+          metaField('轮次', data.roundNo ? `第 ${data.roundNo} 轮` : null),
+        ]),
+        tableTitle: '报价明细',
+        columns: [
+          { key: 'seq', label: '序号', widthMm: 12, align: 'center' },
+          { key: 'itemName', label: '服务项' },
+          { key: 'unit', label: '单位', widthMm: 16, align: 'center' },
+          { key: 'quantity', label: '数量', widthMm: 18, align: 'right' },
+          { key: 'unitPrice', label: '单价', widthMm: 24, align: 'right' },
+          { key: 'discountPct', label: '行折扣', widthMm: 18, align: 'right' },
+          { key: 'lineAmount', label: '行金额', widthMm: 26, align: 'right' },
+        ],
+        rows: [...data.items]
+          .sort((a: QuotationItem, b: QuotationItem) => a.seq - b.seq)
+          .map((item) => ({
+            cells: {
+              seq: String(item.seq),
+              itemName: item.itemName,
+              unit: item.unit,
+              quantity: cellText(item.quantity),
+              unitPrice: cellText(item.unitPrice),
+              discountPct: formatPercent(item.discountPct),
+              lineAmount: cellText(item.lineAmount),
+            },
+          })),
+        totals: [
+          { label: '报价总额', amount: data.totalAmount, inWords: true, emphasize: true },
+          // 成本与毛利属内部数据，标出来避免误发给客户
+          { label: '预估成本（内部）', amount: data.estimatedCost },
+        ],
+        clauses: [
+          data.validUntil ? `报价有效期至 ${data.validUntil}，逾期请重新询价。` : '',
+          data.remark ? `备注：${data.remark}` : '',
+        ].filter(Boolean),
+        sourceNote: '数据来源：CRM 报价单模块；标注「内部」的行请勿对外提供',
+      };
+    },
+    [data],
+  );
 
   const backTo = data?.opportunityId
     ? `/crm/opportunities/${data.opportunityId}`
@@ -81,10 +144,13 @@ const QuotationDetailPage: React.FC = () => {
       title={data ? `报价单 · ${data.code}` : '报价单详情'}
       description={data?.title}
       actions={
-        <Button variant="outline" onClick={() => navigate(backTo)}>
-          <ArrowLeft className="h-4 w-4" />
-          返回商机
-        </Button>
+        <>
+          <PrintButton build={buildPrintPackSeed} disabled={!data} label="打印报价单" />
+          <Button variant="outline" onClick={() => navigate(backTo)}>
+            <ArrowLeft className="h-4 w-4" />
+            返回商机
+          </Button>
+        </>
       }
     >
       <DataState loading={loading} error={error} onRetry={() => void reload()}>

@@ -34,6 +34,7 @@ import {
 } from '@client/src/components/ui/select';
 import { hrApi } from '@client/src/api';
 import { sendApprovalNotification } from '@client/src/api/notifications';
+import PayslipPrintButton from '@client/src/components/print/PayslipPrintButton';
 import { useAsyncData } from '@client/src/hooks/useAsyncData';
 import { currentPeriod, formatMoney } from '@client/src/utils/format';
 import type {
@@ -216,32 +217,36 @@ const PayrollPanel: React.FC = () => {
     {
       title: '操作',
       key: 'action',
-      width: 220,
+      width: 260,
       render: (_: unknown, record: PayrollItem) => (
-        <CanRole roles={['admin']}>
-          <div className="flex gap-1">
-            {record.status === 'draft' ? (
-              <Button variant="ghost" size="sm" onClick={() => void doAction(record, 'submit')}>
-                提交审批
-              </Button>
-            ) : null}
-            {record.status === 'submitted' ? (
-              <>
-                <Button variant="ghost" size="sm" onClick={() => void doAction(record, 'approve')}>
-                  审批通过
+        <div className="flex items-center gap-1">
+          {/* C-06：工资条打印（裁剪后随工资发放，或作为个人留存凭证） */}
+          <PayslipPrintButton payroll={record} stopPropagation />
+          <CanRole roles={['admin']}>
+            <div className="flex gap-1">
+              {record.status === 'draft' ? (
+                <Button variant="ghost" size="sm" onClick={() => void doAction(record, 'submit')}>
+                  提交审批
                 </Button>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="text-destructive"
-                  onClick={() => void doAction(record, 'reject')}
-                >
-                  驳回
-                </Button>
-              </>
-            ) : null}
-          </div>
-        </CanRole>
+              ) : null}
+              {record.status === 'submitted' ? (
+                <>
+                  <Button variant="ghost" size="sm" onClick={() => void doAction(record, 'approve')}>
+                    审批通过
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="text-destructive"
+                    onClick={() => void doAction(record, 'reject')}
+                  >
+                    驳回
+                  </Button>
+                </>
+              ) : null}
+            </div>
+          </CanRole>
+        </div>
       ),
     },
   ];

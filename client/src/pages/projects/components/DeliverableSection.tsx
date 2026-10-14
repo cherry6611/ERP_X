@@ -31,6 +31,8 @@ import {
 import { Input } from '@client/src/components/ui/input';
 import { Textarea } from '@client/src/components/ui/textarea';
 import { projectsApi } from '@client/src/api';
+import { PrintButton } from '@client/src/components/print';
+import { compactFields, metaField } from '@client/src/components/print';
 import { getApiErrorMessage } from '@client/src/utils/api-error-message';
 import type {
   CreateDeliverableDto,
@@ -291,30 +293,89 @@ const DeliverableSection: React.FC<DeliverableSectionProps> = ({ projectId, onCh
       fixed: 'right',
       width: 160,
       render: (_, record) => (
-        <CanRole roles={['admin']}>
-          <div className="flex gap-1">
-            {record.status === 'pending' || record.status === 'returned' ? (
-              <Button variant="ghost" size="sm" onClick={() => void submitDeliverableAction(record)}>
-                {record.status === 'returned' ? '重新提交' : '提交验收'}
-              </Button>
-            ) : null}
-            {record.status === 'submitted' ? (
-              <>
+        <div className="flex gap-1">
+          {/* C-06：交付物验收单（已验收出正式验收单，未验收出待验收联） */}
+          <PrintButton
+            variant="ghost"
+            size="sm"
+            label="验收单"
+            stopPropagation
+            build={() => ({
+              kind: 'deliverable_acceptance',
+              code: record.code,
+              title: '交付物验收单',
+              subtitle: `交付物编号：${record.code}`,
+              meta: compactFields([
+                metaField('交付物名称', record.name),
+                metaField('交付物类型', record.deliverableType),
+                metaField('截止日期', record.dueDate),
+                metaField(
+                  '状态',
+                  DELIVERABLE_STATUS_META[record.status].label,
+                ),
+                metaField('评审人', record.reviewer),
+                metaField('提交日期', record.submittedAt?.slice(0, 10)),
+                metaField('验收日期', record.acceptedAt?.slice(0, 10)),
+              ]),
+              tableTitle: '验收内容',
+              columns: [
+                { key: 'item', label: '项目' },
+                { key: 'value', label: '内容' },
+              ],
+              rows: [
+                {
+                  cells: {
+                    item: '验收标准',
+                    value: record.acceptanceCriteria ?? '—',
+                  },
+                },
+                {
+                  cells: {
+                    item: '验收结论',
+                    value: record.acceptConclusion ?? '待验收',
+                  },
+                },
+                {
+                  cells: {
+                    item: '退回原因',
+                    value: record.returnedReason ?? '—',
+                  },
+                },
+              ],
+              clauses: [record.remark ? `备注：${record.remark}` : ''].filter(Boolean),
+              signatures: [
+                { slot: 'prepared', label: '交付人', signer: null },
+                { slot: 'reviewed', label: '评审人', signer: record.reviewer ?? null },
+                { slot: 'approved', label: '客户/项目负责人', signer: null },
+              ],
+              sourceNote: '数据来源：项目交付模块',
+            })}
+          />
+          <CanRole roles={['admin']}>
+            <div className="flex gap-1">
+              {record.status === 'pending' || record.status === 'returned' ? (
+                <Button variant="ghost" size="sm" onClick={() => void submitDeliverableAction(record)}>
+                  {record.status === 'returned' ? '重新提交' : '提交验收'}
+                </Button>
+              ) : null}
+              {record.status === 'submitted' ? (
+                <>
+                  <Button variant="ghost" size="sm" onClick={() => openAcceptDeliverable(record)}>
+                    通过
+                  </Button>
+                  <Button variant="ghost" size="sm" onClick={() => openReturnDeliverable(record)}>
+                    退回
+                  </Button>
+                </>
+              ) : null}
+              {record.status === 'accepted' ? (
                 <Button variant="ghost" size="sm" onClick={() => openAcceptDeliverable(record)}>
-                  通过
+                  验收详情
                 </Button>
-                <Button variant="ghost" size="sm" onClick={() => openReturnDeliverable(record)}>
-                  退回
-                </Button>
-              </>
-            ) : null}
-            {record.status === 'accepted' ? (
-              <Button variant="ghost" size="sm" onClick={() => openAcceptDeliverable(record)}>
-                验收单
-              </Button>
-            ) : null}
-          </div>
-        </CanRole>
+              ) : null}
+            </div>
+          </CanRole>
+        </div>
       ),
     },
   ];

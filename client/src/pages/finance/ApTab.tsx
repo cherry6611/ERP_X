@@ -36,6 +36,8 @@ import {
 } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import { financeApi, masterDataApi, projectsApi } from '@client/src/api';
+import { PrintButton } from '@client/src/components/print';
+import { compactFields, metaField } from '@client/src/components/print';
 import { useAsyncData } from '@client/src/hooks/useAsyncData';
 import { confirmDanger } from '@client/src/utils/confirmDanger';
 import { formatMoney } from '@client/src/utils/format';
@@ -394,53 +396,97 @@ const ApTab: React.FC = () => {
       title: '操作',
       key: 'action',
       fixed: 'right',
-      width: 140,
+      width: 220,
       render: (_, record) => (
-        <CanRole roles={['admin']}>
-          <div className="flex gap-1">
-            {record.status === 'pending' ? (
-              <>
+        <div className="flex gap-1">
+          {/* C-06：付款单（付款申请单）打印 */}
+          <PrintButton
+            variant="ghost"
+            label="打印"
+            stopPropagation
+            build={() => ({
+              kind: 'payment',
+              code: record.code,
+              title: '付款申请单',
+              subtitle: `付款编号：${record.code}`,
+              meta: compactFields([
+                metaField('供应商', record.supplierName),
+                metaField('关联应付单', record.apCode),
+                metaField('付款日期', record.payDate),
+                metaField('付款方式', record.method),
+                metaField(
+                  '状态',
+                  PAYMENT_STATUS_LABELS[record.status] ?? record.status,
+                ),
+                metaField('审批人', record.approver),
+              ]),
+              totals: [
+                {
+                  label: '付款金额（小写）',
+                  amount: record.amount,
+                  inWords: true,
+                  emphasize: true,
+                },
+              ],
+              clauses: [
+                record.remark ? `备注：${record.remark}` : '',
+                '本付款单经审批后方可付款，付款后请将银行回单归档。',
+              ].filter(Boolean),
+              signatures: [
+                { slot: 'prepared', label: '经办人', signer: null },
+                { slot: 'reviewed', label: '财务复核', signer: null },
+                { slot: 'chief_accountant', label: '财务主管', signer: null },
+                { slot: 'approved', label: '批准', signer: record.approver ?? null },
+              ],
+              sourceNote: '数据来源：应付付款台账',
+            })}
+          />
+          <CanRole roles={['admin']}>
+            <div className="flex gap-1">
+              {record.status === 'pending' ? (
+                <>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => void approvePayment(record, 'approve')}
+                  >
+                    批准
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => void approvePayment(record, 'reject')}
+                  >
+                    驳回
+                  </Button>
+                </>
+              ) : null}
+              {record.status !== 'voided' && record.status !== 'rejected' ? (
                 <Button
                   variant="ghost"
                   size="sm"
-                  onClick={() => void approvePayment(record, 'approve')}
+                  onClick={() => {
+                    void (async () => {
+                      const ok = await confirmDanger(
+                        `确认作废付款 ${record.code ?? record.id}？此操作不可恢复。`,
+                      );
+                      if (!ok) return;
+                      try {
+                        await financeApi.voidPayment(record.id);
+                        toast.success('付款已作废');
+                        await Promise.all([reload(), reloadPayments()]);
+                      } catch (err: unknown) {
+                        toast.error(getApiErrorMessage(err, '作废失败'));
+                      }
+                    })();
+                  }}
                 >
-                  批准
+                  作废
                 </Button>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => void approvePayment(record, 'reject')}
-                >
-                  驳回
-                </Button>
-              </>
-            ) : null}
-            {record.status !== 'voided' && record.status !== 'rejected' ? (
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => {
-                  void (async () => {
-                    const ok = await confirmDanger(
-                      `确认作废付款 ${record.code ?? record.id}？此操作不可恢复。`,
-                    );
-                    if (!ok) return;
-                    try {
-                      await financeApi.voidPayment(record.id);
-                      toast.success('付款已作废');
-                      await Promise.all([reload(), reloadPayments()]);
-                    } catch (err: unknown) {
-                      toast.error(getApiErrorMessage(err, '作废失败'));
-                    }
-                  })();
-                }}
-              >
-                作废
-              </Button>
-            ) : null}
-          </div>
-        </CanRole>
+              ) : null}
+            </div>
+          </CanRole>
+        </div>
       ),
     },
   ];

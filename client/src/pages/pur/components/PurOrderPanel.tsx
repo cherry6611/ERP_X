@@ -40,6 +40,8 @@ import DateField from '@client/src/components/erp/DateField';
 import { AttachmentField } from '@client/src/components/attachments/AttachmentField';
 import AttachmentHint from '@client/src/components/attachments/AttachmentHint';
 import { contractsApi, masterDataApi, projectsApi, purApi } from '@client/src/api';
+import { PrintButton } from '@client/src/components/print';
+import { cellText, compactFields, metaField } from '@client/src/components/print';
 import { useAsyncData } from '@client/src/hooks/useAsyncData';
 import { formatMoney, todayIso } from '@client/src/utils/format';
 import type {
@@ -242,33 +244,154 @@ const PurOrderPanel: React.FC = () => {
       title: '操作',
       key: 'action',
       fixed: 'right',
-      width: 170,
+      width: 260,
       render: (_: unknown, record: PurOrderItem) => (
-        <CanRole roles={['admin']}>
-          <div className="flex gap-1">
-            {record.status === 'pending' ? (
-              <>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => openAcceptDialog(record)}
-                >
-                  验收
-                </Button>
-                {record.acceptedQuantity === 0 ? (
+        <div className="flex gap-1">
+          {/*
+            C-06：采购订单打印。
+            已验收订单直接出「验收单」（含验收数量/日期），未验收订单出「采购订单」。
+          */}
+          <PrintButton
+            variant="ghost"
+            label={record.status === 'accepted' ? '验收单' : '打印'}
+            stopPropagation
+            build={() => {
+              const acceptedQuantity = Number(record.acceptedQuantity ?? 0);
+              const isAcceptance = record.status === 'accepted' && acceptedQuantity > 0;
+              const acceptedAmount = Number(
+                (
+                  record.unitPrice * (isAcceptance ? acceptedQuantity : record.quantity)
+                ).toFixed(2),
+              );
+              const commonMeta = compactFields([
+                metaField('供应商', record.supplierName),
+                metaField('采购品名', record.itemName),
+                metaField(
+                  '采购类别',
+                  PUR_ORDER_CATEGORY_LABELS[record.category] ?? record.category,
+                ),
+                metaField('关联合同', record.contractName),
+                metaField('关联项目', record.projectName),
+                metaField('关联采购申请', record.requestCode),
+                metaField('下单日期', record.orderDate),
+              ]);
+              if (isAcceptance) {
+                return {
+                  kind: 'pur_acceptance',
+                  code: record.code,
+                  title: '采购验收单',
+                  subtitle: `订单编号：${record.code}`,
+                  meta: [
+                    ...commonMeta,
+                    ...compactFields([
+                      metaField('验收日期', record.acceptDate),
+                      metaField('订单数量', cellText(record.quantity)),
+                      metaField('已验收数量', cellText(acceptedQuantity)),
+                    ]),
+                  ],
+                  tableTitle: '验收明细',
+                  columns: [
+                    { key: 'item', label: '采购品名' },
+                    { key: 'unitPrice', label: '单价（含税）', widthMm: 26, align: 'right' },
+                    { key: 'quantity', label: '订单数量', widthMm: 20, align: 'right' },
+                    { key: 'accepted', label: '验收数量', widthMm: 20, align: 'right' },
+                    { key: 'amount', label: '验收金额', widthMm: 28, align: 'right' },
+                  ],
+                  rows: [
+                    {
+                      cells: {
+                        item: record.itemName,
+                        unitPrice: cellText(record.unitPrice),
+                        quantity: cellText(record.quantity),
+                        accepted: cellText(acceptedQuantity),
+                        amount: cellText(acceptedAmount),
+                      },
+                    },
+                  ],
+                  totals: [
+                    {
+                      label: '验收金额（含税）',
+                      amount: acceptedAmount,
+                      inWords: true,
+                      emphasize: true,
+                    },
+                  ],
+                  clauses: [
+                    record.remark ? `备注：${record.remark}` : '',
+                    '验收结论：货物/服务符合订单要求，同意验收并作为应付确认依据。',
+                  ].filter(Boolean),
+                  signatures: [
+                    { slot: 'prepared', label: '验收人', signer: null },
+                    { slot: 'reviewed', label: '需求部门', signer: null },
+                    { slot: 'approved', label: '批准', signer: null },
+                  ],
+                  sourceNote: '数据来源：采购管理模块',
+                };
+              }
+              return {
+                kind: 'pur_order',
+                code: record.code,
+                title: '采购订单',
+                subtitle: `订单编号：${record.code}`,
+                meta: commonMeta,
+                tableTitle: '订单明细',
+                columns: [
+                  { key: 'item', label: '采购品名' },
+                  { key: 'category', label: '类别', widthMm: 20, align: 'center' },
+                  { key: 'quantity', label: '数量', widthMm: 18, align: 'right' },
+                  { key: 'unitPrice', label: '单价（含税）', widthMm: 26, align: 'right' },
+                  { key: 'amount', label: '订单金额', widthMm: 28, align: 'right' },
+                ],
+                rows: [
+                  {
+                    cells: {
+                      item: record.itemName,
+                      category: PUR_ORDER_CATEGORY_LABELS[record.category] ?? record.category,
+                      quantity: cellText(record.quantity),
+                      unitPrice: cellText(record.unitPrice),
+                      amount: cellText(record.amount),
+                    },
+                  },
+                ],
+                totals: [
+                  {
+                    label: '订单金额（含税）',
+                    amount: record.amount,
+                    inWords: true,
+                    emphasize: true,
+                  },
+                ],
+                clauses: [record.remark ? `备注：${record.remark}` : ''].filter(Boolean),
+                sourceNote: '数据来源：采购管理模块',
+              };
+            }}
+          />
+          <CanRole roles={['admin']}>
+            <div className="flex gap-1">
+              {record.status === 'pending' ? (
+                <>
                   <Button
                     variant="ghost"
                     size="sm"
-                    className="text-destructive"
-                    onClick={() => void doCancel(record)}
+                    onClick={() => openAcceptDialog(record)}
                   >
-                    取消
+                    验收
                   </Button>
-                ) : null}
-              </>
-            ) : null}
-          </div>
-        </CanRole>
+                  {record.acceptedQuantity === 0 ? (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="text-destructive"
+                      onClick={() => void doCancel(record)}
+                    >
+                      取消
+                    </Button>
+                  ) : null}
+                </>
+              ) : null}
+            </div>
+          </CanRole>
+        </div>
       ),
     },
   ];

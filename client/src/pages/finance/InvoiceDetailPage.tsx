@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React, { useCallback, useMemo } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { ArrowLeft } from 'lucide-react';
 import { DataState } from '@client/src/components/DataState';
@@ -8,11 +8,14 @@ import { AttachmentField } from '@client/src/components/attachments/AttachmentFi
 import { SectionTitle } from '@client/src/components/SectionTitle';
 import { Button } from '@client/src/components/ui/button';
 import { Card, CardContent, CardHeader } from '@client/src/components/ui/card';
+import { PrintButton } from '@client/src/components/print';
+import type { PrintPackSeed } from '@client/src/components/print';
+import { compactFields, metaField } from '@client/src/components/print';
 import { financeApi } from '@client/src/api';
 import { useAsyncData } from '@client/src/hooks/useAsyncData';
 import { formatMoney, formatPercent } from '@client/src/utils/format';
 import { formatTaxSplitLine } from '@client/src/utils/tax-display';
-import type { InvoiceDirection, InvoiceItem } from '@shared/api.interface';
+import type { BrandConfig, InvoiceDirection, InvoiceItem } from '@shared/api.interface';
 
 const INVOICE_TYPE_LABELS: Record<string, string> = {
   vat_special: '增值税专用发票',
@@ -70,15 +73,57 @@ const InvoiceDetailPage: React.FC = () => {
     ];
   }, [data]);
 
+  /** C-06：发票打印件组包（无明细行，金额与价税拆分放合计区） */
+  const buildPrintPackSeed = useCallback(
+    (_brand: BrandConfig | null): PrintPackSeed | null => {
+      if (!data) return null;
+      const directionLabel = DIRECTION_LABELS[data.direction] ?? data.direction;
+      return {
+        kind: 'invoice',
+        code: data.code,
+        title: data.direction === 'purchase' ? '进项发票登记单' : '销项发票登记单',
+        subtitle: `申请编号：${data.code}`,
+        meta: compactFields([
+          metaField('发票号码', data.invoiceNo),
+          metaField('方向', directionLabel),
+          metaField('发票类型', INVOICE_TYPE_LABELS[data.invoiceType] ?? data.invoiceType),
+          metaField('开票日期', data.invoiceDate),
+          metaField('客户', data.customerName),
+          metaField('供应商', data.supplierName),
+          metaField('合同', data.contractName),
+          metaField('项目', data.projectName),
+          metaField('关联应收', data.arCode),
+          metaField('关联应付', data.apCode),
+          metaField('状态', INVOICE_STATUS_LABELS[data.status] ?? data.status),
+          metaField('税率', formatPercent(data.taxRate)),
+        ]),
+        totals: [
+          { label: '开票金额（含税）', amount: data.amount, inWords: true, emphasize: true },
+          { label: '税额', amount: data.taxAmount },
+          { label: '不含税金额', amount: Number((data.amount - data.taxAmount).toFixed(2)) },
+        ],
+        clauses: [
+          `价税拆分：${formatTaxSplitLine(data.amount, data.taxRate)}`,
+          data.remark ? `备注：${data.remark}` : '',
+        ].filter(Boolean),
+        sourceNote: '数据来源：财务发票台账',
+      };
+    },
+    [data],
+  );
+
   return (
     <PageShell
       title={data ? `发票详情 · ${data.code}` : '发票详情'}
       description="发票台账字段与附件"
       actions={
-        <Button variant="outline" onClick={() => navigate('/finance?tab=invoices')}>
-          <ArrowLeft className="h-4 w-4" />
-          返回列表
-        </Button>
+        <>
+          <PrintButton build={buildPrintPackSeed} disabled={!data} label="打印发票" />
+          <Button variant="outline" onClick={() => navigate('/finance?tab=invoices')}>
+            <ArrowLeft className="h-4 w-4" />
+            返回列表
+          </Button>
+        </>
       }
     >
       <DataState

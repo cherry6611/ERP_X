@@ -7,6 +7,7 @@ import HrStatusBadge, {
 } from './HrStatusBadge';
 import { DataState } from '@client/src/components/DataState';
 import { SectionTitle } from '@client/src/components/SectionTitle';
+import PayslipPrintButton from '@client/src/components/print/PayslipPrintButton';
 import { hrApi } from '@client/src/api';
 import { useAsyncData } from '@client/src/hooks/useAsyncData';
 import { formatMoney } from '@client/src/utils/format';
@@ -141,8 +142,12 @@ const MyHrPanel: React.FC = () => {
                 <div key={payroll.id} className="flex flex-col gap-2 rounded-md border p-3">
                   <div className="flex items-center justify-between gap-2">
                     <span className="text-sm font-medium">{payroll.period}</span>
-                    <span className="text-sm font-semibold tabular-nums">
-                      实发 {formatMoney(payroll.netSalary)}
+                    <span className="flex items-center gap-2">
+                      <span className="text-sm font-semibold tabular-nums">
+                        实发 {formatMoney(payroll.netSalary)}
+                      </span>
+                      {/* C-06：工资条打印（员工自助亦可自行打印留存） */}
+                      <PayslipPrintButton payroll={payroll} />
                     </span>
                   </div>
                   <div className="grid grid-cols-3 gap-x-4 gap-y-1 text-sm text-muted-foreground">

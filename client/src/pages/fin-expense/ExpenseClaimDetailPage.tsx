@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useCallback } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { ArrowLeft } from 'lucide-react';
 import { DataState } from '@client/src/components/DataState';
@@ -8,11 +8,14 @@ import { AttachmentField } from '@client/src/components/attachments/AttachmentFi
 import { SectionTitle } from '@client/src/components/SectionTitle';
 import { Button } from '@client/src/components/ui/button';
 import { Card, CardContent, CardHeader } from '@client/src/components/ui/card';
+import { PrintButton } from '@client/src/components/print';
+import type { PrintPackSeed } from '@client/src/components/print';
+import { compactFields, metaField } from '@client/src/components/print';
 import { finExpenseApi } from '@client/src/api';
 import { useAsyncData } from '@client/src/hooks/useAsyncData';
 import { formatMoney } from '@client/src/utils/format';
 import FinStatusBadge, { CLAIM_STATUS_LABELS } from './components/FinStatusBadge';
-import type { ExpenseClaimItem } from '@shared/api.interface';
+import type { BrandConfig, ExpenseClaimItem } from '@shared/api.interface';
 
 const ExpenseClaimDetailPage: React.FC = () => {
   const { id } = useParams<{ id: string }>();
@@ -32,17 +35,55 @@ const ExpenseClaimDetailPage: React.FC = () => {
 
   usePageEntityName(data ? data.code : null);
 
+  /** C-06：费用报销单打印件组包（报销单为封面单，明细见所附票据） */
+  const buildPrintPackSeed = useCallback(
+    (_brand: BrandConfig | null): PrintPackSeed | null => {
+      if (!data) return null;
+      return {
+        kind: 'expense_claim',
+        code: data.code,
+        title: '费用报销单',
+        subtitle: `报销单编号：${data.code}`,
+        meta: compactFields([
+          metaField('关联申请', data.applyCode),
+          metaField('报销人', data.applicant),
+          metaField('部门', data.departmentName),
+          metaField('项目', data.projectName),
+          metaField('费用科目', data.expenseCategory),
+          metaField('费用日期', data.expenseDate),
+          metaField('状态', CLAIM_STATUS_LABELS[data.status] ?? data.status),
+        ]),
+        totals: [{ label: '报销金额', amount: data.amount, inWords: true, emphasize: true }],
+        clauses: [
+          data.remark ? `事由/备注：${data.remark}` : '',
+          '所附原始票据张数以附件为准，粘贴后随本单提交。',
+        ].filter(Boolean),
+        signatures: [
+          { slot: 'prepared', label: '报销人', signer: data.applicant ?? null },
+          { slot: 'reviewed', label: '部门负责人', signer: null },
+          { slot: 'approved', label: '财务审核', signer: null },
+          { slot: 'chief_accountant', label: '批准', signer: null },
+        ],
+        sourceNote: '数据来源：费用报销模块',
+      };
+    },
+    [data],
+  );
+
   return (
     <PageShell
       title={data ? `报销单 · ${data.code}` : '报销单详情'}
       actions={
-        <Button
-          variant="outline"
-          onClick={() => navigate('/fin-expense?tab=claims')}
-        >
-          <ArrowLeft className="h-4 w-4" />
-          返回列表
-        </Button>
+        <>
+          <PrintButton build={buildPrintPackSeed} disabled={!data} label="打印报销单" />
+          <Button
+            variant="outline"
+            onClick={() => navigate('/fin-expense?tab=claims')}
+          >
+            <ArrowLeft className="h-4 w-4" />
+            返回列表
+          </Button>
+        </>
       }
     >
       <DataState

@@ -35,6 +35,8 @@ import {
 } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import { contractsApi, financeApi, masterDataApi } from '@client/src/api';
+import { PrintButton } from '@client/src/components/print';
+import { compactFields, metaField } from '@client/src/components/print';
 import { useAsyncData } from '@client/src/hooks/useAsyncData';
 import { confirmDanger } from '@client/src/utils/confirmDanger';
 import { formatMoney } from '@client/src/utils/format';
@@ -57,6 +59,14 @@ const AR_STATUS_LABELS: Record<string, string> = {
   open: '未核销',
   partial: '部分核销',
   settled: '已结清',
+};
+
+/** C-06 回款单打印用状态文案 */
+const RECEIPT_STATUS_LABELS: Record<string, string> = {
+  unmatched: '未核销',
+  partial: '部分核销',
+  matched: '已核销',
+  voided: '已作废',
 };
 
 const AR_EXPORT_COLUMNS: ExcelSheetColumn<ArItem>[] = [
@@ -260,33 +270,76 @@ const ArTab: React.FC = () => {
     {
       title: '操作',
       key: 'action',
-      width: 90,
-      render: (_, record) =>
-        record.status !== 'voided' ? (
-          <CanRole roles={['admin']}>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => {
-                void (async () => {
-                  const ok = await confirmDanger(
-                    `确认作废回款 ${record.code ?? record.id}？此操作不可恢复。`,
-                  );
-                  if (!ok) return;
-                  try {
-                    await financeApi.voidReceipt(record.id);
-                    toast.success('回款已作废');
-                    await Promise.all([reload(), reloadReceipts()]);
-                  } catch (err: unknown) {
-                    toast.error(getApiErrorMessage(err, '作废失败'));
-                  }
-                })();
-              }}
-            >
-              作废
-            </Button>
-          </CanRole>
-        ) : null,
+      width: 150,
+      render: (_, record) => (
+        <div className="flex gap-1">
+          {/* C-06：回款单（收据）打印；作废件仍可补打留档 */}
+          <PrintButton
+            variant="ghost"
+            label="打印"
+            stopPropagation
+            build={() => ({
+              kind: 'receipt',
+              code: record.code,
+              title: '回款单（收据）',
+              subtitle: `回款编号：${record.code}`,
+              meta: compactFields([
+                metaField('客户', record.customerName),
+                metaField('回款日期', record.receiptDate),
+                metaField('回款方式', record.method),
+                metaField('来源', record.source),
+                metaField(
+                  '状态',
+                  RECEIPT_STATUS_LABELS[record.status] ?? record.status,
+                ),
+              ]),
+              totals: [
+                {
+                  label: '回款金额（小写）',
+                  amount: record.amount,
+                  inWords: true,
+                  emphasize: true,
+                },
+              ],
+              clauses: [
+                record.remark ? `备注：${record.remark}` : '',
+                '本收据以银行到账为准，如有差异请于 7 个工作日内联系财务。',
+              ].filter(Boolean),
+              signatures: [
+                { slot: 'prepared', label: '收款经办', signer: null },
+                { slot: 'reviewed', label: '财务复核', signer: null },
+                { slot: 'chief_accountant', label: '财务主管', signer: null },
+              ],
+              sourceNote: '数据来源：应收回款台账',
+            })}
+          />
+          {record.status !== 'voided' ? (
+            <CanRole roles={['admin']}>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => {
+                  void (async () => {
+                    const ok = await confirmDanger(
+                      `确认作废回款 ${record.code ?? record.id}？此操作不可恢复。`,
+                    );
+                    if (!ok) return;
+                    try {
+                      await financeApi.voidReceipt(record.id);
+                      toast.success('回款已作废');
+                      await Promise.all([reload(), reloadReceipts()]);
+                    } catch (err: unknown) {
+                      toast.error(getApiErrorMessage(err, '作废失败'));
+                    }
+                  })();
+                }}
+              >
+                作废
+              </Button>
+            </CanRole>
+          ) : null}
+        </div>
+      ),
     },
   ];
 
