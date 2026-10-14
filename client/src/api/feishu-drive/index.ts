@@ -3,8 +3,27 @@ import { logger } from '@client/src/platform/logger';
 import type {
   DriveCreatedItem,
   DriveFolderChildrenResponse,
+  FeishuDriveConfigResponse,
+  UpdateFeishuDriveConfigRequest,
   WikiNodesResponse,
 } from '@shared/api.interface';
+
+export async function getDriveConfig(): Promise<FeishuDriveConfigResponse> {
+  const resp = await axiosForBackend.get<FeishuDriveConfigResponse>(
+    '/api/drive/config',
+  );
+  return resp.data;
+}
+
+export async function updateDriveConfig(
+  body: UpdateFeishuDriveConfigRequest,
+): Promise<FeishuDriveConfigResponse> {
+  const resp = await axiosForBackend.put<FeishuDriveConfigResponse>(
+    '/api/drive/config',
+    body,
+  );
+  return resp.data;
+}
 
 export async function fetchDriveRoot(): Promise<{ folderToken: string }> {
   const resp = await axiosForBackend.get('/api/drive/root');

@@ -19,6 +19,7 @@ import {
   mdSupplier,
 } from '@server/database/schema';
 import { generateBizCode } from '@server/common/utils/biz-code';
+import { todayInShanghai } from '@server/common/utils/biz-date';
 import type {
   CreateContactDto,
   CreateCustomerDto,
@@ -71,6 +72,28 @@ export class MasterDataService {
       defaultTaxRate:
         row.defaultTaxRate != null ? Number(row.defaultTaxRate) : null,
       createdAt: row.createdAt.toISOString(),
+    };
+  }
+
+  private toContact(row: {
+    id: string;
+    customerId: string | null;
+    name: string;
+    phone: string | null;
+    email: string | null;
+    position: string | null;
+    isPrimary: boolean | null;
+    remark: string | null;
+  }): CustomerContact {
+    return {
+      id: row.id,
+      customerId: row.customerId ?? '',
+      name: row.name,
+      phone: row.phone,
+      email: row.email,
+      position: row.position,
+      isPrimary: row.isPrimary ?? false,
+      remark: row.remark,
     };
   }
 
@@ -177,7 +200,7 @@ export class MasterDataService {
   }
 
   async listContacts(customerId: string): Promise<CustomerContact[]> {
-    return this.db
+    const rows = await this.db
       .select({
         id: crmContact.id,
         customerId: crmContact.customerId,
@@ -191,6 +214,7 @@ export class MasterDataService {
       .from(crmContact)
       .where(eq(crmContact.customerId, customerId))
       .orderBy(desc(crmContact.isPrimary));
+    return rows.map((row) => this.toContact(row));
   }
 
   async createContact(customerId: string, dto: CreateContactDto): Promise<CustomerContact> {
@@ -226,7 +250,7 @@ export class MasterDataService {
         isPrimary: crmContact.isPrimary,
         remark: crmContact.remark,
       });
-    return rows[0];
+    return this.toContact(rows[0]);
   }
 
   async updateContact(id: string, dto: CreateContactDto): Promise<CustomerContact> {
@@ -235,13 +259,14 @@ export class MasterDataService {
       .from(crmContact)
       .where(eq(crmContact.id, id));
     if (existing.length === 0) throw new NotFoundException('联系人不存在');
-    if (dto.isPrimary === true) {
+    const existingCustomerId = existing[0].customerId;
+    if (dto.isPrimary === true && existingCustomerId) {
       await this.db
         .update(crmContact)
         .set({ isPrimary: false, updatedAt: new Date() })
         .where(
           and(
-            eq(crmContact.customerId, existing[0].customerId),
+            eq(crmContact.customerId, existingCustomerId),
             ne(crmContact.id, id)
           )
         );
@@ -267,7 +292,7 @@ export class MasterDataService {
         isPrimary: crmContact.isPrimary,
         remark: crmContact.remark,
       });
-    return rows[0];
+    return this.toContact(rows[0]);
   }
 
   async deleteContact(id: string): Promise<void> {
@@ -299,7 +324,7 @@ export class MasterDataService {
       .where(eq(erpAr.customerId, customerId));
     let openArAmount = 0;
     let overdueAmount = 0;
-    const today = new Date().toISOString().slice(0, 10);
+    const today = todayInShanghai();
     for (const row of arRows) {
       if (row.status === 'settled') continue;
       const open = Number(row.amount) - Number(row.settledAmount ?? 0);

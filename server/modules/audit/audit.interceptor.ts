@@ -13,6 +13,7 @@ import {
 import type { Observable } from 'rxjs';
 import { tap } from 'rxjs/operators';
 import { compAuditLog } from '@server/database/schema';
+import { redactValue } from './audit-redact';
 
 const ACTION_MAP: Record<string, string> = {
   POST: 'create',
@@ -56,7 +57,7 @@ export class AuditInterceptor implements NestInterceptor {
         const detail = JSON.stringify({
           method: request.method,
           path,
-          body: request.body,
+          body: redactValue(request.body),
         });
         void this.db
           .insert(compAuditLog)

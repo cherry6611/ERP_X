@@ -8,7 +8,7 @@ import {
   Post,
   Query,
 } from '@nestjs/common';
-import { CanRole, NeedLogin } from '@server/platform';
+import { CanCapability, NeedLogin } from '@server/platform';
 import {
   IsDateString,
   IsIn,
@@ -126,7 +126,7 @@ export class AssetController {
     });
   }
 
-  @CanRole(['admin'])
+  @CanCapability('pur_asset')
   @Post('assets')
   async createAsset(@Body() dto: CreateAssetDto): Promise<AssetItem> {
     return this.assetService.createAsset(dto);
@@ -152,7 +152,7 @@ export class AssetController {
     return this.assetService.createChange(dto);
   }
 
-  @CanRole(['admin'])
+  @CanCapability('pur_asset')
   @Post('changes/:id/actions/:action')
   async changeAction(
     @Param('id', ParseUUIDPipe) id: string,
@@ -179,7 +179,7 @@ export class AssetController {
     });
   }
 
-  @CanRole(['admin'])
+  @CanCapability('pur_asset')
   @Post('depreciate')
   async depreciate(
     @Body() dto: DepreciatePeriodDto

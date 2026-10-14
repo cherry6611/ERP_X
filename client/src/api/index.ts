@@ -24,6 +24,9 @@ export * as feishuSyncApi from './feishu-sync';
 export * as adminApi from './admin';
 export * as semanticApi from './semantic';
 export * as feishuDriveApi from './feishu-drive';
+export * as identityApi from './identity';
+export * as settingsApi from './settings';
+export * as financeReportsApi from './finance-reports';
 
 // Add more API functions here, use axios instance (`axiosForBackend`) to make requests.
 // 

@@ -7,6 +7,7 @@ import type {
   CreateQuotationDto,
   Lead,
   Opportunity,
+  OpportunityDetail,
   ParsedQuotationDraft,
   Quotation,
   QuotationListParams,
@@ -47,6 +48,13 @@ export async function listOpportunities(stage?: string): Promise<Opportunity[]> 
   return resp.data;
 }
 
+export async function getOpportunity(id: string): Promise<OpportunityDetail> {
+  const resp = await axiosForBackend.get<OpportunityDetail>(
+    `/api/crm/opportunities/${id}`,
+  );
+  return resp.data;
+}
+
 export async function createOpportunity(dto: CreateOpportunityDto): Promise<Opportunity> {
   const resp = await axiosForBackend.post<Opportunity>('/api/crm/opportunities', dto);
   ensureNotForbidden(resp);
@@ -78,6 +86,45 @@ export async function parseQuotationDoc(docUrl: string): Promise<ParsedQuotation
   const resp = await axiosForBackend.post<ParsedQuotationDraft>(
     '/api/crm/quotations/parse-doc',
     { docUrl },
+  );
+  ensureNotForbidden(resp);
+  return resp.data;
+}
+
+export async function parseQuotationFile(file: File): Promise<ParsedQuotationDraft> {
+  const form = new FormData();
+  form.append('file', file);
+  const resp = await axiosForBackend.post<ParsedQuotationDraft>(
+    '/api/crm/quotations/parse-file',
+    form,
+  );
+  ensureNotForbidden(resp);
+  return resp.data;
+}
+
+export async function getFeishuBitableMeta(): Promise<{
+  configured: boolean;
+  appToken?: string;
+  tableId?: string;
+  fieldMap: Record<string, string>;
+}> {
+  const resp = await axiosForBackend.get('/api/crm/quotations/feishu-bitable/meta');
+  return resp.data;
+}
+
+export async function listFeishuBitableRecords(): Promise<{
+  records: Array<{ recordId: string; fields: Record<string, unknown> }>;
+}> {
+  const resp = await axiosForBackend.get('/api/crm/quotations/feishu-bitable/records');
+  return resp.data;
+}
+
+export async function previewFeishuBitable(
+  recordIds: string[],
+): Promise<ParsedQuotationDraft> {
+  const resp = await axiosForBackend.post<ParsedQuotationDraft>(
+    '/api/crm/quotations/feishu-bitable/preview',
+    { recordIds },
   );
   ensureNotForbidden(resp);
   return resp.data;

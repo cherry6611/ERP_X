@@ -163,6 +163,8 @@ export const crmQuotation = pgTable("crm_quotation", {
   code: varchar("code", { length: 20 }).notNull().unique(),
   customerId: uuid("customer_id").notNull(),
   opportunityId: uuid("opportunity_id"),
+  /** 同一商机下的报价轮次（1 起），无商机时可为 null */
+  roundNo: integer("round_no"),
   title: varchar("title", { length: 200 }).notNull(),
   quoteDate: date("quote_date"),
   validUntil: date("valid_until"),
@@ -422,6 +424,9 @@ export const compAttachment = pgTable("comp_attachment", {
   fileUrl: text("file_url").notNull(),
   fileSize: bigint("file_size", { mode: 'number' }).notNull().default(0),
   sourceType: varchar("source_type", { length: 20 }).notNull().default('upload'),
+  feishuToken: varchar("feishu_token", { length: 255 }),
+  feishuDocType: varchar("feishu_doc_type", { length: 50 }),
+  feishuUrl: text("feishu_url"),
   // System field: Creation time (auto-filled, do not modify)
   createdAt: customTimestamptz("_created_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
   // System field: Creator (auto-filled, do not modify)
@@ -555,6 +560,12 @@ export const astAsset = pgTable("ast_asset", {
   purchaseDate: date("purchase_date"),
   usefulMonths: integer("useful_months").default(36),
   status: varchar("status", { length: 20 }).default('in_use'),
+  /** D-08：累计已计提减值金额（NULL 表示未计提过减值） */
+  impairmentAmount: numeric("impairment_amount"),
+  /** D-08：最近一次减值测试日 */
+  impairmentDate: date("impairment_date"),
+  /** D-08：减值后净值（账面价值 − 已计提减值） */
+  netValueAfter: numeric("net_value_after"),
   remark: text("remark"),
   // System field: Creation time (auto-filled, do not modify)
   createdAt: customTimestamptz("_created_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
@@ -571,6 +582,82 @@ export const astAsset = pgTable("ast_asset", {
   index("idx_ast_asset_status").on(table.status),
   index("idx_ast_asset_category").on(table.category),
   index("idx_ast_asset_project").on(table.projectId),
+  // D-08：采购订单 → 资产卡片一对一，防重复建卡
+  uniqueIndex("uq_ast_asset_purchase_order")
+    .on(table.purchaseOrderId)
+    .where(sql`${table.purchaseOrderId} IS NOT NULL`),
+]);
+
+/** D-08：资产减值测试记录（减值损失走 6701 资产减值损失） */
+export const astImpairment = pgTable("ast_impairment", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  code: varchar("code", { length: 20 }).notNull().unique(),
+  assetId: uuid("asset_id").notNull(),
+  testDate: date("test_date").notNull(),
+  period: varchar("period", { length: 7 }),
+  bookValue: numeric("book_value").notNull().default('0'),
+  recoverableAmount: numeric("recoverable_amount").notNull().default('0'),
+  impairmentLoss: numeric("impairment_loss").notNull().default('0'),
+  method: varchar("method", { length: 30 }).notNull().default('recoverable_vs_book'),
+  voucherRef: varchar("voucher_ref", { length: 100 }),
+  remark: text("remark"),
+  // System field: Creation time (auto-filled, do not modify)
+  createdAt: customTimestamptz("_created_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
+  // System field: Creator (auto-filled, do not modify)
+  createdBy: userProfile("_created_by").default(sql`CASE
+    WHEN (current_setting('app.user_id'::text, true) = ''::text) THEN NULL`),
+  // System field: Update time (auto-filled, do not modify)
+  updatedAt: customTimestamptz("_updated_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
+  // System field: Updater (auto-filled, do not modify)
+  updatedBy: userProfile("_updated_by").default(sql`CASE
+    WHEN (current_setting('app.user_id'::text, true) = ''::text) THEN NULL`),
+}, (table) => [
+  uniqueIndex("uq_ast_impairment_code").on(table.code),
+  index("idx_ast_impairment_asset").on(table.assetId),
+  index("idx_ast_impairment_period").on(table.period),
+  check("chk_ast_impairment_loss", sql`${table.impairmentLoss} >= 0`),
+]);
+
+/** D-08：资产处置/报废单（状态机 disposing → disposed | scrapped，rejected 为驳回） */
+export const astDisposal = pgTable("ast_disposal", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  code: varchar("code", { length: 20 }).notNull().unique(),
+  assetId: uuid("asset_id").notNull(),
+  disposalType: varchar("disposal_type", { length: 20 }).notNull().default('scrap'),
+  status: varchar("status", { length: 20 }).notNull().default('disposing'),
+  applyDate: date("apply_date").notNull(),
+  disposeDate: date("dispose_date"),
+  originalValue: numeric("original_value").notNull().default('0'),
+  accumulatedDepreciation: numeric("accumulated_depreciation").notNull().default('0'),
+  netValue: numeric("net_value").notNull().default('0'),
+  disposalIncome: numeric("disposal_income").notNull().default('0'),
+  taxRate: numeric("tax_rate"),
+  taxAmount: numeric("tax_amount").notNull().default('0'),
+  gainLoss: numeric("gain_loss").notNull().default('0'),
+  voucherRef: varchar("voucher_ref", { length: 100 }),
+  reason: varchar("reason", { length: 500 }),
+  remark: text("remark"),
+  approvedBy: varchar("approved_by", { length: 64 }),
+  // System field: Creation time (auto-filled, do not modify)
+  createdAt: customTimestamptz("_created_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
+  // System field: Creator (auto-filled, do not modify)
+  createdBy: userProfile("_created_by").default(sql`CASE
+    WHEN (current_setting('app.user_id'::text, true) = ''::text) THEN NULL`),
+  // System field: Update time (auto-filled, do not modify)
+  updatedAt: customTimestamptz("_updated_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
+  // System field: Updater (auto-filled, do not modify)
+  updatedBy: userProfile("_updated_by").default(sql`CASE
+    WHEN (current_setting('app.user_id'::text, true) = ''::text) THEN NULL`),
+}, (table) => [
+  uniqueIndex("uq_ast_disposal_code").on(table.code),
+  index("idx_ast_disposal_asset").on(table.assetId),
+  index("idx_ast_disposal_status").on(table.status),
+  uniqueIndex("uq_ast_disposal_active")
+    .on(table.assetId)
+    .where(sql`${table.status} = 'disposing'`),
+  uniqueIndex("uq_ast_disposal_voucher_ref")
+    .on(table.voucherRef)
+    .where(sql`${table.voucherRef} IS NOT NULL`),
 ]);
 
 export const purOrder = pgTable("pur_order", {
@@ -639,10 +726,96 @@ export const purRequest = pgTable("pur_request", {
   index("idx_pur_request_project").on(table.projectId),
 ]);
 
+/**
+ * C-05：采购退货单。
+ * 原单口径：pur_order 为单行订单（无明细表），验收数量累计在 accepted_quantity；
+ * 退货头表冗余原单号与数量快照，明细表 pur_return_item 承载按物料行退货的扩展能力。
+ */
+export const purReturn = pgTable("pur_return", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  code: varchar("code", { length: 20 }).notNull().unique(),
+  orderId: uuid("order_id").notNull(),
+  orderCode: varchar("order_code", { length: 20 }),
+  supplierId: uuid("supplier_id"),
+  projectId: uuid("project_id"),
+  returnDate: date("return_date").notNull(),
+  returnQuantity: integer("return_quantity").notNull().default(0),
+  amount: numeric("amount").notNull().default('0'),
+  taxRate: numeric("tax_rate"),
+  netAmount: numeric("net_amount").notNull().default('0'),
+  taxAmount: numeric("tax_amount").notNull().default('0'),
+  apBillId: uuid("ap_bill_id"),
+  redInvoiceId: uuid("red_invoice_id"),
+  status: varchar("status", { length: 20 }).notNull().default('draft'),
+  reason: varchar("reason", { length: 500 }),
+  remark: text("remark"),
+  submittedAt: customTimestamptz("submitted_at", { precision: 3 }),
+  approvedAt: customTimestamptz("approved_at", { precision: 3 }),
+  completedAt: customTimestamptz("completed_at", { precision: 3 }),
+  voucherRef: varchar("voucher_ref", { length: 100 }),
+  createdByUser: varchar("created_by_user", { length: 64 }),
+  approvedBy: varchar("approved_by", { length: 64 }),
+  // System field: Creation time (auto-filled, do not modify)
+  createdAt: customTimestamptz("_created_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
+  // System field: Creator (auto-filled, do not modify)
+  createdBy: userProfile("_created_by").default(sql`CASE
+    WHEN (current_setting('app.user_id'::text, true) = ''::text) THEN NULL
+    ELSE ROW(current_setting('app.user_id'::text, true), '')::user_profile END`),
+  // System field: Update time (auto-filled, do not modify)
+  updatedAt: customTimestamptz("_updated_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
+  // System field: Updater (auto-filled, do not modify)
+  updatedBy: userProfile("_updated_by").default(sql`CASE
+    WHEN (current_setting('app.user_id'::text, true) = ''::text) THEN NULL
+    ELSE ROW(current_setting('app.user_id'::text, true), '')::user_profile END`),
+}, (table) => [
+  uniqueIndex("uq_pur_return_code").on(table.code),
+  index("idx_pur_return_order").on(table.orderId),
+  index("idx_pur_return_status").on(table.status),
+  uniqueIndex("uq_pur_return_ap_bill")
+    .on(table.apBillId)
+    .where(sql`${table.apBillId} IS NOT NULL AND ${table.status} <> 'void'`),
+  uniqueIndex("uq_pur_return_voucher_ref")
+    .on(table.voucherRef)
+    .where(sql`${table.voucherRef} IS NOT NULL`),
+  check("chk_pur_return_status", sql`${table.status} IN ('draft', 'submitted', 'approved', 'completed', 'void')`),
+  check("chk_pur_return_quantity", sql`${table.returnQuantity} > 0`),
+]);
+
+export const purReturnItem = pgTable("pur_return_item", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  returnId: uuid("return_id").notNull(),
+  orderId: uuid("order_id"),
+  itemName: varchar("item_name", { length: 200 }).notNull(),
+  quantity: integer("quantity").notNull().default(0),
+  unitPrice: numeric("unit_price").notNull().default('0'),
+  amount: numeric("amount").notNull().default('0'),
+  taxRate: numeric("tax_rate"),
+  netAmount: numeric("net_amount").notNull().default('0'),
+  taxAmount: numeric("tax_amount").notNull().default('0'),
+  remark: text("remark"),
+  seq: integer("seq").notNull().default(1),
+  // System field: Creation time (auto-filled, do not modify)
+  createdAt: customTimestamptz("_created_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
+  // System field: Creator (auto-filled, do not modify)
+  createdBy: userProfile("_created_by").default(sql`CASE
+    WHEN (current_setting('app.user_id'::text, true) = ''::text) THEN NULL`),
+  // System field: Update time (auto-filled, do not modify)
+  updatedAt: customTimestamptz("_updated_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
+  // System field: Updater (auto-filled, do not modify)
+  updatedBy: userProfile("_updated_by").default(sql`CASE
+    WHEN (current_setting('app.user_id'::text, true) = ''::text) THEN NULL`),
+}, (table) => [
+  index("idx_pur_return_item_return").on(table.returnId),
+  index("idx_pur_return_item_order").on(table.orderId),
+  check("chk_pur_return_item_quantity", sql`${table.quantity} > 0`),
+]);
+
 export const finVoucherLine = pgTable("fin_voucher_line", {
   id: uuid("id").primaryKey().defaultRandom(),
   voucherId: uuid("voucher_id"),
   accountId: uuid("account_id"),
+  /** A-10/A-03：冗余科目编码，避免账簿查询每次都 join fin_account */
+  accountCode: varchar("account_code", { length: 20 }),
   summary: varchar("summary", { length: 200 }),
   debit: numeric("debit").default('0'),
   credit: numeric("credit").default('0'),
@@ -659,6 +832,38 @@ export const finVoucherLine = pgTable("fin_voucher_line", {
 }, (table) => [
   index("idx_fin_voucher_line_voucher").on(table.voucherId),
   index("idx_fin_voucher_line_account").on(table.accountId),
+  index("idx_fin_voucher_line_account_voucher").on(table.accountCode, table.voucherId),
+  index("idx_fin_voucher_line_account_id_voucher").on(table.accountId, table.voucherId),
+]);
+
+/** A-05：会计辅助核算维度定义 */
+export const finAuxDimension = pgTable("fin_aux_dimension", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  code: varchar("code", { length: 32 }).notNull(),
+  name: varchar("name", { length: 64 }).notNull(),
+  sourceType: varchar("source_type", { length: 20 }).notNull().default('custom'),
+  enabled: integer("enabled").notNull().default(1),
+  sortNo: integer("sort_no").notNull().default(0),
+  remark: varchar("remark", { length: 200 }),
+  createdAt: customTimestamptz("_created_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
+  updatedAt: customTimestamptz("_updated_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
+}, (table) => [
+  uniqueIndex("uq_fin_aux_dimension_code").on(table.code),
+]);
+
+/** A-05：凭证行 × 辅助维度 × 值 */
+export const finVoucherLineAux = pgTable("fin_voucher_line_aux", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  lineId: uuid("line_id").notNull(),
+  voucherId: uuid("voucher_id"),
+  dimensionCode: varchar("dimension_code", { length: 32 }).notNull(),
+  dimensionId: uuid("dimension_id"),
+  dimensionValue: varchar("dimension_value", { length: 200 }),
+  createdAt: customTimestamptz("_created_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
+}, (table) => [
+  index("idx_fin_voucher_line_aux_line").on(table.lineId),
+  index("idx_fin_voucher_line_aux_voucher").on(table.voucherId),
+  index("idx_fin_voucher_line_aux_dim").on(table.dimensionCode, table.dimensionId),
 ]);
 
 export const finVoucher = pgTable("fin_voucher", {
@@ -670,6 +875,9 @@ export const finVoucher = pgTable("fin_voucher", {
   sourceType: varchar("source_type", { length: 20 }),
   sourceRef: varchar("source_ref", { length: 100 }),
   status: varchar("status", { length: 20 }).default('draft'),
+  crossPeriod: integer("cross_period").notNull().default(0),
+  crossPeriodReason: varchar("cross_period_reason", { length: 500 }),
+  crossPeriodApprover: varchar("cross_period_approver", { length: 64 }),
   remark: text("remark"),
   // System field: Creation time (auto-filled, do not modify)
   createdAt: customTimestamptz("_created_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
@@ -699,6 +907,17 @@ export const finAccount = pgTable("fin_account", {
   name: varchar("name", { length: 100 }).notNull(),
   accountType: varchar("account_type", { length: 20 }).default('asset'),
   status: varchar("status", { length: 20 }).default('active'),
+  /** A-10：上级科目编码（一级科目为 NULL） */
+  parentCode: varchar("parent_code", { length: 20 }),
+  /** A-10：科目层级，1 为一级 */
+  level: integer("level").notNull().default(1),
+  /** A-10：是否末级科目（1 可做账，0 仅汇总） */
+  isLeaf: integer("is_leaf").notNull().default(1),
+  /** A-10：余额方向 debit | credit */
+  direction: varchar("direction", { length: 10 }).notNull().default('debit'),
+  /** A-05：必填辅助核算维度集合，JSON 数组字符串 */
+  auxRequired: varchar("aux_required", { length: 200 }).notNull().default('[]'),
+  sortNo: integer("sort_no").notNull().default(0),
   remark: text("remark"),
   // System field: Creation time (auto-filled, do not modify)
   createdAt: customTimestamptz("_created_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
@@ -712,6 +931,106 @@ export const finAccount = pgTable("fin_account", {
     WHEN (current_setting('app.user_id'::text, true) = ''::text) THEN NULL`),
 }, (table) => [
   uniqueIndex("fin_account_code_key").on(table.code),
+  index("idx_fin_account_parent").on(table.parentCode),
+  index("idx_fin_account_level").on(table.level),
+  index("idx_fin_account_leaf").on(table.isLeaf),
+  check("chk_fin_account_direction", sql`${table.direction} IN ('debit', 'credit')`),
+  check("chk_fin_account_level", sql`${table.level} >= 1 AND ${table.level} <= 6`),
+]);
+
+/** A-03：月度科目余额快照（避免报表全量重算） */
+export const finAccountBalanceSnapshot = pgTable("fin_account_balance_snapshot", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  period: varchar("period", { length: 7 }).notNull(),
+  taxEntityId: uuid("tax_entity_id"),
+  accountCode: varchar("account_code", { length: 20 }).notNull(),
+  accountName: varchar("account_name", { length: 100 }),
+  openingDebit: numeric("opening_debit").notNull().default('0'),
+  openingCredit: numeric("opening_credit").notNull().default('0'),
+  debitOccur: numeric("debit_occur").notNull().default('0'),
+  creditOccur: numeric("credit_occur").notNull().default('0'),
+  closingDebit: numeric("closing_debit").notNull().default('0'),
+  closingCredit: numeric("closing_credit").notNull().default('0'),
+  voucherCount: integer("voucher_count").notNull().default(0),
+  generatedAt: customTimestamptz("generated_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
+}, (table) => [
+  index("idx_fin_account_balance_snapshot_period").on(table.period),
+]);
+
+/** A-01/A-02：法定财务报表模板（行次 + 取数公式） */
+export const finReportTemplate = pgTable("fin_report_template", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  reportCode: varchar("report_code", { length: 32 }).notNull(),
+  rowNo: varchar("row_no", { length: 16 }).notNull(),
+  rowName: varchar("row_name", { length: 120 }).notNull(),
+  formula: varchar("formula", { length: 500 }).notNull().default(''),
+  /** 分区：assets/liabilities/equity/revenue/... */
+  section: varchar("section", { length: 32 }).notNull().default('default'),
+  indent: integer("indent").notNull().default(0),
+  bold: integer("bold").notNull().default(0),
+  sortNo: integer("sort_no").notNull().default(0),
+  enabled: integer("enabled").notNull().default(1),
+  remark: varchar("remark", { length: 200 }),
+  createdAt: customTimestamptz("_created_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
+  updatedAt: customTimestamptz("_updated_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
+}, (table) => [
+  uniqueIndex("uq_fin_report_template_row").on(table.reportCode, table.rowNo),
+  index("idx_fin_report_template_code").on(table.reportCode, table.sortNo),
+]);
+
+/** A-04：年结状态 */
+export const finYearEndClose = pgTable("fin_year_end_close", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  fiscalYear: integer("fiscal_year").notNull(),
+  period: varchar("period", { length: 7 }).notNull(),
+  taxEntityId: uuid("tax_entity_id"),
+  status: varchar("status", { length: 20 }).notNull().default('closed'),
+  profitAmount: numeric("profit_amount").notNull().default('0'),
+  carryVoucherId: uuid("carry_voucher_id"),
+  closedAt: customTimestamptz("closed_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
+  closedBy: varchar("closed_by", { length: 64 }),
+  reopenedAt: customTimestamptz("reopened_at", { precision: 3 }),
+  reopenedBy: varchar("reopened_by", { length: 64 }),
+  remark: varchar("remark", { length: 500 }),
+}, (table) => [
+  index("idx_fin_year_end_close_period").on(table.period),
+]);
+
+/** A-04：年结 / 反年结审计留痕 */
+export const finYearEndLog = pgTable("fin_year_end_log", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  fiscalYear: integer("fiscal_year").notNull(),
+  action: varchar("action", { length: 20 }).notNull(),
+  actorUserId: varchar("actor_user_id", { length: 64 }),
+  reason: varchar("reason", { length: 500 }),
+  snapshot: text("snapshot"),
+  createdAt: customTimestamptz("_created_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
+}, (table) => [
+  index("idx_fin_year_end_log_year").on(table.fiscalYear, table.createdAt),
+]);
+
+/** A-06：增值税申报底稿 */
+export const finVatDeclaration = pgTable("fin_vat_declaration", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  period: varchar("period", { length: 7 }).notNull(),
+  taxEntityId: uuid("tax_entity_id"),
+  status: varchar("status", { length: 20 }).notNull().default('draft'),
+  outputTax: numeric("output_tax").notNull().default('0'),
+  inputTax: numeric("input_tax").notNull().default('0'),
+  transferOut: numeric("transfer_out").notNull().default('0'),
+  previousCredit: numeric("previous_credit").notNull().default('0'),
+  payableTax: numeric("payable_tax").notNull().default('0'),
+  closingCredit: numeric("closing_credit").notNull().default('0'),
+  /** 总账口径（222101 / 222102 发生额），用于勾稽留痕 */
+  ledgerOutputTax: numeric("ledger_output_tax").notNull().default('0'),
+  ledgerInputTax: numeric("ledger_input_tax").notNull().default('0'),
+  differenceReason: varchar("difference_reason", { length: 500 }),
+  generatedBy: varchar("generated_by", { length: 64 }),
+  generatedAt: customTimestamptz("generated_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
+}, (table) => [
+  index("idx_fin_vat_declaration_period").on(table.period),
+  // 唯一性由 SQL 迁移的 `uq_fin_vat_declaration_period_entity (period, tax_entity_id) NULLS NOT DISTINCT` 保证，
+  // drizzle 0.44 的 IndexBuilder 尚不支持 nullsNotDistinct，故此处不重复声明，避免 push 时误删。
 ]);
 
 export const finExpenseClaim = pgTable("fin_expense_claim", {
@@ -926,6 +1245,19 @@ export const hrPayroll = pgTable("hr_payroll", {
   status: varchar("status", { length: 20 }).default('draft'),
   remark: text("remark"),
   allocationGenerated: boolean("allocation_generated").default(false),
+  manualOverride: integer("manual_override").notNull().default(0),
+  engineSnapshot: text("engine_snapshot"),
+  // A-07：个税累计预扣预缴口径字段（便于逐月递推与审计复核）
+  ytdIncome: numeric("ytd_income").notNull().default('0'),
+  ytdTaxFreeIncome: numeric("ytd_tax_free_income").notNull().default('0'),
+  ytdBasicDeduction: numeric("ytd_basic_deduction").notNull().default('0'),
+  ytdDeduction: numeric("ytd_deduction").notNull().default('0'),
+  ytdAdditionalDeduction: numeric("ytd_additional_deduction").notNull().default('0'),
+  ytdTaxWithheld: numeric("ytd_tax_withheld").notNull().default('0'),
+  ytdTaxableIncome: numeric("ytd_taxable_income").notNull().default('0'),
+  taxRate: numeric("tax_rate"),
+  quickDeduction: numeric("quick_deduction"),
+  ytdNet: numeric("ytd_net").notNull().default('0'),
   // System field: Creation time (auto-filled, do not modify)
   createdAt: customTimestamptz("_created_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
   // System field: Creator (auto-filled, do not modify)
@@ -940,6 +1272,27 @@ export const hrPayroll = pgTable("hr_payroll", {
   uniqueIndex("uq_hr_payroll_code").on(table.code),
   uniqueIndex("uq_hr_payroll_emp_period").on(table.employeeId, table.period),
   index("idx_hr_payroll_period").on(table.period),
+]);
+
+/** A-07：员工专项附加扣除（员工 × 年度 × 类型，按月定额） */
+export const hrEmployeeTaxDeduction = pgTable("hr_employee_tax_deduction", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  employeeId: uuid("employee_id").notNull(),
+  taxYear: integer("tax_year").notNull(),
+  deductionType: varchar("deduction_type", { length: 32 }).notNull(),
+  monthlyAmount: numeric("monthly_amount").notNull().default('0'),
+  startMonth: integer("start_month").notNull().default(1),
+  endMonth: integer("end_month"),
+  remark: varchar("remark", { length: 200 }),
+  createdAt: customTimestamptz("_created_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
+  updatedAt: customTimestamptz("_updated_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
+}, (table) => [
+  uniqueIndex("uq_hr_emp_tax_deduction").on(
+    table.employeeId,
+    table.taxYear,
+    table.deductionType
+  ),
+  index("idx_hr_emp_tax_deduction_year").on(table.taxYear, table.employeeId),
 ]);
 
 export const hrLeaveRequest = pgTable("hr_leave_request", {
@@ -1099,7 +1452,11 @@ export const erpInvoice = pgTable("erp_invoice", {
   remark: text("remark"),
   direction: varchar("direction", { length: 20 }).notNull().default('sales'),
   arId: uuid("ar_id"),
+  /** 进项发票勾稽应付（F8） */
+  apId: uuid("ap_id"),
   supplierId: uuid("supplier_id"),
+  /** C-05：红字发票与来源单据的关联键（如 `sales-return:SRT2026100001`） */
+  sourceRef: varchar("source_ref", { length: 100 }),
   // System field: Creation time (auto-filled, do not modify)
   createdAt: customTimestamptz("_created_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
   // System field: Creator (auto-filled, do not modify)
@@ -1114,6 +1471,8 @@ export const erpInvoice = pgTable("erp_invoice", {
   uniqueIndex("uq_erp_invoice_code").on(table.code),
   index("idx_erp_invoice_contract").on(table.contractId),
   index("idx_erp_invoice_project").on(table.projectId),
+  index("idx_erp_invoice_ap").on(table.apId),
+  index("idx_erp_invoice_source_ref").on(table.sourceRef),
   // T8：发票税率法定档位（与迁移 chk_invoice_tax_rate 一致）
   check("chk_invoice_tax_rate", sql`${table.taxRate} IS NULL OR ${table.taxRate} IN (0, 1, 3, 6, 9, 13)`),
 ]);
@@ -1124,6 +1483,8 @@ export const erpApWriteoff = pgTable("erp_ap_writeoff", {
   paymentId: uuid("payment_id"),
   amount: numeric("amount").default('0'),
   writeoffDate: date("writeoff_date"),
+  reversalOf: uuid("reversal_of"),
+  remark: varchar("remark", { length: 500 }),
   // System field: Creation time (auto-filled, do not modify)
   createdAt: customTimestamptz("_created_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
   // System field: Creator (auto-filled, do not modify)
@@ -1136,6 +1497,9 @@ export const erpApWriteoff = pgTable("erp_ap_writeoff", {
     WHEN (current_setting('app.user_id'::text, true) = ''::text) THEN NULL`),
 }, (table) => [
   index("idx_erp_ap_writeoff_ap").on(table.apId),
+  uniqueIndex("uq_erp_ap_writeoff_reversal")
+    .on(table.reversalOf)
+    .where(sql`${table.reversalOf} IS NOT NULL`),
 ]);
 
 export const erpPayment = pgTable("erp_payment", {
@@ -1144,6 +1508,8 @@ export const erpPayment = pgTable("erp_payment", {
   apId: uuid("ap_id"),
   supplierId: uuid("supplier_id"),
   amount: numeric("amount").default('0'),
+  /** F4X-4：已核销金额冗余列，条件更新防并发超额 */
+  usedAmount: numeric("used_amount").notNull().default('0'),
   payDate: date("pay_date"),
   method: varchar("method", { length: 20 }).default('bank'),
   status: varchar("status", { length: 20 }).default('pending'),
@@ -1189,6 +1555,9 @@ export const erpApBill = pgTable("erp_ap_bill", {
 }, (table) => [
   uniqueIndex("uq_erp_ap_bill_code").on(table.code),
   index("idx_erp_ap_bill_supplier").on(table.supplierId),
+  uniqueIndex("uq_erp_ap_bill_source_ref")
+    .on(table.sourceRef)
+    .where(sql`${table.sourceRef} IS NOT NULL`),
 ]);
 
 export const erpArWriteoff = pgTable("erp_ar_writeoff", {
@@ -1197,6 +1566,9 @@ export const erpArWriteoff = pgTable("erp_ar_writeoff", {
   receiptId: uuid("receipt_id"),
   amount: numeric("amount").default('0'),
   writeoffDate: date("writeoff_date"),
+  /** 冲回原核销行（红字核销） */
+  reversalOf: uuid("reversal_of"),
+  remark: varchar("remark", { length: 500 }),
   // System field: Creation time (auto-filled, do not modify)
   createdAt: customTimestamptz("_created_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
   // System field: Creator (auto-filled, do not modify)
@@ -1210,6 +1582,9 @@ export const erpArWriteoff = pgTable("erp_ar_writeoff", {
 }, (table) => [
   index("idx_erp_ar_writeoff_ar").on(table.arId),
   index("idx_erp_ar_writeoff_receipt").on(table.receiptId),
+  uniqueIndex("uq_erp_ar_writeoff_reversal")
+    .on(table.reversalOf)
+    .where(sql`${table.reversalOf} IS NOT NULL`),
 ]);
 
 export const erpReceipt = pgTable("erp_receipt", {
@@ -1217,6 +1592,8 @@ export const erpReceipt = pgTable("erp_receipt", {
   code: varchar("code", { length: 20 }).notNull().unique(),
   customerId: uuid("customer_id"),
   amount: numeric("amount").default('0'),
+  /** F4X-3：已核销金额冗余列，条件更新防并发超额 */
+  usedAmount: numeric("used_amount").notNull().default('0'),
   receiptDate: date("receipt_date"),
   method: varchar("method", { length: 20 }).default('bank'),
   source: varchar("source", { length: 100 }),
@@ -1248,6 +1625,8 @@ export const erpAr = pgTable("erp_ar", {
   dueDate: date("due_date"),
   status: varchar("status", { length: 20 }).default('open'),
   source: varchar("source", { length: 20 }).default('manual'),
+  /** D-19：收入确认等幂等键 */
+  sourceRef: varchar("source_ref", { length: 100 }),
   remark: text("remark"),
   ownerUserId: varchar("owner_user_id", { length: 50 }),
   // System field: Creation time (auto-filled, do not modify)
@@ -1264,6 +1643,9 @@ export const erpAr = pgTable("erp_ar", {
   uniqueIndex("uq_erp_ar_code").on(table.code),
   index("idx_erp_ar_customer").on(table.customerId),
   index("idx_erp_ar_contract").on(table.contractId),
+  uniqueIndex("uq_erp_ar_source_ref")
+    .on(table.sourceRef)
+    .where(sql`${table.sourceRef} IS NOT NULL`),
 ]);
 
 export const erpRevenueAdjust = pgTable("erp_revenue_adjust", {
@@ -1314,6 +1696,188 @@ export const erpProjectRevenue = pgTable("erp_project_revenue", {
   uniqueIndex("uq_erp_project_revenue_code").on(table.code),
   index("idx_erp_project_revenue_project").on(table.projectId),
   index("idx_erp_project_revenue_period").on(table.period),
+]);
+
+/**
+ * C-05：销售退货单。
+ * 原单口径：收入确认（erp_project_revenue）只有金额没有数量，
+ * 因此销售退货按"金额"校验（不得超过原收入已确认金额 − 已退货金额）。
+ */
+export const salesReturn = pgTable("sales_return", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  code: varchar("code", { length: 20 }).notNull().unique(),
+  revenueId: uuid("revenue_id").notNull(),
+  revenueCode: varchar("revenue_code", { length: 20 }),
+  contractId: uuid("contract_id"),
+  customerId: uuid("customer_id"),
+  projectId: uuid("project_id"),
+  returnDate: date("return_date").notNull(),
+  amount: numeric("amount").notNull().default('0'),
+  taxRate: numeric("tax_rate"),
+  netAmount: numeric("net_amount").notNull().default('0'),
+  taxAmount: numeric("tax_amount").notNull().default('0'),
+  redInvoiceId: uuid("red_invoice_id"),
+  revenueAdjustId: uuid("revenue_adjust_id"),
+  status: varchar("status", { length: 20 }).notNull().default('draft'),
+  reason: varchar("reason", { length: 500 }),
+  remark: text("remark"),
+  submittedAt: customTimestamptz("submitted_at", { precision: 3 }),
+  approvedAt: customTimestamptz("approved_at", { precision: 3 }),
+  completedAt: customTimestamptz("completed_at", { precision: 3 }),
+  voucherRef: varchar("voucher_ref", { length: 100 }),
+  createdByUser: varchar("created_by_user", { length: 64 }),
+  approvedBy: varchar("approved_by", { length: 64 }),
+  // System field: Creation time (auto-filled, do not modify)
+  createdAt: customTimestamptz("_created_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
+  // System field: Creator (auto-filled, do not modify)
+  createdBy: userProfile("_created_by").default(sql`CASE
+    WHEN (current_setting('app.user_id'::text, true) = ''::text) THEN NULL`),
+  // System field: Update time (auto-filled, do not modify)
+  updatedAt: customTimestamptz("_updated_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
+  // System field: Updater (auto-filled, do not modify)
+  updatedBy: userProfile("_updated_by").default(sql`CASE
+    WHEN (current_setting('app.user_id'::text, true) = ''::text) THEN NULL`),
+}, (table) => [
+  uniqueIndex("uq_sales_return_code").on(table.code),
+  index("idx_sales_return_revenue").on(table.revenueId),
+  index("idx_sales_return_status").on(table.status),
+  index("idx_sales_return_contract").on(table.contractId),
+  uniqueIndex("uq_sales_return_voucher_ref")
+    .on(table.voucherRef)
+    .where(sql`${table.voucherRef} IS NOT NULL`),
+  check("chk_sales_return_status", sql`${table.status} IN ('draft', 'submitted', 'approved', 'completed', 'void')`),
+  check("chk_sales_return_amount", sql`${table.amount} > 0`),
+]);
+
+export const salesReturnItem = pgTable("sales_return_item", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  returnId: uuid("return_id").notNull(),
+  revenueId: uuid("revenue_id"),
+  itemName: varchar("item_name", { length: 200 }).notNull(),
+  amount: numeric("amount").notNull().default('0'),
+  taxRate: numeric("tax_rate"),
+  netAmount: numeric("net_amount").notNull().default('0'),
+  taxAmount: numeric("tax_amount").notNull().default('0'),
+  remark: text("remark"),
+  seq: integer("seq").notNull().default(1),
+  // System field: Creation time (auto-filled, do not modify)
+  createdAt: customTimestamptz("_created_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
+  // System field: Creator (auto-filled, do not modify)
+  createdBy: userProfile("_created_by").default(sql`CASE
+    WHEN (current_setting('app.user_id'::text, true) = ''::text) THEN NULL`),
+  // System field: Update time (auto-filled, do not modify)
+  updatedAt: customTimestamptz("_updated_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
+  // System field: Updater (auto-filled, do not modify)
+  updatedBy: userProfile("_updated_by").default(sql`CASE
+    WHEN (current_setting('app.user_id'::text, true) = ''::text) THEN NULL`),
+}, (table) => [
+  index("idx_sales_return_item_return").on(table.returnId),
+  check("chk_sales_return_item_amount", sql`${table.amount} > 0`),
+]);
+
+/**
+ * C-04：应收/应付票据（银行承兑 / 商业承兑）。
+ * 状态机：received → held → endorsed | discounted | settled | dishonored。
+ */
+export const erpNote = pgTable("erp_note", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  code: varchar("code", { length: 20 }).notNull().unique(),
+  noteNo: varchar("note_no", { length: 50 }).notNull(),
+  noteType: varchar("note_type", { length: 20 }).notNull(),
+  drawer: varchar("drawer", { length: 200 }),
+  payee: varchar("payee", { length: 200 }),
+  amount: numeric("amount").notNull().default('0'),
+  issueDate: date("issue_date"),
+  dueDate: date("due_date").notNull(),
+  status: varchar("status", { length: 20 }).notNull().default('received'),
+  arId: uuid("ar_id"),
+  apId: uuid("ap_id"),
+  supplierId: uuid("supplier_id"),
+  customerId: uuid("customer_id"),
+  projectId: uuid("project_id"),
+  /** 贴现息 = 票面 × 贴现率 × 剩余天数 / 360（**计息基准需财务确认**） */
+  discountInterest: numeric("discount_interest"),
+  discountRate: numeric("discount_rate"),
+  settledAmount: numeric("settled_amount"),
+  settledDate: date("settled_date"),
+  endorsementCounterparty: varchar("endorsement_counterparty", { length: 200 }),
+  remark: text("remark"),
+  // System field: Creation time (auto-filled, do not modify)
+  createdAt: customTimestamptz("_created_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
+  // System field: Creator (auto-filled, do not modify)
+  createdBy: userProfile("_created_by").default(sql`CASE
+    WHEN (current_setting('app.user_id'::text, true) = ''::text) THEN NULL`),
+  // System field: Update time (auto-filled, do not modify)
+  updatedAt: customTimestamptz("_updated_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
+  // System field: Updater (auto-filled, do not modify)
+  updatedBy: userProfile("_updated_by").default(sql`CASE
+    WHEN (current_setting('app.user_id'::text, true) = ''::text) THEN NULL`),
+}, (table) => [
+  uniqueIndex("uq_erp_note_code").on(table.code),
+  uniqueIndex("uq_erp_note_no").on(table.noteNo),
+  index("idx_erp_note_status").on(table.status),
+  index("idx_erp_note_due_date").on(table.dueDate),
+  index("idx_erp_note_ar").on(table.arId),
+  index("idx_erp_note_ap").on(table.apId),
+  check("chk_erp_note_type", sql`${table.noteType} IN ('bank', 'commercial')`),
+  check("chk_erp_note_status", sql`${table.status} IN ('received', 'held', 'endorsed', 'discounted', 'settled', 'dishonored')`),
+  check("chk_erp_note_amount", sql`${table.amount} > 0`),
+]);
+
+export const erpNoteLog = pgTable("erp_note_log", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  noteId: uuid("note_id").notNull(),
+  action: varchar("action", { length: 20 }).notNull(),
+  fromStatus: varchar("from_status", { length: 20 }),
+  toStatus: varchar("to_status", { length: 20 }).notNull(),
+  amount: numeric("amount"),
+  counterparty: varchar("counterparty", { length: 200 }),
+  voucherRef: varchar("voucher_ref", { length: 100 }),
+  operator: varchar("operator", { length: 64 }),
+  remark: varchar("remark", { length: 500 }),
+  // System field: Creation time (auto-filled, do not modify)
+  createdAt: customTimestamptz("_created_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
+  // System field: Creator (auto-filled, do not modify)
+  createdBy: userProfile("_created_by").default(sql`CASE
+    WHEN (current_setting('app.user_id'::text, true) = ''::text) THEN NULL`),
+  // System field: Update time (auto-filled, do not modify)
+  updatedAt: customTimestamptz("_updated_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
+  // System field: Updater (auto-filled, do not modify)
+  updatedBy: userProfile("_updated_by").default(sql`CASE
+    WHEN (current_setting('app.user_id'::text, true) = ''::text) THEN NULL`),
+}, (table) => [
+  index("idx_erp_note_log_note").on(table.noteId),
+  uniqueIndex("uq_erp_note_log_action")
+    .on(table.noteId, table.action)
+    .where(sql`${table.action} IN ('endorse', 'discount', 'settle', 'dishonor')`),
+]);
+
+/** D-12：BI 指标预警订阅（用户 × 指标 × 渠道唯一） */
+export const biAlertSubscription = pgTable("bi_alert_subscription", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  userId: varchar("user_id", { length: 64 }).notNull(),
+  metricKey: varchar("metric_key", { length: 50 }).notNull(),
+  thresholdDirection: varchar("threshold_direction", { length: 4 }).notNull().default('gt'),
+  threshold: numeric("threshold").notNull().default('0'),
+  channel: varchar("channel", { length: 20 }).notNull().default('feishu'),
+  enabled: integer("enabled").notNull().default(1),
+  lastTriggeredAt: customTimestamptz("last_triggered_at", { precision: 3 }),
+  remark: varchar("remark", { length: 500 }),
+  // System field: Creation time (auto-filled, do not modify)
+  createdAt: customTimestamptz("_created_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
+  // System field: Creator (auto-filled, do not modify)
+  createdBy: userProfile("_created_by").default(sql`CASE
+    WHEN (current_setting('app.user_id'::text, true) = ''::text) THEN NULL`),
+  // System field: Update time (auto-filled, do not modify)
+  updatedAt: customTimestamptz("_updated_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
+  // System field: Updater (auto-filled, do not modify)
+  updatedBy: userProfile("_updated_by").default(sql`CASE
+    WHEN (current_setting('app.user_id'::text, true) = ''::text) THEN NULL`),
+}, (table) => [
+  uniqueIndex("uq_bi_alert_subscription_user_metric").on(table.userId, table.metricKey, table.channel),
+  index("idx_bi_alert_subscription_enabled").on(table.enabled, table.metricKey),
+  check("chk_bi_alert_subscription_direction", sql`${table.thresholdDirection} IN ('gt', 'lt')`),
+  check("chk_bi_alert_subscription_enabled", sql`${table.enabled} IN (0, 1)`),
 ]);
 
 export const erpCostAllocation = pgTable("erp_cost_allocation", {
@@ -1485,7 +2049,11 @@ export const erpProject = pgTable("erp_project", {
   code: varchar("code", { length: 20 }).notNull().unique(),
   name: varchar("name", { length: 200 }).notNull(),
   contractId: uuid("contract_id"),
+  /** 最终成交报价单（来自关联商机的多轮报价） */
+  wonQuotationId: uuid("won_quotation_id"),
   pm: varchar("pm", { length: 50 }),
+  /** 项目经理系统用户 ID（工时确认等授权优先按此字段，避免同名误授权） */
+  pmUserId: varchar("pm_user_id", { length: 64 }),
   deptName: varchar("dept_name", { length: 100 }),
   budget: numeric("budget").default('0'),
   startDate: date("start_date"),
@@ -1512,6 +2080,7 @@ export const erpProject = pgTable("erp_project", {
 }, (table) => [
   uniqueIndex("uq_erp_project_code").on(table.code),
   index("idx_erp_project_contract").on(table.contractId),
+  index("idx_erp_project_won_quotation").on(table.wonQuotationId),
   // 一份合同只能立项一次（SQL 迁移已建，此处补声明防被 push 删除）
   uniqueIndex("uq_erp_project_one_contract")
     .on(table.contractId)
@@ -1692,6 +2261,8 @@ export const crmOpportunity = pgTable("crm_opportunity", {
   expectedDate: date("expected_date"),
   taxRate: numeric("tax_rate"),
   contractId: uuid("contract_id"),
+  /** 最终成交的报价单（一对多报价中选定的一轮） */
+  wonQuotationId: uuid("won_quotation_id"),
   remark: text("remark"),
   // System field: Creation time (auto-filled, do not modify)
   createdAt: customTimestamptz("_created_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
@@ -1706,6 +2277,7 @@ export const crmOpportunity = pgTable("crm_opportunity", {
 }, (table) => [
   uniqueIndex("uq_crm_opportunity_code").on(table.code),
   index("idx_crm_opportunity_customer").on(table.customerId),
+  index("idx_crm_opportunity_won_quotation").on(table.wonQuotationId),
   // 一个商机只能转出一份合同（SQL 迁移已建，此处补声明防被 push 删除）
   uniqueIndex("uq_crm_opp_contract")
     .on(table.contractId)
@@ -1763,6 +2335,10 @@ export const mdEmployee = pgTable("md_employee", {
   syncedAt: customTimestamptz("synced_at", { precision: 3 }),
   platformUserId: userProfile("platform_user_id"),
   supplierId: uuid("supplier_id"),
+  /** 参保城市代码（工资引擎） */
+  ssCityCode: varchar("ss_city_code", { length: 32 }),
+  /** 社保缴费基数覆盖 */
+  ssBase: numeric("ss_base"),
   // System field: Creation time (auto-filled, do not modify)
   createdAt: customTimestamptz("_created_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
   // System field: Creator (auto-filled, do not modify)
@@ -1940,6 +2516,38 @@ export const mdSupplierTable = mdSupplier;
 export const purOrderTable = purOrder;
 export const purRequestTable = purRequest;
 
+
+export const hrSsCityRule = pgTable("hr_ss_city_rule", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  cityCode: varchar("city_code", { length: 32 }).notNull(),
+  cityName: varchar("city_name", { length: 64 }).notNull(),
+  effectiveFrom: varchar("effective_from", { length: 7 }).notNull(),
+  effectiveTo: varchar("effective_to", { length: 7 }),
+  pensionEmp: numeric("pension_emp").notNull().default('8'),
+  pensionCo: numeric("pension_co").notNull().default('16'),
+  medicalEmp: numeric("medical_emp").notNull().default('2'),
+  medicalCo: numeric("medical_co").notNull().default('8'),
+  unemploymentEmp: numeric("unemployment_emp").notNull().default('0.5'),
+  unemploymentCo: numeric("unemployment_co").notNull().default('0.5'),
+  housingEmp: numeric("housing_emp").notNull().default('12'),
+  housingCo: numeric("housing_co").notNull().default('12'),
+  baseMin: numeric("base_min").notNull().default('0'),
+  baseMax: numeric("base_max").notNull().default('999999'),
+  createdAt: customTimestamptz("_created_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
+  updatedAt: customTimestamptz("_updated_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
+}, (table) => [
+  uniqueIndex("uq_hr_ss_city_rule_city_from").on(table.cityCode, table.effectiveFrom),
+]);
+
+export const finPeriodCloseAudit = pgTable("fin_period_close_audit", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  period: varchar("period", { length: 7 }).notNull(),
+  action: varchar("action", { length: 20 }).notNull(),
+  actorUserId: varchar("actor_user_id", { length: 64 }),
+  remark: varchar("remark", { length: 500 }),
+  createdAt: customTimestamptz("created_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
+});
+
 export const sysUser = pgTable("sys_user", {
   id: uuid("id").primaryKey().defaultRandom(),
   username: varchar("username", { length: 64 }).notNull().unique(),
@@ -1957,6 +2565,17 @@ export const sysUser = pgTable("sys_user", {
   status: varchar("status", { length: 20 }).notNull().default('active'),
   lastLoginAt: customTimestamptz("last_login_at", { precision: 3 }),
   syncedAt: customTimestamptz("synced_at", { precision: 3 }),
+  /** B-04：MFA（TOTP）与密码策略 */
+  mfaEnabled: integer("mfa_enabled").notNull().default(0),
+  mfaSecretEnc: varchar("mfa_secret_enc", { length: 500 }),
+  mfaBoundAt: customTimestamptz("mfa_bound_at", { precision: 3 }),
+  passwordChangedAt: customTimestamptz("password_changed_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
+  passwordHistory: text("password_history").notNull().default('[]'),
+  failedLoginAttempts: integer("failed_login_attempts").notNull().default(0),
+  lockedUntil: customTimestamptz("locked_until", { precision: 3 }),
+  mustChangePassword: integer("must_change_password").notNull().default(0),
+  /** null = 按角色策略；1 = 强制；0 = 豁免 */
+  mfaRequiredOverride: integer("mfa_required_override"),
   createdAt: customTimestamptz("_created_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
   updatedAt: customTimestamptz("_updated_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
 });
@@ -1994,8 +2613,15 @@ export const sysLoginSession = pgTable("sys_login_session", {
   refreshTokenEnc: text("refresh_token_enc"),
   expiresAt: customTimestamptz("expires_at", { precision: 3 }).notNull(),
   revokedAt: customTimestamptz("revoked_at", { precision: 3 }),
+  /** B-04：设备与会话来源，供"登录设备管理"展示与远程下线 */
+  ip: varchar("ip", { length: 64 }),
+  userAgent: varchar("user_agent", { length: 500 }),
+  deviceLabel: varchar("device_label", { length: 120 }),
+  authMethod: varchar("auth_method", { length: 20 }),
   createdAt: customTimestamptz("_created_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
-});
+}, (table) => [
+  index("idx_sys_login_session_user_active").on(table.userId, table.revokedAt, table.expiresAt),
+]);
 
 export const sysFeishuSyncState = pgTable("sys_feishu_sync_state", {
   id: varchar("id", { length: 64 }).primaryKey(),
@@ -2019,11 +2645,38 @@ export const sysFeishuEvent = pgTable("sys_feishu_event", {
   createdAt: customTimestamptz("_created_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
 });
 
+/** 飞书代绑邀请（B1）：一次性 token → 目标 sys_user */
+export const sysFeishuBindInvite = pgTable("sys_feishu_bind_invite", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  token: varchar("token", { length: 64 }).notNull().unique(),
+  targetUserId: uuid("target_user_id").notNull(),
+  createdBy: uuid("created_by").notNull(),
+  expiresAt: customTimestamptz("expires_at", { precision: 3 }).notNull(),
+  consumedAt: customTimestamptz("consumed_at", { precision: 3 }),
+  revokedAt: customTimestamptz("revoked_at", { precision: 3 }),
+  createdAt: customTimestamptz("_created_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
+}, (table) => [
+  index("idx_sys_feishu_bind_invite_target").on(table.targetUserId),
+]);
+
+/** 站点品牌配置（单行语义：业务层只读写最新一条） */
+export const sysBrandConfig = pgTable("sys_brand_config", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  brandName: varchar("brand_name", { length: 100 }).notNull().default('晟笙 ERP'),
+  logoFileId: uuid("logo_file_id"),
+  faviconFileId: uuid("favicon_file_id"),
+  updatedBy: varchar("updated_by", { length: 64 }),
+  createdAt: customTimestamptz("_created_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
+  updatedAt: customTimestamptz("_updated_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
+});
+
 export const compFeishuBitableConfig = pgTable("comp_feishu_bitable_config", {
   id: uuid("id").primaryKey().defaultRandom(),
   bizType: varchar("biz_type", { length: 40 }).notNull().unique(),
   appToken: varchar("app_token", { length: 128 }).notNull(),
   tableId: varchar("table_id", { length: 128 }).notNull(),
+  /** JSON：飞书列名 → ERP 字段路径 */
+  fieldMap: text("field_map"),
   enabled: integer("enabled").notNull().default(1),
 });
 
@@ -2036,6 +2689,154 @@ export const compFeishuApproval = pgTable("comp_feishu_approval", {
   createdAt: customTimestamptz("_created_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
 });
 
+/** B-04：登录审计（成功/失败均留痕） */
+export const sysLoginAudit = pgTable("sys_login_audit", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  username: varchar("username", { length: 128 }),
+  userId: uuid("user_id"),
+  result: varchar("result", { length: 20 }).notNull(),
+  /** 失败原因：bad_credentials / locked / disabled / mfa_required / mfa_invalid / password_expired */
+  reason: varchar("reason", { length: 64 }),
+  authMethod: varchar("auth_method", { length: 20 }),
+  ip: varchar("ip", { length: 64 }),
+  userAgent: varchar("user_agent", { length: 500 }),
+  createdAt: customTimestamptz("_created_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
+}, (table) => [
+  index("idx_sys_login_audit_created").on(table.createdAt),
+  index("idx_sys_login_audit_username").on(table.username, table.createdAt),
+]);
+
+/** B-04：MFA 临时挑战票据（密码通过后、TOTP 校验前使用） */
+export const sysMfaChallenge = pgTable("sys_mfa_challenge", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  userId: uuid("user_id").notNull(),
+  tokenHash: varchar("token_hash", { length: 128 }).notNull(),
+  expiresAt: customTimestamptz("expires_at", { precision: 3 }).notNull(),
+  consumedAt: customTimestamptz("consumed_at", { precision: 3 }),
+  ip: varchar("ip", { length: 64 }),
+  userAgent: varchar("user_agent", { length: 500 }),
+  createdAt: customTimestamptz("_created_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
+}, (table) => [
+  uniqueIndex("uq_sys_mfa_challenge_token").on(table.tokenHash),
+  index("idx_sys_mfa_challenge_user").on(table.userId, table.expiresAt),
+]);
+
+/** B-04：MFA 恢复码（一次性） */
+export const sysMfaRecoveryCode = pgTable("sys_mfa_recovery_code", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  userId: uuid("user_id").notNull(),
+  codeHash: varchar("code_hash", { length: 128 }).notNull(),
+  usedAt: customTimestamptz("used_at", { precision: 3 }),
+  createdAt: customTimestamptz("_created_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
+}, (table) => [
+  uniqueIndex("uq_sys_mfa_recovery_code").on(table.codeHash),
+  index("idx_sys_mfa_recovery_user").on(table.userId, table.usedAt),
+]);
+
+/** B-03：业务字典 */
+export const sysDict = pgTable("sys_dict", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  dictType: varchar("dict_type", { length: 64 }).notNull(),
+  dictKey: varchar("dict_key", { length: 64 }).notNull(),
+  dictLabel: varchar("dict_label", { length: 120 }).notNull(),
+  extra: varchar("extra", { length: 500 }),
+  sortNo: integer("sort_no").notNull().default(0),
+  enabled: integer("enabled").notNull().default(1),
+  builtin: integer("builtin").notNull().default(0),
+  remark: varchar("remark", { length: 200 }),
+  createdAt: customTimestamptz("_created_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
+  updatedAt: customTimestamptz("_updated_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
+}, (table) => [
+  uniqueIndex("uq_sys_dict_type_key").on(table.dictType, table.dictKey),
+  index("idx_sys_dict_type").on(table.dictType, table.sortNo),
+]);
+
+/** B-03：系统参数 */
+export const sysParam = pgTable("sys_param", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  paramKey: varchar("param_key", { length: 64 }).notNull(),
+  paramValue: varchar("param_value", { length: 500 }).notNull().default(''),
+  valueType: varchar("value_type", { length: 16 }).notNull().default('string'),
+  paramGroup: varchar("param_group", { length: 32 }).notNull().default('general'),
+  description: varchar("description", { length: 300 }),
+  editable: integer("editable").notNull().default(1),
+  createdAt: customTimestamptz("_created_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
+  updatedAt: customTimestamptz("_updated_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
+}, (table) => [
+  uniqueIndex("uq_sys_param_key").on(table.paramKey),
+  index("idx_sys_param_group").on(table.paramGroup),
+]);
+
+/** B-08：编号规则 */
+export const sysCodeRule = pgTable("sys_code_rule", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  bizType: varchar("biz_type", { length: 40 }).notNull(),
+  bizName: varchar("biz_name", { length: 80 }).notNull(),
+  prefix: varchar("prefix", { length: 16 }).notNull(),
+  datePattern: varchar("date_pattern", { length: 10 }).notNull().default('YYYYMM'),
+  seqLength: integer("seq_length").notNull().default(4),
+  resetPolicy: varchar("reset_policy", { length: 16 }).notNull().default('monthly'),
+  allowReuse: integer("allow_reuse").notNull().default(0),
+  enabled: integer("enabled").notNull().default(1),
+  remark: varchar("remark", { length: 200 }),
+  createdAt: customTimestamptz("_created_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
+  updatedAt: customTimestamptz("_updated_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
+}, (table) => [
+  uniqueIndex("uq_sys_code_rule_biz").on(table.bizType),
+]);
+
+/** B-07：数据保留策略 */
+export const sysDataRetentionPolicy = pgTable("sys_data_retention_policy", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  dataType: varchar("data_type", { length: 40 }).notNull(),
+  displayName: varchar("display_name", { length: 80 }).notNull(),
+  retainDays: integer("retain_days").notNull().default(730),
+  action: varchar("action", { length: 16 }).notNull().default('archive'),
+  enabled: integer("enabled").notNull().default(1),
+  lastRunAt: customTimestamptz("last_run_at", { precision: 3 }),
+  lastRunCount: integer("last_run_count"),
+  remark: varchar("remark", { length: 200 }),
+  createdAt: customTimestamptz("_created_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
+  updatedAt: customTimestamptz("_updated_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
+}, (table) => [
+  uniqueIndex("uq_sys_data_retention_type").on(table.dataType),
+]);
+
+/** B-07：审计日志归档表 */
+export const compAuditLogArchive = pgTable("comp_audit_log_archive", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  sourceId: uuid("source_id"),
+  objectType: varchar("object_type", { length: 60 }),
+  objectId: varchar("object_id", { length: 120 }),
+  action: varchar("action", { length: 40 }),
+  actorUserId: varchar("actor_user_id", { length: 64 }),
+  detail: text("detail"),
+  occurredAt: customTimestamptz("occurred_at", { precision: 3 }),
+  archivedAt: customTimestamptz("archived_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
+}, (table) => [
+  index("idx_comp_audit_log_archive_time").on(table.occurredAt),
+  index("idx_comp_audit_log_archive_object").on(table.objectType, table.objectId),
+]);
+
+/** B-07：PII 处理工单 */
+export const sysPiiRequest = pgTable("sys_pii_request", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  requestType: varchar("request_type", { length: 20 }).notNull(),
+  subjectType: varchar("subject_type", { length: 20 }).notNull(),
+  subjectId: uuid("subject_id").notNull(),
+  subjectName: varchar("subject_name", { length: 120 }),
+  reason: varchar("reason", { length: 500 }),
+  status: varchar("status", { length: 20 }).notNull().default('pending'),
+  resultSummary: text("result_summary"),
+  requestedBy: varchar("requested_by", { length: 64 }),
+  handledBy: varchar("handled_by", { length: 64 }),
+  handledAt: customTimestamptz("handled_at", { precision: 3 }),
+  createdAt: customTimestamptz("_created_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
+  updatedAt: customTimestamptz("_updated_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
+}, (table) => [
+  index("idx_sys_pii_request_status").on(table.status, table.createdAt),
+]);
+
 export const compStoredFile = pgTable("comp_stored_file", {
   id: uuid("id").primaryKey().defaultRandom(),
   fileName: varchar("file_name", { length: 255 }).notNull(),
@@ -2044,8 +2845,21 @@ export const compStoredFile = pgTable("comp_stored_file", {
   storagePath: varchar("storage_path", { length: 500 }).notNull(),
   /** A4：上传人，下载时做归属校验 */
   ownerUserId: varchar("owner_user_id", { length: 64 }),
+  /** B-06：附件版本链（同一资源多次上传保留历史版本） */
+  version: integer("version").notNull().default(1),
+  parentFileId: uuid("parent_file_id"),
+  isLatest: integer("is_latest").notNull().default(1),
+  /** 版本链根 id（由迁移的触发器维护，用于同链版本号唯一索引） */
+  rootFileId: uuid("root_file_id"),
+  /** B-06：内容魔数（十六进制前缀）与扫描结论，用于"改名伪装"留痕 */
+  magicHex: varchar("magic_hex", { length: 32 }),
+  scanStatus: varchar("scan_status", { length: 20 }).notNull().default('skipped'),
+  scanDetail: varchar("scan_detail", { length: 300 }),
   createdAt: customTimestamptz("_created_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
-});
+}, (table) => [
+  index("idx_comp_stored_file_parent").on(table.parentFileId),
+  index("idx_comp_stored_file_latest").on(table.isLatest),
+]);
 
 export const compBizCodeSeq = pgTable("comp_biz_code_seq", {
   monthKey: varchar("month_key", { length: 32 }).primaryKey(),
@@ -2080,5 +2894,197 @@ export const sysInboxMessage = pgTable("sys_inbox_message", {
 }, (table) => [
   index("idx_sys_inbox_message_user").on(table.userId),
   index("idx_sys_inbox_message_user_unread").on(table.userId, table.readAt),
+]);
+
+/* ========== 批次二 C 线：银行账户/流水/匹配、导入映射、异步导出任务 ========== */
+/* 与迁移 2026-10-15-upgrade-batch2-bank-export-tasks.sql 保持一致 */
+
+export const mdBankAccount = pgTable("md_bank_account", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  code: varchar("code", { length: 20 }).notNull(),
+  name: varchar("name", { length: 200 }).notNull(),
+  accountNo: varchar("account_no", { length: 64 }).notNull(),
+  bankName: varchar("bank_name", { length: 200 }).notNull(),
+  branchName: varchar("branch_name", { length: 200 }),
+  currency: varchar("currency", { length: 8 }).notNull().default('CNY'),
+  /** 关联会计科目编码（fin_account.code），默认 1002 银行存款 */
+  accountCode: varchar("account_code", { length: 20 }),
+  /** 银行对账单口径的期初余额（对账底稿用，非账套取数） */
+  openingBalance: numeric("opening_balance").notNull().default('0'),
+  isDefault: integer("is_default").notNull().default(0),
+  status: varchar("status", { length: 20 }).notNull().default('active'),
+  contactPerson: varchar("contact_person", { length: 50 }),
+  contactPhone: varchar("contact_phone", { length: 30 }),
+  remark: text("remark"),
+  // System field: Creation time (auto-filled, do not modify)
+  createdAt: customTimestamptz("_created_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
+  // System field: Creator (auto-filled, do not modify)
+  createdBy: userProfile("_created_by").default(sql`CASE
+    WHEN (current_setting('app.user_id'::text, true) = ''::text) THEN NULL`),
+  // System field: Update time (auto-filled, do not modify)
+  updatedAt: customTimestamptz("_updated_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
+  // System field: Updater (auto-filled, do not modify)
+  updatedBy: userProfile("_updated_by").default(sql`CASE
+    WHEN (current_setting('app.user_id'::text, true) = ''::text) THEN NULL`),
+}, (table) => [
+  uniqueIndex("uq_md_bank_account_code").on(table.code),
+  uniqueIndex("uq_md_bank_account_no_currency").on(table.accountNo, table.currency),
+  index("idx_md_bank_account_status").on(table.status),
+  index("idx_md_bank_account_account_code").on(table.accountCode),
+  uniqueIndex("uq_md_bank_account_default_currency")
+    .on(table.currency)
+    .where(sql`${table.isDefault} = 1`),
+]);
+
+export const erpBankStatement = pgTable("erp_bank_statement", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  bankAccountId: uuid("bank_account_id").notNull(),
+  transactionDate: date("transaction_date").notNull(),
+  direction: varchar("direction", { length: 10 }).notNull(),
+  amount: numeric("amount").notNull().default('0'),
+  /** 银行对账单上的交易后余额（部分银行不提供，可为空） */
+  balance: numeric("balance"),
+  counterpartyName: varchar("counterparty_name", { length: 200 }),
+  counterpartyAccount: varchar("counterparty_account", { length: 64 }),
+  summary: varchar("summary", { length: 500 }),
+  /** 银行交易流水号（去重首选键） */
+  transactionNo: varchar("transaction_no", { length: 100 }),
+  /** 业务指纹去重键（交易流水号缺失时的兜底） */
+  dedupeKey: varchar("dedupe_key", { length: 200 }).notNull(),
+  matchStatus: varchar("match_status", { length: 20 }).notNull().default('unmatched'),
+  bizType: varchar("biz_type", { length: 20 }),
+  bizId: uuid("biz_id"),
+  bizCode: varchar("biz_code", { length: 50 }),
+  matchScore: numeric("match_score"),
+  matchedAt: customTimestamptz("matched_at", { precision: 3 }),
+  matchedBy: varchar("matched_by", { length: 64 }),
+  importBatch: varchar("import_batch", { length: 64 }),
+  remark: text("remark"),
+  // System field: Creation time (auto-filled, do not modify)
+  createdAt: customTimestamptz("_created_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
+  // System field: Creator (auto-filled, do not modify)
+  createdBy: userProfile("_created_by").default(sql`CASE
+    WHEN (current_setting('app.user_id'::text, true) = ''::text) THEN NULL`),
+  // System field: Update time (auto-filled, do not modify)
+  updatedAt: customTimestamptz("_updated_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
+  // System field: Updater (auto-filled, do not modify)
+  updatedBy: userProfile("_updated_by").default(sql`CASE
+    WHEN (current_setting('app.user_id'::text, true) = ''::text) THEN NULL`),
+}, (table) => [
+  uniqueIndex("uq_erp_bank_statement_dedupe").on(table.bankAccountId, table.dedupeKey),
+  index("idx_erp_bank_statement_account_date").on(table.bankAccountId, table.transactionDate),
+  index("idx_erp_bank_statement_status").on(table.bankAccountId, table.matchStatus),
+  index("idx_erp_bank_statement_transaction_no").on(table.bankAccountId, table.transactionNo),
+  index("idx_erp_bank_statement_biz").on(table.bizType, table.bizId),
+]);
+
+export const erpBankStatementMatch = pgTable("erp_bank_statement_match", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  statementId: uuid("statement_id").notNull(),
+  bankAccountId: uuid("bank_account_id").notNull(),
+  bizType: varchar("biz_type", { length: 20 }).notNull(),
+  bizId: uuid("biz_id").notNull(),
+  bizCode: varchar("biz_code", { length: 50 }),
+  matchType: varchar("match_type", { length: 20 }).notNull().default('auto'),
+  score: numeric("score"),
+  amount: numeric("amount"),
+  remark: varchar("remark", { length: 500 }),
+  matchedAt: customTimestamptz("matched_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
+  matchedBy: varchar("matched_by", { length: 64 }),
+  // System field: Creation time (auto-filled, do not modify)
+  createdAt: customTimestamptz("_created_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
+  // System field: Creator (auto-filled, do not modify)
+  createdBy: userProfile("_created_by").default(sql`CASE
+    WHEN (current_setting('app.user_id'::text, true) = ''::text) THEN NULL`),
+  // System field: Update time (auto-filled, do not modify)
+  updatedAt: customTimestamptz("_updated_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
+  // System field: Updater (auto-filled, do not modify)
+  updatedBy: userProfile("_updated_by").default(sql`CASE
+    WHEN (current_setting('app.user_id'::text, true) = ''::text) THEN NULL`),
+}, (table) => [
+  // 一条流水最多一条有效匹配
+  uniqueIndex("uq_erp_bank_statement_match_statement").on(table.statementId),
+  index("idx_erp_bank_statement_match_biz").on(table.bizType, table.bizId),
+  index("idx_erp_bank_statement_match_account").on(table.bankAccountId),
+]);
+
+export const erpBankImportMapping = pgTable("erp_bank_import_mapping", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  name: varchar("name", { length: 100 }).notNull(),
+  bankName: varchar("bank_name", { length: 200 }),
+  mapping: jsonb("mapping").notNull().default({}),
+  remark: varchar("remark", { length: 500 }),
+  // System field: Creation time (auto-filled, do not modify)
+  createdAt: customTimestamptz("_created_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
+  // System field: Creator (auto-filled, do not modify)
+  createdBy: userProfile("_created_by").default(sql`CASE
+    WHEN (current_setting('app.user_id'::text, true) = ''::text) THEN NULL`),
+  // System field: Update time (auto-filled, do not modify)
+  updatedAt: customTimestamptz("_updated_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
+  // System field: Updater (auto-filled, do not modify)
+  updatedBy: userProfile("_updated_by").default(sql`CASE
+    WHEN (current_setting('app.user_id'::text, true) = ''::text) THEN NULL`),
+}, (table) => [
+  uniqueIndex("uq_erp_bank_import_mapping_name").on(table.name),
+]);
+
+export const exportTasks = pgTable("export_tasks", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  code: varchar("code", { length: 30 }).notNull(),
+  resourceType: varchar("resource_type", { length: 50 }).notNull(),
+  format: varchar("format", { length: 10 }).notNull().default('xlsx'),
+  filterParams: jsonb("filter_params").notNull().default({}),
+  filterSummary: varchar("filter_summary", { length: 1000 }).notNull().default(''),
+  status: varchar("status", { length: 20 }).notNull().default('pending'),
+  /** 相对 UPLOAD_DIR 的文件名（不含目录） */
+  fileName: varchar("file_name", { length: 200 }),
+  fileSize: integer("file_size"),
+  rowCount: integer("row_count"),
+  errorMessage: text("error_message"),
+  requestedBy: varchar("requested_by", { length: 64 }),
+  requestedByName: varchar("requested_by_name", { length: 100 }),
+  startedAt: customTimestamptz("started_at", { precision: 3 }),
+  finishedAt: customTimestamptz("finished_at", { precision: 3 }),
+  // System field: Creation time (auto-filled, do not modify)
+  createdAt: customTimestamptz("_created_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
+  // System field: Creator (auto-filled, do not modify)
+  createdBy: userProfile("_created_by").default(sql`CASE
+    WHEN (current_setting('app.user_id'::text, true) = ''::text) THEN NULL`),
+  // System field: Update time (auto-filled, do not modify)
+  updatedAt: customTimestamptz("_updated_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
+  // System field: Updater (auto-filled, do not modify)
+  updatedBy: userProfile("_updated_by").default(sql`CASE
+    WHEN (current_setting('app.user_id'::text, true) = ''::text) THEN NULL`),
+}, (table) => [
+  uniqueIndex("uq_export_tasks_code").on(table.code),
+  index("idx_export_tasks_requested_by").on(table.requestedBy, table.createdAt),
+  index("idx_export_tasks_status").on(table.status),
+]);
+
+/**
+ * B-02：数据级权限（行级可见范围）配置。
+ * 角色 × 资源类型 → 范围（all / dept / dept_and_child / self / custom）。
+ * 迁移：server/database/migrations/2026-10-15-upgrade-data-scope.sql
+ * 判定与 SQL 注入逻辑：server/common/auth/data-scope.service.ts
+ */
+export const sysDataScope = pgTable("sys_data_scope", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  /** 角色码，取值见 shared/rbac.ts 的 ROLE_CODES */
+  roleCode: varchar("role_code", { length: 64 }).notNull(),
+  /** project / customer / finance_ledger / employee / attendance */
+  resourceType: varchar("resource_type", { length: 40 }).notNull(),
+  /** all / dept / dept_and_child / self / custom */
+  scope: varchar("scope", { length: 20 }).notNull().default('all'),
+  /** custom 范围下的显式 id 列表（JSON 数组字符串） */
+  customIds: text("custom_ids").notNull().default('[]'),
+  enabled: integer("enabled").notNull().default(1),
+  remark: varchar("remark", { length: 200 }),
+  createdAt: customTimestamptz("_created_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
+  updatedAt: customTimestamptz("_updated_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
+}, (table) => [
+  uniqueIndex("uq_sys_data_scope_role_resource").on(table.roleCode, table.resourceType),
+  index("idx_sys_data_scope_resource").on(table.resourceType, table.enabled),
+  check("chk_sys_data_scope_scope", sql`${table.scope} IN ('all', 'dept', 'dept_and_child', 'self', 'custom')`),
+  check("chk_sys_data_scope_resource", sql`${table.resourceType} IN ('project', 'customer', 'finance_ledger', 'employee', 'attendance')`),
 ]);
 

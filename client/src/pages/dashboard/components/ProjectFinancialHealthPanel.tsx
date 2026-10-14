@@ -3,6 +3,7 @@ import { AlertTriangle, Eye } from 'lucide-react';
 import { toast } from 'sonner';
 import { Table, TableColumnsType } from 'antd';
 import { DataState } from '@client/src/components/DataState';
+import { SectionTitle } from '@client/src/components/SectionTitle';
 import StatCard from '@client/src/components/erp/StatCard';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -140,7 +141,7 @@ const ProjectFinancialHealthPanel: React.FC = () => {
 
   return (
     <div className="flex flex-col gap-3">
-      <h3 className="text-base font-semibold">项目财务健康</h3>
+      <SectionTitle>项目财务健康</SectionTitle>
       <p className="text-sm text-muted-foreground">
         基于预算与外推完工成本评估项目财务健康，预警项目优先展示
       </p>

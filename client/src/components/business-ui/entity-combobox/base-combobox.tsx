@@ -38,7 +38,7 @@ export function BaseCombobox<
     placeholder = '请选择',
     searchPlaceholder = '',
     emptyText = '没有匹配结果，换个关键词试试吧',
-    loadingText = '加载中...',
+    loadingText = '',
     className,
     classNames = {},
     tagClosable = true,

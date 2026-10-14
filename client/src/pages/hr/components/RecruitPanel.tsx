@@ -7,6 +7,7 @@ import { Plus, Users } from 'lucide-react';
 import { Table, TableColumnsType } from 'antd';
 import { CanRole } from '@client/src/platform/auth';
 import HrStatusBadge, { CANDIDATE_STAGE_LABELS, RECRUIT_STATUS_LABELS } from './HrStatusBadge';
+import { SectionTitle } from '@client/src/components/SectionTitle';
 import { Button } from '@client/src/components/ui/button';
 import {
   Dialog,
@@ -249,7 +250,7 @@ const RecruitPanel: React.FC = () => {
     <div className="flex flex-col gap-6">
       <section className="flex flex-col gap-4">
         <div className="flex items-center justify-between gap-3">
-          <h3 className="text-base font-semibold">招聘需求</h3>
+          <SectionTitle>招聘需求</SectionTitle>
           <CanRole roles={['admin']}>
             <Button onClick={() => setReqOpen(true)}>
               <Plus className="h-4 w-4" />
@@ -281,14 +282,14 @@ const RecruitPanel: React.FC = () => {
 
       <section className="flex flex-col gap-4">
         <div className="flex items-center justify-between gap-3">
-          <h3 className="text-base font-semibold">
+          <SectionTitle>
             候选人列表
             {selectedReq ? (
               <span className="ml-2 text-sm font-normal text-muted-foreground">
                 {selectedReq.code} - {selectedReq.title}
               </span>
             ) : null}
-          </h3>
+          </SectionTitle>
           <CanRole roles={['admin']}>
             <Button disabled={!selectedReq} onClick={() => setCandidateOpen(true)}>
               <Plus className="h-4 w-4" />

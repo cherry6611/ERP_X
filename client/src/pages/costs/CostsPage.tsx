@@ -3,6 +3,7 @@ import ReactECharts from 'echarts-for-react';
 import type { EChartsOption } from 'echarts';
 import PageShell from '@client/src/components/PageShell';
 import { DataState } from '@client/src/components/DataState';
+import { SectionTitle } from '@client/src/components/SectionTitle';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@client/src/components/ui/tabs';
 import {
   ToggleGroup,
@@ -10,8 +11,9 @@ import {
 } from '@client/src/components/ui/toggle-group';
 import { costsApi } from '@client/src/api';
 import { useAsyncData } from '@client/src/hooks/useAsyncData';
+import { seriesColor } from '@client/src/theme/tokens';
 import { formatMoney } from '@client/src/utils/format';
-import { CHART_COLORS, CHART_SEMANTIC_COLORS } from '@client/src/utils/chart-colors';
+import { CHART_COLORS } from '@client/src/utils/chart-colors';
 import type { CostDimension, CostDimensionSummary } from '@shared/api.interface';
 import CostsTab from './CostsTab';
 import TimesheetsTab from './TimesheetsTab';
@@ -46,7 +48,7 @@ const buildDimensionOption = (
           type: 'bar',
           name: '成本金额',
           data: items.map((item: CostDimensionSummary) => item.amount),
-          itemStyle: { color: CHART_SEMANTIC_COLORS.cost },
+          itemStyle: { color: seriesColor('cost') },
         },
       ],
     };
@@ -91,7 +93,7 @@ const CostDimensionAnalysisSection: React.FC = () => {
   return (
     <div className="flex flex-col gap-4 rounded-lg border bg-card p-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <h3 className="text-base font-semibold">多维成本分析</h3>
+        <SectionTitle>多维成本分析</SectionTitle>
         <ToggleGroup
           type="single"
           variant="outline"
@@ -117,7 +119,9 @@ const CostDimensionAnalysisSection: React.FC = () => {
         onRetry={() => void reload()}
         skeleton="card"
       >
-        <ReactECharts option={option} theme="ud" className="h-[300px] w-full" />
+        <div role="img" aria-label="多维成本分析图">
+          <ReactECharts option={option} theme="ud" className="h-[300px] w-full" />
+        </div>
         <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
           {items.map((item: CostDimensionSummary) => (
             <div key={item.key} className="flex flex-col rounded-md border bg-background px-3 py-2">

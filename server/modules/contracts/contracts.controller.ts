@@ -8,7 +8,7 @@ import {
   Post,
   Query,
 } from '@nestjs/common';
-import { CanRole, NeedLogin } from '@server/platform';
+import { CanCapability, NeedLogin } from '@server/platform';
 import { IsIn, IsString } from 'class-validator';
 import { ContractsService } from './contracts.service';
 import {
@@ -23,13 +23,17 @@ import type {
   ContractDetail,
   ContractMilestone,
   ContractVersion,
-  CreateCalloffDto,
-  CreateMilestoneDto,
   PagedResult,
 } from '@shared/api.interface';
 import {
+  ContractItemBodyDto,
+  CreateCalloffDto,
   CreateContractDto,
+  CreateContractVersionDto,
+  CreateMilestoneDto,
+  ImportQuotationItemsDto,
   UpdateContractDto,
+  UpdateMilestoneDto,
 } from './contracts.dto';
 
 export class ContractStatusActionDto {
@@ -70,7 +74,7 @@ export class ContractsController {
     );
   }
 
-  @CanRole(['admin'])
+  @CanCapability('crm_write')
   @Post()
   async createContract(@Body() dto: CreateContractDto): Promise<ContractDetail> {
     return this.contractsService.createContract(dto);
@@ -90,7 +94,7 @@ export class ContractsController {
     return this.contractsService.getContract(id);
   }
 
-  @CanRole(['admin'])
+  @CanCapability('crm_write')
   @Patch(':id')
   async updateContract(
     @Param('id', ParseUUIDPipe) id: string,
@@ -99,7 +103,7 @@ export class ContractsController {
     return this.contractsService.updateContract(id, dto);
   }
 
-  @CanRole(['admin'])
+  @CanCapability('crm_write')
   @Post(':id/status')
   async changeStatus(
     @Param('id', ParseUUIDPipe) id: string,
@@ -108,7 +112,7 @@ export class ContractsController {
     return this.contractsService.changeStatus(id, dto.action);
   }
 
-  @CanRole(['admin'])
+  @CanCapability('crm_write')
   @Post(':id/milestones')
   async addMilestone(
     @Param('id', ParseUUIDPipe) id: string,
@@ -117,20 +121,20 @@ export class ContractsController {
     return this.contractsService.addMilestone(id, dto);
   }
 
-  @CanRole(['admin'])
+  @CanCapability('crm_write')
   @Patch('milestones/:id')
   async updateMilestone(
     @Param('id', ParseUUIDPipe) id: string,
-    @Body() dto: { status?: 'reached'; actualDate?: string; name?: string; amount?: number }
+    @Body() dto: UpdateMilestoneDto
   ): Promise<ContractMilestone> {
     return this.contractsService.updateMilestone(id, dto);
   }
 
-  @CanRole(['admin'])
+  @CanCapability('crm_write')
   @Post(':id/changes')
   async createChange(
     @Param('id', ParseUUIDPipe) id: string,
-    @Body() dto: { changeLog: string; newAmount?: number }
+    @Body() dto: CreateContractVersionDto
   ): Promise<ContractVersion> {
     return this.contractsService.createChange(id, dto);
   }
@@ -142,26 +146,26 @@ export class ContractsController {
     return this.contractItems.list(id);
   }
 
-  @CanRole(['admin'])
+  @CanCapability('crm_write')
   @Post(':id/items')
   async createItem(
     @Param('id', ParseUUIDPipe) id: string,
-    @Body() dto: ContractItemInput
+    @Body() dto: ContractItemBodyDto
   ): Promise<ContractItemView> {
     return this.contractItems.create(id, dto);
   }
 
-  @CanRole(['admin'])
+  @CanCapability('crm_write')
   @Patch(':id/items/:itemId')
   async updateItem(
     @Param('id', ParseUUIDPipe) id: string,
     @Param('itemId', ParseUUIDPipe) itemId: string,
-    @Body() dto: ContractItemInput
+    @Body() dto: ContractItemBodyDto
   ): Promise<ContractItemView> {
     return this.contractItems.update(id, itemId, dto);
   }
 
-  @CanRole(['admin'])
+  @CanCapability('crm_write')
   @Post(':id/items/:itemId/delete')
   async deleteItem(
     @Param('id', ParseUUIDPipe) id: string,
@@ -171,16 +175,16 @@ export class ContractsController {
     return { ok: true };
   }
 
-  @CanRole(['admin'])
+  @CanCapability('crm_write')
   @Post(':id/items/import-quotation')
   async importQuotation(
     @Param('id', ParseUUIDPipe) id: string,
-    @Body() dto: { quotationId: string }
+    @Body() dto: ImportQuotationItemsDto
   ): Promise<ContractItemView[]> {
     return this.contractItems.importQuotation(id, dto.quotationId);
   }
 
-  @CanRole(['admin'])
+  @CanCapability('crm_write')
   @Post(':id/calloffs')
   async createCalloff(
     @Param('id', ParseUUIDPipe) id: string,

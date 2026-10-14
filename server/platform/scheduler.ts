@@ -55,7 +55,13 @@ export class JobScheduler implements OnModuleInit {
           () => {
             void this.runExclusive(meta.trigger, () =>
               (method as () => Promise<void>).call(instance),
-            );
+            ).catch((error: unknown) => {
+              // 兜底：避免 unhandledRejection 在 abortOnError 下拖死进程
+              this.logger.error(
+                `定时任务 ${meta.trigger} 执行失败`,
+                error instanceof Error ? error.stack : String(error),
+              );
+            });
           },
           null,
           false,

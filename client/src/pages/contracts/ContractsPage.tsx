@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useForm } from 'react-hook-form';
 import { z } from 'zod';
@@ -10,8 +11,6 @@ import PageShell from '@client/src/components/PageShell';
 import { DataState } from '@client/src/components/DataState';
 import StatusBadge from '@client/src/components/erp/StatusBadge';
 import DateField from '@client/src/components/erp/DateField';
-import ContractFormDialog from './ContractFormDialog';
-import ContractDetailDialog from './ContractDetailDialog';
 import TaxEntityBanner from '@client/src/components/erp/TaxEntityBanner';
 import { formatTaxSplitLine } from '@client/src/utils/tax-display';
 import { Badge } from '@client/src/components/ui/badge';
@@ -34,7 +33,7 @@ import {
 } from '@client/src/components/ui/alert-dialog';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@client/src/components/ui/tabs';
 import { dialogSize } from '@client/src/theme/dialog-size';
-import { useDebouncedValue } from '@client/src/hooks/useDebouncedValue';
+import { useListQuery } from '@client/src/hooks/useListQuery';
 import {
   Dialog,
   DialogContent,
@@ -129,13 +128,10 @@ const EMPTY_TRANSFER_FORM: TransferFormData = {
 };
 
 const ContractsPage: React.FC = () => {
+  const navigate = useNavigate();
+  const { q, setQ, debouncedQ, page, setPage, debouncing } = useListQuery();
   const [statusFilter, setStatusFilter] = useState('all');
-  const [keyword, setKeyword] = useState('');
-  const keywordQuery = useDebouncedValue(keyword);
-  const [page, setPage] = useState<number>(1);
   const [pageSize, setPageSize] = useState<number>(PAGE_SIZE);
-  const [formOpen, setFormOpen] = useState(false);
-  const [detailId, setDetailId] = useState<string | null>(null);
   const [transferTarget, setTransferTarget] = useState<Contract | null>(null);
   const [operating, setOperating] = useState(false);
   const [syncing, setSyncing] = useState(false);
@@ -147,9 +143,9 @@ const ContractsPage: React.FC = () => {
     () =>
       contractsApi.listContractsPaged(page, pageSize, {
         status: statusFilter !== 'all' ? statusFilter : undefined,
-        keyword: keywordQuery || undefined,
+        keyword: debouncedQ || undefined,
       }),
-    [page, pageSize, statusFilter, keywordQuery],
+    [page, pageSize, statusFilter, debouncedQ],
   );
   const items: Contract[] = data?.items ?? [];
 
@@ -268,7 +264,7 @@ const ContractsPage: React.FC = () => {
       width: 200,
       render: (_, record) => (
         <div className="flex gap-1">
-          <Button size="sm" onClick={() => setDetailId(record.id)}>
+          <Button size="sm" onClick={() => navigate(`/contracts/${record.id}`)}>
             详情
           </Button>
           <DropdownMenu>
@@ -329,12 +325,12 @@ const ContractsPage: React.FC = () => {
           aria-label="搜索合同"
           placeholder="搜索合同名称或编号"
           className="w-64"
-          value={keyword}
-          onChange={(e) => {
-            setKeyword(e.target.value);
-            setPage(1);
-          }}
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
         />
+        {debouncing ? (
+          <span className="text-xs text-muted-foreground">筛选中…</span>
+        ) : null}
         <Button variant="outline" onClick={handleExport}>
           <Download className="h-4 w-4" />
           导出 Excel
@@ -359,7 +355,7 @@ const ContractsPage: React.FC = () => {
           同步记录
         </Button>
         <CanRole roles={['admin']}>
-          <Button onClick={() => setFormOpen(true)}>
+          <Button onClick={() => navigate('/contracts/new')}>
             <Plus className="h-4 w-4" />
             登记合同
           </Button>
@@ -389,21 +385,6 @@ const ContractsPage: React.FC = () => {
           locale={{ emptyText: '暂无合同，登记新合同后开始管理' }}
         />
       </DataState>
-      <ContractFormDialog
-        open={formOpen}
-        onOpenChange={setFormOpen}
-        onCreated={(id: string) => {
-          setDetailId(id);
-          void reload();
-        }}
-      />
-      <ContractDetailDialog
-        contractId={detailId}
-        open={detailId !== null}
-        onOpenChange={(open) => {
-          if (!open) setDetailId(null);
-        }}
-      />
       <Dialog
         open={transferTarget !== null}
         onOpenChange={(open: boolean) => {
@@ -557,7 +538,7 @@ const ContractsPage: React.FC = () => {
         target={similarTarget}
         onPick={(item) => {
           setSimilarTarget(null);
-          setDetailId(item.id);
+          navigate(`/contracts/${item.id}`);
         }}
       />
     </PageShell>

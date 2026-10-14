@@ -9,7 +9,6 @@ import { Button } from '@client/src/components/ui/button';
 import {
   Dialog,
   DialogContent,
-  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from '@client/src/components/ui/dialog';
@@ -64,15 +63,19 @@ type ContractFormData = z.output<typeof contractSchema>;
 type ContractFormInput = z.input<typeof contractSchema>;
 
 interface ContractFormDialogProps {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
   onCreated: (id: string) => void;
+  asPage?: boolean;
+  onCancel?: () => void;
 }
 
 const ContractFormDialog: React.FC<ContractFormDialogProps> = ({
-  open,
+  open = false,
   onOpenChange,
   onCreated,
+  asPage = false,
+  onCancel,
 }) => {
   const { data: customers } = useAsyncData<Customer[]>(() => masterDataApi.listCustomers(), []);
   const { data: taxEntities } = useAsyncData(
@@ -113,7 +116,7 @@ const ContractFormDialog: React.FC<ContractFormDialogProps> = ({
     try {
       const created = await contractsApi.createContract(dto);
       toast.success('合同已登记');
-      onOpenChange(false);
+      onOpenChange?.(false);
       form.reset();
       onCreated(created.id);
     } catch (err) {
@@ -121,12 +124,7 @@ const ContractFormDialog: React.FC<ContractFormDialogProps> = ({
     }
   });
 
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-xl">
-        <DialogHeader>
-          <DialogTitle>登记合同</DialogTitle>
-        </DialogHeader>
+  const formInner = (
         <Form {...form}>
           <form onSubmit={onSubmit} className="space-y-4">
             <FormField
@@ -406,11 +404,29 @@ const ContractFormDialog: React.FC<ContractFormDialogProps> = ({
               )}
             />
             <AttachmentHint text="保存后将自动打开详情，可在其中上传合同扫描件、补充协议等附件" />
-            <DialogFooter>
+            <div className="flex justify-end gap-2 border-t pt-3">
+              {asPage && onCancel ? (
+                <Button type="button" variant="outline" onClick={onCancel}>
+                  取消
+                </Button>
+              ) : null}
               <Button type="submit">保存</Button>
-            </DialogFooter>
+            </div>
           </form>
         </Form>
+  );
+
+  if (asPage) {
+    return <div className="mx-auto max-w-xl space-y-4">{formInner}</div>;
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-xl">
+        <DialogHeader>
+          <DialogTitle>登记合同</DialogTitle>
+        </DialogHeader>
+        {formInner}
       </DialogContent>
     </Dialog>
   );

@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 import { Download, Plus } from 'lucide-react';
 import { Table, TableColumnsType } from 'antd';
@@ -7,8 +7,6 @@ import { CanRole } from '@client/src/platform/auth';
 import PageShell from '@client/src/components/PageShell';
 import { DataState } from '@client/src/components/DataState';
 import StatusBadge from '@client/src/components/erp/StatusBadge';
-import ProjectFormDialog from './ProjectFormDialog';
-import ProjectDetailDialog from './ProjectDetailDialog';
 import SimilarItemsDialog, {
   type SimilarTarget,
 } from '@client/src/components/SimilarItemsDialog';
@@ -24,7 +22,7 @@ import {
 } from '@client/src/components/ui/select';
 import { projectsApi } from '@client/src/api';
 import { useAsyncData } from '@client/src/hooks/useAsyncData';
-import { useDebouncedValue } from '@client/src/hooks/useDebouncedValue';
+import { useListQuery } from '@client/src/hooks/useListQuery';
 import { formatMoney, formatPercent } from '@client/src/utils/format';
 import { PROJECT_STATUS_LABELS } from '@client/src/utils/biz-labels';
 import {
@@ -37,6 +35,10 @@ const PROJECT_EXPORT_COLUMNS: ExcelSheetColumn<Project>[] = [
   { header: '项目编号', value: (row: Project) => row.code },
   { header: '名称', value: (row: Project) => row.name },
   { header: '合同', value: (row: Project) => row.contractName ?? '' },
+  {
+    header: '成交报价',
+    value: (row: Project) => row.wonQuotationCode ?? '',
+  },
   { header: '项目经理', value: (row: Project) => row.pm ?? '' },
   { header: '预算基线', value: (row: Project) => row.budget },
   { header: '进度（%）', value: (row: Project) => row.progress },
@@ -48,20 +50,18 @@ const PROJECT_EXPORT_COLUMNS: ExcelSheetColumn<Project>[] = [
 ];
 
 const ProjectsPage: React.FC = () => {
+  const navigate = useNavigate();
+  const { q, setQ, debouncedQ, debouncing } = useListQuery();
   const [statusFilter, setStatusFilter] = useState('all');
-  const [keyword, setKeyword] = useState('');
-  const keywordQuery = useDebouncedValue(keyword);
-  const [formOpen, setFormOpen] = useState(false);
-  const [detailId, setDetailId] = useState<string | null>(null);
   const [similarTarget, setSimilarTarget] = useState<SimilarTarget | null>(null);
 
   const { data, loading, error, reload } = useAsyncData<Project[]>(
     () =>
       projectsApi.listProjects({
         status: statusFilter !== 'all' ? statusFilter : undefined,
-        keyword: keywordQuery || undefined,
+        keyword: debouncedQ || undefined,
       }),
-    [statusFilter, keywordQuery],
+    [statusFilter, debouncedQ],
   );
 
   const handleExport = () => {
@@ -82,13 +82,32 @@ const ProjectsPage: React.FC = () => {
       render: (v: string, record: Project) => (
         <Link
           to={`/projects/${record.id}`}
-          className="text-primary underline-offset-2 hover:underline"
+          className="font-medium text-primary underline-offset-2 hover:underline"
         >
           {v}
         </Link>
       ),
     },
-    { title: '合同', dataIndex: 'contractName', width: 200 },
+    { title: '合同', dataIndex: 'contractName', width: 180 },
+    {
+      title: '成交报价',
+      key: 'wonQuote',
+      width: 180,
+      render: (_, row) =>
+        row.wonQuotationId ? (
+          <Link
+            to={`/crm/quotations/${row.wonQuotationId}`}
+            className="text-primary underline-offset-2 hover:underline"
+          >
+            {row.wonQuotationCode}
+            {row.wonQuotationAmount != null
+              ? ` · ${formatMoney(row.wonQuotationAmount)}`
+              : ''}
+          </Link>
+        ) : (
+          '-'
+        ),
+    },
     { title: '项目经理', dataIndex: 'pm', width: 100, render: (v) => v ?? '-' },
     {
       title: '预算基线',
@@ -109,10 +128,14 @@ const ProjectsPage: React.FC = () => {
       title: '操作',
       key: 'action',
       fixed: 'right',
-      width: 150,
+      width: 160,
       render: (_, record) => (
         <div className="flex gap-1">
-          <Button variant="ghost" size="sm" onClick={() => setDetailId(record.id)}>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => navigate(`/projects/${record.id}`)}
+          >
             详情
           </Button>
           <Button
@@ -131,7 +154,7 @@ const ProjectsPage: React.FC = () => {
   ];
 
   return (
-    <PageShell title="项目管理" description="立项、状态流转、里程碑、变更审批与项目核算">
+    <PageShell title="项目管理" description="立项、状态流转、里程碑与成交报价关联（整页）">
       <div className="flex flex-wrap items-center gap-3">
         <div className="flex items-center gap-2">
           <Label htmlFor="project-status-filter">状态</Label>
@@ -153,11 +176,14 @@ const ProjectsPage: React.FC = () => {
           aria-label="搜索项目"
           placeholder="搜索项目名称或编号"
           className="w-64"
-          value={keyword}
-          onChange={(e) => setKeyword(e.target.value)}
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
         />
+        {debouncing ? (
+          <span className="text-xs text-muted-foreground">筛选中…</span>
+        ) : null}
         <CanRole roles={['admin']}>
-          <Button onClick={() => setFormOpen(true)}>
+          <Button onClick={() => navigate('/projects/new')}>
             <Plus className="h-4 w-4" />
             项目立项
           </Button>
@@ -177,22 +203,14 @@ const ProjectsPage: React.FC = () => {
           columns={columns}
           dataSource={data ?? []}
           rowKey="id"
-          scroll={{ x: 1300, y: 500 }}
+          scroll={{ x: 1500, y: 500 }}
           pagination={{
             pageSize: 10,
             showTotal: (total: number) => `共 ${total} 条`,
           }}
-          locale={{ emptyText: '暂无项目，点击右上角「新建项目」创建' }}
+          locale={{ emptyText: '暂无项目，点击「项目立项」进入整页创建' }}
         />
       </DataState>
-      <ProjectFormDialog
-        open={formOpen}
-        onOpenChange={setFormOpen}
-        onCreated={(id: string) => {
-          setDetailId(id);
-          void reload();
-        }}
-      />
       <SimilarItemsDialog
         open={similarTarget !== null}
         onClose={() => setSimilarTarget(null)}
@@ -200,14 +218,7 @@ const ProjectsPage: React.FC = () => {
         target={similarTarget}
         onPick={(item) => {
           setSimilarTarget(null);
-          setDetailId(item.id);
-        }}
-      />
-      <ProjectDetailDialog
-        projectId={detailId}
-        open={detailId !== null}
-        onOpenChange={(open) => {
-          if (!open) setDetailId(null);
+          navigate(`/projects/${item.id}`);
         }}
       />
     </PageShell>

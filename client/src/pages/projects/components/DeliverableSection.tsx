@@ -9,6 +9,7 @@ import { Table, TableColumnsType } from 'antd';
 import { CanRole } from '@client/src/platform/auth';
 import { AttachmentField } from '@client/src/components/attachments/AttachmentField';
 import { DataState } from '@client/src/components/DataState';
+import { SectionTitle } from '@client/src/components/SectionTitle';
 import DateField from '@client/src/components/erp/DateField';
 import { Badge } from '@client/src/components/ui/badge';
 import { Button } from '@client/src/components/ui/button';
@@ -321,7 +322,7 @@ const DeliverableSection: React.FC<DeliverableSectionProps> = ({ projectId, onCh
   return (
     <div className="flex flex-col gap-3">
       <div className="flex items-center justify-between">
-        <h3 className="text-base font-semibold">项目交付物</h3>
+        <SectionTitle>项目交付物</SectionTitle>
         <CanRole roles={['admin']}>
           <Button size="sm" variant="outline" onClick={() => setAddOpen(true)}>
             <Plus className="h-4 w-4" />

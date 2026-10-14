@@ -1,0 +1,24 @@
+{
+  "//": "C-12：只编译批次二 OpenAPI 路由目录到 .openapi-build/，用于 `npm run gen:openapi:build` 的快速通道（无需全量 nest build）。",
+  "extends": "./tsconfig.node.json",
+  "compilerOptions": {
+    "incremental": false,
+    "noEmit": false,
+    "rootDir": "./",
+    "outDir": "./.openapi-build",
+    "declaration": false,
+    "sourceMap": false,
+    "types": ["node"],
+    "baseUrl": "./",
+    "paths": {
+      "@server/*": ["server/*"],
+      "@shared/*": ["shared/*"]
+    }
+  },
+  "include": [
+    "server/modules/integrations/openapi/openapi.builder.ts",
+    "server/modules/integrations/openapi/routes.catalog.ts",
+    "server/modules/integrations/openapi/openapi-generate.ts"
+  ],
+  "exclude": ["**/*.spec.ts", "node_modules", "dist"]
+}

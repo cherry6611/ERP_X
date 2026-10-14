@@ -16,8 +16,9 @@
 ## 架构约定
 
 - 模块目录：`server/modules/<name>/`，页面 `client/src/pages/<name>/`，前端 API `client/src/api/<name>/`。
+- 飞书 OAuth 登录：`FEISHU_REDIRECT_URI` 宿主须与 `APP_BASE_URL` / 浏览器一致（本地用 `127.0.0.1`，勿混 `localhost`，否则 state Cookie 失效）；飞书开放平台重定向 URL 须与 env 逐字符相同。未绑定飞书禁止自动注册：密码登录 → 设置页「绑定飞书」(`/api/auth/feishu/bind`) → 之后可用飞书登录；回调失败 302 到 `/login?feishu_error=…`。
 - 飞书集成：插件实例 `send_erp_approval_notification_1`（审批通知，收件人=单据提交人+admin）、`erp_bitable_two_way_sync_1`（成本出向）、`contract_ledger_archiving_1`（合同出向）、`flexible_labor_hours_sync_1`（工时入向）；后三个为 feishu-bitable 插件，appToken/tableID 需用户在插件配置页填写。同步模块 `server/modules/feishu-sync/`，幂等映射表 `comp_feishu_sync_record`，cron 触发器 `feishu_daily_sync`（未激活）。
-- 飞书云空间/知识库直连：`server/modules/feishu-drive/`（feishu-client/drive/wiki/config service），凭证存 `comp_feishu_drive_config` 单行配置表（RLS 不放行 anon），tenant_access_token 内存缓存提前 5 分钟刷新；前端页面 `/drive`、`/wiki`。云空间支持浏览/新建文件夹/新建文档/上传（限 10MB，base64 经 upload_all）/重命名/删除；知识库支持节点树浏览与云文档同步（`POST /api/wiki/sync`）。重命名/删除/同步/配置读写为 `@CanRole(['admin'])`，浏览/新建/上传登录即可。知识库空间需用户在飞书侧把应用加为空间成员（可编辑），未授权时 131006→页面显示引导提示。
+- 飞书云空间/知识库直连：`server/modules/feishu-drive/`（feishu-client/drive/wiki/config service），凭证存 `comp_feishu_drive_config` 单行配置表（RLS 不放行 anon），tenant_access_token 内存缓存提前 5 分钟刷新；前端页面 `/drive`、`/wiki`。云空间支持浏览/新建文件夹/新建文档/上传（限 10MB，base64 经 upload_all）/重命名/删除；知识库支持节点树浏览与云文档同步（`POST /api/wiki/sync`）。重命名/删除/同步/配置读写为 `@CanCapability('drive_write')`（仅 admin），浏览/新建/上传登录即可。知识库空间需用户在飞书侧把应用加为空间成员（可编辑），未授权时 131006→页面显示引导提示。
 - 员工与飞书身份绑定：`md_employee.platform_user_id`（唯一表达式索引）；`GET /api/hr/employees/me` 按当前用户查绑定员工，工时填报自动带出。
 - HR 三期扩展：员工自助 `GET /api/hr/my/summary`（档案/本月考勤/本年余额/已审批工资单）；补卡表 `hr_attendance_amendment`（审批通过后事务内生成 hr_attendance）；年假按司龄规则初始化（<1年5天、1-3年8天、3-5年10天、5-10年12天、≥10年15天，不覆盖已设置余额）；离职流转 `POST /api/hr/employees/:id/offboard`（状态机 probation/active→resigned，返回近 60 天确认工时的待交接项目）。
 - 附件来源：`comp_attachment.source_type`（upload/feishu_doc）；云文档链接登记走 AttachmentField「云文档链接」按钮；审批通知自动附带单据附件链接；发票（erp_invoice）、报价单（crm_quotation）、成本凭证（erp_project_cost）、交付物验收单（erp_deliverable）均已放行附件类型，对应弹窗内可上传文件/登记云文档链接。
@@ -36,9 +37,16 @@
 - 项目状态流转与结项闭环在 `projects-status.service.ts`（`projects.transform.ts` 提供 toProject/状态机表）；周报纪要在 `minutes.service.ts`；主 service 只剩查询/建改/合同链路。
 - 聚合文件 `server/app.module.ts` / `client/src/app.tsx` / `client/src/api/index.ts` 由主 agent 维护，业务模块禁止改。
 - 前后端契约唯一权威：`shared/api.interface.ts`，属性一律 camelCase；请求参数类型（各 ListParams/Payload）也统一定义在 shared，`client/src/api/` 不得再本地定义 interface/type。
-- 业务编号：service 内生成，`前缀+YYYYMM+4位流水`（按表内当月计数），如 CTR2026100001（报价 QUO、合同 CTR）。
-- 期间/日期：业务时区 Asia/Shanghai，月份用 `YYYY-MM` 字符串；时间字段传输 ISO 字符串。
-- 接口鉴权：全部业务 controller 类级 `@NeedLogin()`；敏感写操作叠加方法级 `@CanRole(['admin'])`（财务/成本/HR 工资、HR 招聘/考核/培训、考勤补录、行政租约/账单/资产/事务、附件删除、手动成本/分摊等），前端对应按钮用 `<CanRole roles={['admin']}>` 包裹同步隐藏；员工自助保留登录态：补卡、请假、工时填报与确认、资产变更申请、采购申请、附件上传/云文档链接登记。
-- 状态机变更在 service 校验前置状态，非法流转抛 `BadRequestException`。
-- 数据库表前缀：`md_`（主数据）、`crm_`（前端业务）、`erp_`（核算/合同/项目/财务）、`comp_`（合规）。
+- 业务编号：`generateBizCode(db, table, table.code, 'PREFIX', now?, { bizType })`，编号结构与前缀/位数/重置策略由 `sys_code_rule` 配置（B-08）；规则缺失时按传入前缀与 `前缀+YYYYMM+4位流水` 回落（如 CTR2026100001）。**作废不重用**（B-09）：回退路径用 `MAX(seq)+1` 而非 `count()+1`，财务类单据（凭证/发票/收付款/工资单/应付/应收）禁止开启 `allow_reuse`。
+- 期间/日期：业务时区 Asia/Shanghai，月份用 `YYYY-MM` 字符串；时间字段传输 ISO 字符串；新增日期逻辑必须用 `server/common/utils/biz-date.ts`。
+- **接口鉴权（B-01）**：全部业务 controller 类级 `@NeedLogin()`；方法级**只用** `@CanCapability('x')`（写语义，要求矩阵中该能力为 `rw`）或 `@CanCapabilityRead('x')`（读语义，`r` 或 `rw` 均可）。**禁止 `@CanRole`**（`npm run check:rbac` 会拦）。角色→能力的唯一权威是 `shared/rbac.ts` 的 `MATRIX`；新增能力码必须同时登记到 `Capability` 联合类型与 `server/common/auth/route-capability.ts` 的映射表。前端按钮用 `<CanCapability capability="x">` / `<CanCapabilityWrite capability="x">` 包裹同步隐藏；路由级守卫见 `client/src/platform/RequireCapability.tsx`（未登录跳登录页，无权渲染明确提示而非空白）。员工自助保留登录态：补卡、请假、工时填报与确认、资产变更申请、采购申请、附件上传/云文档链接登记。
+- **请求体 DTO（API-1）**：`@Body()` 必须是 **class DTO**（`implements` shared 同名契约类型 + class-validator 装饰器）；禁止 interface 或内联对象类型（运行时会擦除，`ValidationPipe` 静默放行任意请求体）。金额用 `@IsNumber({ maxDecimalPlaces: 2 })` + `@Min(0.01)`；期间用 `@Matches(/^\d{4}-(0[1-9]|1[0-2])$/)`；UUID 用 `@IsUUID()`。
+  ⚠️ **DTO class 必须定义在 controller class 之前**：否则 SWC 编译到 CJS 后类声明仍是 `let/const`（TDZ），生产构建**启动时**会抛 `Cannot access 'X' before initialization`，而 `tsc --noEmit` 与 jest 都发现不了。
+- **迁移顺序**：迁移按**文件名排序**执行，新迁移必须排在所依赖的建表迁移之后（先例：`2026-10-15-upgrade-batch1z-code-rules-seed.sql` 的 `z`）。改名前先跑 `npm run migrate:dryrun`（pglite 全量执行）。所有 DDL 必须幂等（`IF NOT EXISTS` / `DO $$ ... EXCEPTION WHEN duplicate_object`），文件头写 `-- requires:`。
+- **新增查询统一走 Drizzle**，仅事务中间件保留裸 `pg`；**新增外部 IO（HTTP/文件流/通知）必须在事务外**。
+- **数据级权限（B-02）**：行级可见范围由 `sys_data_scope` + `server/common/auth/data-scope.service.ts` 在 **SQL 层**注入条件（不能只在 UI 隐藏）；收窄但取不到值时必须 fail-closed 返回空集。
+- **上传安全（B-06）**：`server/common/security/upload-policy.ts` 校验扩展名 + 大小 + **内容魔数**（改名伪装被拒），SVG 额外拦截脚本/事件；扫描结论落 `comp_stored_file.scan_status`，`none` 记为 `skipped` 而非 `clean`。附件版本链见 `FilesService.save({ parentFileId })` 与 `GET /api/files/:id/versions`。
+- 状态机变更在 service 校验前置状态，非法流转抛 `BadRequestException`（消息必须为可读中文，CI 由 `node ./scripts/audit-error-messages.mjs` 审计）。
+- 数据库表前缀：`md_`（主数据）、`crm_`（前端业务）、`erp_`（核算/合同/项目/财务）、`fin_`（账务/报表）、`hr_`（人事）、`sys_`（系统配置与安全）、`comp_`（合规）。
 - 测试/演示数据：一律以 `[API_TEST]` 前缀命名；接口自测数据用后即删，删除前留档至 `docs/api-test-data-archive/`；生产库不保留演示数据。
+- 运维与进度台账：`docs/RUNBOOK.md`（健康检查/账务核对/迁移回滚/备份演练/定时任务）、`docs/升级落地状态台账-2026-10-15.md`（逐条需求落地状态与遗留清单）、`docs/B14-error-message-audit.md`。

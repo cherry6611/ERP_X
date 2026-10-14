@@ -71,7 +71,7 @@ export class NotificationsController {
     @Body() dto: SendApprovalNotificationDto
   ): Promise<ApprovalNotificationResult> {
     const actor = actorFromRequest(req);
-    consumeRate(`notify:${actor.userId}`, 10, 60 * 60 * 1000);
+    await consumeRate(`notify:${actor.userId}`, 10, 60 * 60 * 1000);
     return this.notificationsService.sendApprovalNotification(dto, {
       kind: 'user',
       userId: actor.userId,

@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useForm } from 'react-hook-form';
 import { z } from 'zod';
@@ -7,6 +8,7 @@ import { AlertTriangle, Plus } from 'lucide-react';
 import { Table, TableColumnsType } from 'antd';
 import { CanRole } from '@client/src/platform/auth';
 import DateField from '@client/src/components/erp/DateField';
+import { SectionTitle } from '@client/src/components/SectionTitle';
 import { Button } from '@client/src/components/ui/button';
 import {
   Dialog,
@@ -37,7 +39,6 @@ import {
   projectsApi,
 } from '@client/src/api';
 import { useAsyncData } from '@client/src/hooks/useAsyncData';
-import { AttachmentField } from '@client/src/components/attachments/AttachmentField';
 import AttachmentHint from '@client/src/components/attachments/AttachmentHint';
 import type {
   CreateGrantDto,
@@ -84,12 +85,12 @@ const EMPTY_FORM: GrantFormInput = {
 };
 
 const GrantPanel: React.FC = () => {
+  const navigate = useNavigate();
   const [statusFilter, setStatusFilter] = useState('all');
   const [datasetFilter, setDatasetFilter] = useState('all');
   const [page, setPage] = useState(1);
   const [createOpen, setCreateOpen] = useState(false);
-  const [detailTarget, setDetailTarget] = useState<GrantItem | null>(null);
-  const [operating, setOperating] = useState(false);
+    const [operating, setOperating] = useState(false);
 
   const { data, loading, error, reload } = useAsyncData(
     () =>
@@ -140,7 +141,7 @@ const GrantPanel: React.FC = () => {
       const created = await dataAssetApi.createGrant(dto);
       toast.success('授权记录已创建');
       setCreateOpen(false);
-      setDetailTarget(created);
+      navigate(`/data-asset/grants/${created.id}`, { state: { item: created } });
       form.reset(EMPTY_FORM);
       await reload();
       await reloadWarnings();
@@ -213,7 +214,7 @@ const GrantPanel: React.FC = () => {
       width: 100,
       render: (_: unknown, record: GrantItem) => (
         <div className="flex gap-1">
-          <Button variant="ghost" size="sm" onClick={() => setDetailTarget(record)}>
+          <Button variant="ghost" size="sm" onClick={() => navigate(`/data-asset/grants/${record.id}`, { state: { item: record } })}>
             详情
           </Button>
           {record.status === 'active' ? (
@@ -231,10 +232,12 @@ const GrantPanel: React.FC = () => {
   return (
     <div className="flex flex-col gap-6">
       <div className="flex flex-col gap-3">
-        <h3 className="text-base font-semibold flex items-center gap-2">
-          <AlertTriangle className="h-4 w-4 text-warning" />
-          授权到期预警（30 天内到期 / 已过期）
-        </h3>
+        <SectionTitle>
+          <span className="inline-flex items-center gap-2">
+            <AlertTriangle className="h-4 w-4 text-warning" aria-hidden />
+            授权到期预警（30 天内到期 / 已过期）
+          </span>
+        </SectionTitle>
         <Table
           columns={warningColumns}
           dataSource={warnings ?? []}
@@ -499,59 +502,6 @@ const GrantPanel: React.FC = () => {
         </DialogContent>
       </Dialog>
 
-      <Dialog
-        open={detailTarget !== null}
-        onOpenChange={(open: boolean) => {
-          if (!open) setDetailTarget(null);
-        }}
-      >
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle>授权详情 {detailTarget?.code ?? ''}</DialogTitle>
-          </DialogHeader>
-          {detailTarget ? (
-            <div className="flex flex-col gap-4">
-              <div className="grid grid-cols-2 gap-x-6 gap-y-1 text-sm">
-                <p>
-                  <span className="text-muted-foreground">数据集：</span>
-                  {detailTarget.datasetName}
-                </p>
-                <p>
-                  <span className="text-muted-foreground">客户：</span>
-                  {detailTarget.customerName ?? '-'}
-                </p>
-                <p>
-                  <span className="text-muted-foreground">项目：</span>
-                  {detailTarget.projectName ?? '-'}
-                </p>
-                <p className="flex items-center gap-2">
-                  <span className="text-muted-foreground">状态：</span>
-                  <DataAssetBadge status={detailTarget.status} labels={GRANT_STATUS_LABELS} />
-                </p>
-                <p>
-                  <span className="text-muted-foreground">开始日期：</span>
-                  {detailTarget.startDate ?? '-'}
-                </p>
-                <p>
-                  <span className="text-muted-foreground">结束日期：</span>
-                  {detailTarget.endDate ?? '-'}
-                </p>
-              </div>
-              <p className="text-sm">
-                <span className="text-muted-foreground">授权范围：</span>
-                {detailTarget.scope ?? '-'}
-              </p>
-              <div className="border-t pt-4">
-                <AttachmentField
-                  resourceType="da_grant"
-                  resourceId={detailTarget.id}
-                  usageHint="授权协议、审批文件等"
-                />
-              </div>
-            </div>
-          ) : null}
-        </DialogContent>
-      </Dialog>
     </div>
   );
 };

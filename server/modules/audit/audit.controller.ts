@@ -1,5 +1,5 @@
 import { Controller, Get, Query } from '@nestjs/common';
-import { CanRole, NeedLogin } from '@server/platform';
+import { CanCapability, NeedLogin } from '@server/platform';
 import { AuditService } from './audit.service';
 import type { AuditLog } from '@shared/api.interface';
 
@@ -8,13 +8,13 @@ import type { AuditLog } from '@shared/api.interface';
 export class AuditController {
   constructor(private readonly auditService: AuditService) {}
 
-  @CanRole(['admin'])
+  @CanCapability('audit')
   @Get('demo-residue')
   async demoResidue(): Promise<{ projects: number; contracts: number }> {
     return this.auditService.countDemoResidue();
   }
 
-  @CanRole(['admin'])
+  @CanCapability('audit')
   @Get('logs')
   async listLogs(
     @Query('objectType') objectType?: string,

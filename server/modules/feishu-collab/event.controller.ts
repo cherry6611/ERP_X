@@ -4,6 +4,7 @@ import { Inject } from '@nestjs/common';
 import { sql } from 'drizzle-orm';
 import { NeedLogin, Public, DRIZZLE_DATABASE, type PostgresJsDatabase } from '@server/platform';
 import { FeishuContactService } from './contact.service';
+import { ApprovalCallbackService } from './approval-callback.service';
 
 @NeedLogin()
 @Controller('api/feishu-event')
@@ -11,6 +12,7 @@ export class FeishuEventController {
   constructor(
     @Inject(DRIZZLE_DATABASE) private readonly db: PostgresJsDatabase,
     private readonly contact: FeishuContactService,
+    private readonly approvalCallback: ApprovalCallbackService,
   ) {}
 
   @Public()
@@ -36,6 +38,15 @@ export class FeishuEventController {
     const eventType = header.event_type ?? '';
     if (eventType.startsWith('contact.')) {
       await this.contact.incrementalSync();
+    }
+    // E4：审批实例状态变更回写 ERP
+    if (
+      eventType.startsWith('approval_instance') ||
+      eventType.startsWith('approval.instance') ||
+      eventType === 'approval_task' ||
+      eventType.includes('approval')
+    ) {
+      await this.approvalCallback.handleEvent(payload);
     }
     return { ok: true };
   }

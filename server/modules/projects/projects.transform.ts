@@ -9,7 +9,9 @@ export interface ProjectRowLike {
   code: string;
   name: string;
   contractId: string | null;
+  wonQuotationId?: string | null;
   pm: string | null;
+  pmUserId?: string | null;
   deptName: string | null;
   budget: string | null;
   estimatedTotalCost: string;
@@ -25,14 +27,33 @@ export interface ProjectRowLike {
   createdAt: Date;
 }
 
-export function toProject(row: ProjectRowLike, contractName: string): Project {
+export interface ProjectQuoteExtra {
+  wonQuotationCode?: string | null;
+  wonQuotationTitle?: string | null;
+  wonQuotationAmount?: number | null;
+  opportunityId?: string | null;
+  opportunityTitle?: string | null;
+}
+
+export function toProject(
+  row: ProjectRowLike,
+  contractName: string,
+  extra: ProjectQuoteExtra = {},
+): Project {
   return {
     id: row.id,
     code: row.code,
     name: row.name,
     contractId: row.contractId ?? '',
     contractName,
+    wonQuotationId: row.wonQuotationId ?? null,
+    wonQuotationCode: extra.wonQuotationCode ?? null,
+    wonQuotationTitle: extra.wonQuotationTitle ?? null,
+    wonQuotationAmount: extra.wonQuotationAmount ?? null,
+    opportunityId: extra.opportunityId ?? null,
+    opportunityTitle: extra.opportunityTitle ?? null,
     pm: row.pm,
+    pmUserId: row.pmUserId ?? null,
     deptName: row.deptName,
     budget: Number(row.budget ?? 0),
     estimatedTotalCost: Number(row.estimatedTotalCost ?? 0),

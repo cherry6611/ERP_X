@@ -19,7 +19,7 @@ const CREDIT_ALERT_RATIO = 0.8;
 interface CreditAlertRow {
   code: string;
   name: string;
-  creditLimit: string;
+  creditLimit: string | null;
   openAr: string;
 }
 

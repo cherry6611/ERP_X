@@ -185,3 +185,88 @@ export async function generateVendorSettlement(
   ensureNotForbidden(resp);
   return resp.data;
 }
+
+export async function reverseArWriteoff(
+  id: string,
+  remark?: string,
+): Promise<ArItem> {
+  const resp = await axiosForBackend.post<ArItem>(
+    `/api/finance/ar-writeoffs/${id}/reverse`,
+    { remark },
+  );
+  ensureNotForbidden(resp);
+  return resp.data;
+}
+
+export async function reverseApWriteoff(
+  id: string,
+  remark?: string,
+): Promise<ApItem> {
+  const resp = await axiosForBackend.post<ApItem>(
+    `/api/finance/ap-writeoffs/${id}/reverse`,
+    { remark },
+  );
+  ensureNotForbidden(resp);
+  return resp.data;
+}
+
+export async function listArWriteoffs(arId?: string) {
+  const resp = await axiosForBackend.get('/api/finance/ar-writeoffs', {
+    params: arId ? { arId } : undefined,
+  });
+  return resp.data as Array<{
+    id: string;
+    arId: string;
+    receiptId: string;
+    amount: number;
+    writeoffDate: string | null;
+    reversalOf: string | null;
+    remark: string | null;
+  }>;
+}
+
+export async function reconSummary() {
+  const resp = await axiosForBackend.get('/api/finance/reconciliation/summary');
+  return resp.data as {
+    purchaseUnlinked: number;
+    salesUnlinked: number;
+    receiptUnlinked: number;
+    voidedRisk: number;
+  };
+}
+
+export async function reconPurchaseAp() {
+  const resp = await axiosForBackend.get(
+    '/api/finance/reconciliation/purchase-ap',
+  );
+  return resp.data;
+}
+
+export async function reconSalesAr() {
+  const resp = await axiosForBackend.get('/api/finance/reconciliation/sales-ar');
+  return resp.data;
+}
+
+export async function reconReceiptWriteoff() {
+  const resp = await axiosForBackend.get(
+    '/api/finance/reconciliation/receipt-writeoff',
+  );
+  return resp.data;
+}
+
+export async function unbindPurchaseAp(invoiceId: string) {
+  const resp = await axiosForBackend.post(
+    `/api/finance/reconciliation/purchase-ap/${invoiceId}/unbind`,
+  );
+  ensureNotForbidden(resp);
+  return resp.data;
+}
+
+export async function bindPurchaseAp(invoiceId: string, apId: string) {
+  const resp = await axiosForBackend.post(
+    `/api/finance/reconciliation/purchase-ap/${invoiceId}/bind`,
+    { apId },
+  );
+  ensureNotForbidden(resp);
+  return resp.data;
+}

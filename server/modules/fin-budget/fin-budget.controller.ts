@@ -8,7 +8,7 @@ import {
   Post,
   Query,
 } from '@nestjs/common';
-import { CanRole, NeedLogin } from '@server/platform';
+import { CanCapability, NeedLogin } from '@server/platform';
 import {
   IsNumber,
   IsOptional,
@@ -88,13 +88,13 @@ export class FinBudgetController {
     );
   }
 
-  @CanRole(['admin'])
+  @CanCapability('finance_write')
   @Post('budgets')
   async createBudget(@Body() dto: CreateBudgetDto): Promise<BudgetItem> {
     return this.finBudgetService.createBudget(dto);
   }
 
-  @CanRole(['admin'])
+  @CanCapability('finance_write')
   @Patch('budgets/:id')
   async updateBudget(
     @Param('id', ParseUUIDPipe) id: string,

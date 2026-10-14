@@ -2,11 +2,12 @@ import React from 'react';
 import ReactECharts from 'echarts-for-react';
 import type { EChartsOption } from 'echarts';
 import { Table, TableColumnsType } from 'antd';
+import { SectionTitle } from '@client/src/components/SectionTitle';
 import { Button } from '@client/src/components/ui/button';
 import { financeApi } from '@client/src/api';
 import { useAsyncData } from '@client/src/hooks/useAsyncData';
+import { seriesColor } from '@client/src/theme/tokens';
 import { formatMoney } from '@client/src/utils/format';
-import { CHART_SEMANTIC_COLORS } from '@client/src/utils/chart-colors';
 import type { AgingBucket } from '@shared/api.interface';
 
 const AgingTab: React.FC = () => {
@@ -30,7 +31,7 @@ const AgingTab: React.FC = () => {
         type: 'bar',
         name: '应收金额',
         data: buckets.map((b) => b.amount),
-        itemStyle: { color: CHART_SEMANTIC_COLORS.danger },
+        itemStyle: { color: seriesColor('cost') },
       },
     ],
   };
@@ -58,9 +59,11 @@ const AgingTab: React.FC = () => {
         </p>
       ) : null}
       <div className="rounded-lg border bg-card p-4">
-        <h3 className="text-base font-semibold">应收账龄分布</h3>
+        <SectionTitle>应收账龄分布</SectionTitle>
         {buckets.length > 0 ? (
-          <ReactECharts option={option} theme="ud" className="h-[300px] w-full" />
+          <div role="img" aria-label="应收账龄分布图">
+            <ReactECharts option={option} theme="ud" className="h-[300px] w-full" />
+          </div>
         ) : (
           <p className="py-8 text-center text-sm text-muted-foreground">
             暂无账龄数据，登记应收单据后自动生成

@@ -11,6 +11,7 @@ import {
   erpReceipt,
 } from '@server/database/schema';
 import type { FinanceSummary } from '@shared/api.interface';
+import { todayInShanghai } from '@server/common/utils/biz-date';
 
 @Injectable()
 export class FinanceService {
@@ -28,7 +29,7 @@ export class FinanceService {
       })
       .from(erpAr)
       .where(ne(erpAr.status, 'settled'));
-    const today = new Date().toISOString().slice(0, 10);
+    const today = todayInShanghai();
     let openArAmount = 0;
     let overdueArAmount = 0;
     for (const row of arRows) {

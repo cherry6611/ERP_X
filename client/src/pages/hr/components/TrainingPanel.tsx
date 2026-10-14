@@ -6,6 +6,7 @@ import { toast } from 'sonner';
 import { Plus, UserPlus } from 'lucide-react';
 import { Table, TableColumnsType } from 'antd';
 import { CanRole } from '@client/src/platform/auth';
+import { SectionTitle } from '@client/src/components/SectionTitle';
 import DateField from '@client/src/components/erp/DateField';
 import HrStatusBadge, { TRAINING_STATUS_LABELS } from './HrStatusBadge';
 import { Button } from '@client/src/components/ui/button';
@@ -180,7 +181,7 @@ const TrainingPanel: React.FC = () => {
   return (
     <div className="flex flex-col gap-4">
       <div className="flex items-center justify-between gap-3">
-        <h3 className="text-base font-semibold">培训课程</h3>
+        <SectionTitle>培训课程</SectionTitle>
         <CanRole roles={['admin']}>
           <Button onClick={() => setCreateOpen(true)}>
             <Plus className="h-4 w-4" />

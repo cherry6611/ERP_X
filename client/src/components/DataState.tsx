@@ -91,7 +91,9 @@ export function DataState({
       <Empty className="py-12">
         <EmptyHeader>
           <EmptyMedia variant="icon">
-            <Inbox />
+            <span className="flex size-12 items-center justify-center rounded-xl bg-primary/10 text-primary shadow-brand">
+              <Inbox className="size-6" aria-hidden="true" />
+            </span>
           </EmptyMedia>
           <EmptyTitle>{emptyTitle ?? emptyText}</EmptyTitle>
           {emptyTitle ? (

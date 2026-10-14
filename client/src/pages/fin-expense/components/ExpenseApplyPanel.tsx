@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useForm } from 'react-hook-form';
 import { z } from 'zod';
@@ -35,8 +36,8 @@ import {
 import { Textarea } from '@client/src/components/ui/textarea';
 import { finExpenseApi, hrApi, projectsApi } from '@client/src/api';
 import { useAsyncData } from '@client/src/hooks/useAsyncData';
+import { confirmDanger } from '@client/src/utils/confirmDanger';
 import { formatMoney } from '@client/src/utils/format';
-import { AttachmentField } from '@client/src/components/attachments/AttachmentField';
 import AttachmentHint from '@client/src/components/attachments/AttachmentHint';
 import FinStatusBadge, { APPLY_STATUS_LABELS } from './FinStatusBadge';
 import type {
@@ -87,12 +88,12 @@ const APPLY_STATUS_OPTIONS = [
 ];
 
 const ExpenseApplyPanel: React.FC = () => {
+  const navigate = useNavigate();
   const [page, setPage] = useState<number>(1);
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [projectFilter, setProjectFilter] = useState<string>('all');
   const [createOpen, setCreateOpen] = useState(false);
-  const [detailTarget, setDetailTarget] = useState<ExpenseApplyItem | null>(null);
-  const [operating, setOperating] = useState(false);
+    const [operating, setOperating] = useState(false);
 
   const { data, loading, error, reload } = useAsyncData<
     PagedResult<ExpenseApplyItem>
@@ -138,7 +139,7 @@ const ExpenseApplyPanel: React.FC = () => {
       setCreateOpen(false);
       form.reset(EMPTY_FORM);
       await reload();
-      setDetailTarget(created);
+      navigate(`/fin-expense/applies/${created.id}`, { state: { item: created } });
     } catch (err) {
       toast.error(err instanceof Error ? err.message : '提交失败');
     } finally {
@@ -147,6 +148,20 @@ const ExpenseApplyPanel: React.FC = () => {
   });
 
   const doAction = async (item: ExpenseApplyItem, action: ExpenseApplyAction) => {
+    if (action === 'reject') {
+      const ok = await confirmDanger(
+        `确认驳回费用申请 ${item.code}？`,
+        { title: '确认驳回', confirmLabel: '确认驳回' },
+      );
+      if (!ok) return;
+    }
+    if (action === 'close') {
+      const ok = await confirmDanger(
+        `确认关闭费用申请 ${item.code}？关闭后不可继续报销。`,
+        { title: '确认关闭', confirmLabel: '确认关闭' },
+      );
+      if (!ok) return;
+    }
     try {
       await finExpenseApi.applyAction(item.id, action);
       toast.success('操作成功');
@@ -218,7 +233,7 @@ const ExpenseApplyPanel: React.FC = () => {
           <Button
             variant="ghost"
             size="sm"
-            onClick={() => setDetailTarget(record)}
+            onClick={() => navigate(`/fin-expense/applies/${record.id}`, { state: { item: record } })}
             aria-label={`查看申请详情 ${record.code}`}
           >
             详情
@@ -550,74 +565,6 @@ const ExpenseApplyPanel: React.FC = () => {
         </DialogContent>
       </Dialog>
 
-      <Dialog
-        open={detailTarget !== null}
-        onOpenChange={(open: boolean) => {
-          if (!open) setDetailTarget(null);
-        }}
-      >
-        <DialogContent className="max-w-lg">
-          <DialogHeader>
-            <DialogTitle>费用申请详情 {detailTarget?.code ?? ''}</DialogTitle>
-          </DialogHeader>
-          {detailTarget ? (
-            <div className="flex flex-col gap-4">
-              <p className="text-sm">
-                <span className="text-muted-foreground">标题：</span>
-                {detailTarget.title}
-              </p>
-              <div className="grid grid-cols-2 gap-x-6 gap-y-1 text-sm">
-                <p>
-                  <span className="text-muted-foreground">类型：</span>
-                  {detailTarget.applyType === 'purchase' ? '采购' : '差旅'}
-                </p>
-                <p>
-                  <span className="text-muted-foreground">部门：</span>
-                  {detailTarget.departmentName ?? '-'}
-                </p>
-                <p>
-                  <span className="text-muted-foreground">项目：</span>
-                  {detailTarget.projectName ?? '-'}
-                </p>
-                <p>
-                  <span className="text-muted-foreground">费用科目：</span>
-                  {detailTarget.expenseCategory}
-                </p>
-                <p>
-                  <span className="text-muted-foreground">申请金额：</span>
-                  {formatMoney(detailTarget.amount)}
-                </p>
-                <p>
-                  <span className="text-muted-foreground">期望日期：</span>
-                  {detailTarget.expectDate ?? '-'}
-                </p>
-                <p className="flex items-center gap-2">
-                  <span className="text-muted-foreground">状态：</span>
-                  <FinStatusBadge
-                    status={detailTarget.status}
-                    labels={APPLY_STATUS_LABELS}
-                  />
-                </p>
-              </div>
-              <p className="text-sm">
-                <span className="text-muted-foreground">申请事由：</span>
-                {detailTarget.reason ?? '-'}
-              </p>
-              <p className="text-sm">
-                <span className="text-muted-foreground">备注：</span>
-                {detailTarget.remark ?? '-'}
-              </p>
-              <div className="mt-2 border-t pt-4">
-                <AttachmentField
-                  resourceType="fin_expense_apply"
-                  resourceId={detailTarget.id}
-                  usageHint="费用发票、票据凭证等"
-                />
-              </div>
-            </div>
-          ) : null}
-        </DialogContent>
-      </Dialog>
     </div>
   );
 };

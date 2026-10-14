@@ -23,7 +23,6 @@ export function useAsyncData<T>(loader: () => Promise<T>, deps: unknown[] = []) 
         setLoading(false);
       }
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, deps);
 
   useEffect(() => {

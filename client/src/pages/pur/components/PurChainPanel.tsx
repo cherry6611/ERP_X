@@ -8,6 +8,7 @@ import {
   ReceiptText,
 } from 'lucide-react';
 import { DataState } from '@client/src/components/DataState';
+import { Button } from '@client/src/components/ui/button';
 import {
   Card,
   CardContent,
@@ -105,13 +106,15 @@ const PurChainPanel: React.FC = () => {
           {error ? (
             <div className="flex items-center gap-2 text-sm text-destructive">
               <span>{error}</span>
-              <button
+              <Button
                 type="button"
-                className="text-primary underline underline-offset-2"
+                variant="link"
+                size="sm"
+                className="h-auto p-0"
                 onClick={() => void reload()}
               >
                 重试
-              </button>
+              </Button>
             </div>
           ) : (
             <div className="flex flex-wrap items-center gap-2">

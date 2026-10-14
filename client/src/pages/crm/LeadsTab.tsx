@@ -5,13 +5,12 @@ import { z } from 'zod';
 import { toast } from 'sonner';
 import { Download, Plus } from 'lucide-react';
 import { Table, TableColumnsType } from 'antd';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { CanRole } from '@client/src/platform/auth';
 import { DataState } from '@client/src/components/DataState';
 import FilterBar from '@client/src/components/erp/FilterBar';
 import StatusBadge from '@client/src/components/erp/StatusBadge';
 import DateField from '@client/src/components/erp/DateField';
-import { AttachmentField } from '@client/src/components/attachments/AttachmentField';
-import AttachmentHint from '@client/src/components/attachments/AttachmentHint';
 import { Button } from '@client/src/components/ui/button';
 import {
   Dialog,
@@ -46,14 +45,8 @@ import {
   type ExcelSheetColumn,
 } from '@client/src/components/excel/excel-utils';
 import { getApiErrorMessage } from '@client/src/utils/api-error-message';
-import type {
-  CreateLeadDto,
-  Lead,
-  LeadStatus,
-  UpdateLeadDto,
-} from '@shared/api.interface';
-
-const LEAD_SOURCES = ['官网咨询', '展会', '转介绍', '主动开发', '其他'];
+import { confirmDanger } from '@client/src/utils/confirmDanger';
+import type { Lead, LeadStatus, UpdateLeadDto } from '@shared/api.interface';
 
 const LEAD_EXPORT_COLUMNS: ExcelSheetColumn<Lead>[] = [
   { header: '编号', value: (row: Lead) => row.code },
@@ -70,18 +63,6 @@ const LEAD_EXPORT_COLUMNS: ExcelSheetColumn<Lead>[] = [
   { header: '跟进记录', value: (row: Lead) => row.followNote ?? '' },
 ];
 
-const leadSchema = z.object({
-  customerName: z.string().min(1, '客户名称不能为空'),
-  source: z.string(),
-  contactName: z.string(),
-  contactPhone: z.string(),
-  owner: z.string(),
-  nextDate: z.string().optional(),
-  remark: z.string(),
-});
-
-type LeadFormData = z.infer<typeof leadSchema>;
-
 const followSchema = z.object({
   status: z.string().min(1, '请选择状态'),
   followNote: z.string(),
@@ -92,44 +73,31 @@ const followSchema = z.object({
 type FollowFormData = z.infer<typeof followSchema>;
 
 const LeadsTab: React.FC = () => {
-  const [statusFilter, setStatusFilter] = useState<string>('all');
-  const [createOpen, setCreateOpen] = useState(false);
+  const [params, setParams] = useSearchParams();
+  const statusFilter = params.get('status') ?? 'all';
+  const setStatusFilter = (v: string) => {
+    setParams(
+      (prev) => {
+        const next = new URLSearchParams(prev);
+        if (v === 'all') next.delete('status');
+        else next.set('status', v);
+        return next;
+      },
+      { replace: true },
+    );
+  };
+  const navigate = useNavigate();
   const [followTarget, setFollowTarget] = useState<Lead | null>(null);
-  const [detailTarget, setDetailTarget] = useState<Lead | null>(null);
 
   const { data, loading, error, reload } = useAsyncData<Lead[]>(
     () => crmApi.listLeads(statusFilter !== 'all' ? statusFilter : undefined),
     [statusFilter],
   );
 
-  const createForm = useForm<LeadFormData>({
-    resolver: zodResolver(leadSchema),
-    defaultValues: {
-      customerName: '',
-      source: '官网咨询',
-      contactName: '',
-      contactPhone: '',
-      owner: '',
-      remark: '',
-    },
-  });
-
   const followForm = useForm<FollowFormData>({
     resolver: zodResolver(followSchema),
     defaultValues: { status: 'following', followNote: '', remark: '' },
   });
-
-  const openCreate = () => {
-    createForm.reset({
-      customerName: '',
-      source: '官网咨询',
-      contactName: '',
-      contactPhone: '',
-      owner: '',
-      remark: '',
-    });
-    setCreateOpen(true);
-  };
 
   const openFollow = (lead: Lead) => {
     followForm.reset({
@@ -140,19 +108,6 @@ const LeadsTab: React.FC = () => {
     });
     setFollowTarget(lead);
   };
-
-  const onCreate = createForm.handleSubmit(async (values) => {
-    const dto: CreateLeadDto = { ...values };
-    try {
-      const created = await crmApi.createLead(dto);
-      toast.success('线索已创建');
-      setCreateOpen(false);
-      await reload();
-      setDetailTarget(created);
-    } catch (err) {
-      toast.error(getApiErrorMessage(err, '登记失败'));
-    }
-  });
 
   const onFollow = followForm.handleSubmit(async (values) => {
     if (!followTarget) return;
@@ -208,7 +163,11 @@ const LeadsTab: React.FC = () => {
       width: 200,
       render: (_, record) => (
         <div className="flex items-center gap-1">
-          <Button variant="ghost" size="sm" onClick={() => setDetailTarget(record)}>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => navigate(`/crm/leads/${record.id}`)}
+          >
             详情
           </Button>
           <CanRole roles={['admin']}>
@@ -220,15 +179,20 @@ const LeadsTab: React.FC = () => {
                 variant="ghost"
                 size="sm"
                 onClick={() => {
-                  void crmApi
-                    .convertLead(record.id)
-                    .then(() => {
-                      toast.success('已转为商机');
-                      return reload();
-                    })
-                    .catch((err: unknown) =>
-                      toast.error(getApiErrorMessage(err, '转商机失败'))
+                  void (async () => {
+                    const ok = await confirmDanger(
+                      `确认将线索 ${record.code} 转为商机？`,
+                      { title: '确认转商机', confirmLabel: '确认转换' },
                     );
+                    if (!ok) return;
+                    try {
+                      await crmApi.convertLead(record.id);
+                      toast.success('已转为商机');
+                      await reload();
+                    } catch (err: unknown) {
+                      toast.error(getApiErrorMessage(err, '转商机失败'));
+                    }
+                  })();
                 }}
               >
                 转商机
@@ -259,7 +223,7 @@ const LeadsTab: React.FC = () => {
             </SelectContent>
           </Select>
         </div>
-        <Button onClick={openCreate}>
+        <Button onClick={() => navigate('/crm/leads/new')}>
           <Plus className="h-4 w-4" />
           新建线索
         </Button>
@@ -289,192 +253,6 @@ const LeadsTab: React.FC = () => {
           locale={{ emptyText: ' ' }}
         />
       </DataState>
-
-      <Dialog open={createOpen} onOpenChange={setCreateOpen}>
-        <DialogContent className="max-w-lg">
-          <DialogHeader>
-            <DialogTitle>新建线索</DialogTitle>
-          </DialogHeader>
-          <Form {...createForm}>
-            <form onSubmit={onCreate} className="space-y-4">
-              <div className="flex gap-4">
-                <FormField
-                  control={createForm.control}
-                  name="customerName"
-                  render={({ field }) => (
-                    <FormItem className="flex-1">
-                      <FormLabel>
-                        客户名称 <span aria-hidden="true" className="text-destructive">*</span>
-                      </FormLabel>
-                      <FormControl>
-                        <Input placeholder="请输入客户名称" {...field} />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-                <FormField
-                  control={createForm.control}
-                  name="source"
-                  render={({ field }) => (
-                    <FormItem className="w-40">
-                      <FormLabel>来源</FormLabel>
-                      <Select onValueChange={field.onChange} value={field.value}>
-                        <FormControl>
-                          <SelectTrigger>
-                            <SelectValue placeholder="请选择" />
-                          </SelectTrigger>
-                        </FormControl>
-                        <SelectContent>
-                          {LEAD_SOURCES.map((s) => (
-                            <SelectItem key={s} value={s}>
-                              {s}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-              </div>
-              <div className="flex gap-4">
-                <FormField
-                  control={createForm.control}
-                  name="contactName"
-                  render={({ field }) => (
-                    <FormItem className="flex-1">
-                      <FormLabel>联系人</FormLabel>
-                      <FormControl>
-                        <Input placeholder="请输入联系人" {...field} />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-                <FormField
-                  control={createForm.control}
-                  name="contactPhone"
-                  render={({ field }) => (
-                    <FormItem className="flex-1">
-                      <FormLabel>联系电话</FormLabel>
-                      <FormControl>
-                        <Input placeholder="请输入联系电话" {...field} />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-              </div>
-              <div className="flex gap-4">
-                <FormField
-                  control={createForm.control}
-                  name="owner"
-                  render={({ field }) => (
-                    <FormItem className="flex-1">
-                      <FormLabel>负责人</FormLabel>
-                      <FormControl>
-                        <Input placeholder="请输入负责人" {...field} />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-                <FormField
-                  control={createForm.control}
-                  name="nextDate"
-                  render={({ field }) => (
-                    <FormItem className="flex-1">
-                      <FormLabel>下次跟进日期</FormLabel>
-                      <DateField value={field.value} onChange={field.onChange} />
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-              </div>
-              <FormField
-                control={createForm.control}
-                name="remark"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>备注</FormLabel>
-                    <FormControl>
-                      <Textarea placeholder="备注信息" {...field} />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-              <AttachmentHint text="保存后将自动打开详情，可在其中上传客户需求文档、沟通记录等附件" />
-              <DialogFooter>
-                <Button type="submit">保存</Button>
-              </DialogFooter>
-            </form>
-          </Form>
-        </DialogContent>
-      </Dialog>
-
-      <Dialog
-        open={detailTarget !== null}
-        onOpenChange={(open) => {
-          if (!open) setDetailTarget(null);
-        }}
-      >
-        <DialogContent className="max-w-lg">
-          <DialogHeader>
-            <DialogTitle>线索详情 - {detailTarget?.code}</DialogTitle>
-          </DialogHeader>
-          {detailTarget ? (
-            <div className="space-y-4">
-              <div className="grid grid-cols-2 gap-x-6 gap-y-2 text-sm">
-                <div>
-                  <span className="text-muted-foreground">客户名称：</span>
-                  {detailTarget.customerName}
-                </div>
-                <div>
-                  <span className="text-muted-foreground">来源：</span>
-                  {detailTarget.source ?? '-'}
-                </div>
-                <div>
-                  <span className="text-muted-foreground">联系人：</span>
-                  {detailTarget.contactName ?? '-'}
-                </div>
-                <div>
-                  <span className="text-muted-foreground">联系电话：</span>
-                  {detailTarget.contactPhone ?? '-'}
-                </div>
-                <div>
-                  <span className="text-muted-foreground">状态：</span>
-                  <StatusBadge status={detailTarget.status} labels={LEAD_STATUS_LABELS} />
-                </div>
-                <div>
-                  <span className="text-muted-foreground">负责人：</span>
-                  {detailTarget.owner ?? '-'}
-                </div>
-                <div>
-                  <span className="text-muted-foreground">下次跟进：</span>
-                  {detailTarget.nextDate ?? '-'}
-                </div>
-                <div className="col-span-2">
-                  <span className="text-muted-foreground">跟进记录：</span>
-                  {detailTarget.followNote ?? '-'}
-                </div>
-                <div className="col-span-2">
-                  <span className="text-muted-foreground">备注：</span>
-                  {detailTarget.remark || '-'}
-                </div>
-              </div>
-              <div className="border-t pt-4">
-                <AttachmentField
-                  resourceType="crm_lead"
-                  resourceId={detailTarget.id}
-                  usageHint="客户需求文档、沟通记录等"
-                />
-              </div>
-            </div>
-          ) : null}
-        </DialogContent>
-      </Dialog>
 
       <Dialog
         open={followTarget !== null}

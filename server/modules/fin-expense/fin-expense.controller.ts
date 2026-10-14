@@ -8,7 +8,7 @@ import {
   Query,
   Req,
 } from '@nestjs/common';
-import { CanRole, NeedLogin } from '@server/platform';
+import { CanCapability, NeedLogin } from '@server/platform';
 import type { Request } from 'express';
 import {
   IsDateString,
@@ -140,7 +140,7 @@ export class FinExpenseController {
     return this.finExpenseService.createApply(dto);
   }
 
-  @CanRole(['admin'])
+  @CanCapability('finance_write')
   @Post('applies/:id/actions/:action')
   async applyAction(
     @Param('id', ParseUUIDPipe) id: string,
@@ -183,7 +183,7 @@ export class FinExpenseController {
     return this.finExpenseService.createClaim(dto, applicant);
   }
 
-  @CanRole(['admin'])
+  @CanCapability('finance_write')
   @Post('claims/:id/actions/:action')
   async claimAction(
     @Param('id', ParseUUIDPipe) id: string,

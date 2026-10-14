@@ -1,4 +1,5 @@
 const tseslint = require('typescript-eslint');
+const reactHooks = require('eslint-plugin-react-hooks');
 
 module.exports = tseslint.config({
   ignores: ['dist', 'node_modules', 'coverage', 'source_package', 'client/src/api/gen'],
@@ -6,5 +7,10 @@ module.exports = tseslint.config({
   languageOptions: {
     parser: tseslint.parser,
   },
-  rules: {},
+  plugins: {
+    'react-hooks': reactHooks,
+  },
+  rules: {
+    ...reactHooks.configs.recommended.rules,
+  },
 });

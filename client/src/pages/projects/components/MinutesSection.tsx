@@ -6,6 +6,7 @@ import { toast } from 'sonner';
 import { Loader2, Paperclip, Plus, Trash2 } from 'lucide-react';
 import { CanRole } from '@client/src/platform/auth';
 import { DataState } from '@client/src/components/DataState';
+import { SectionTitle } from '@client/src/components/SectionTitle';
 import DateField from '@client/src/components/erp/DateField';
 import { AttachmentField } from '@client/src/components/attachments/AttachmentField';
 import { Badge } from '@client/src/components/ui/badge';
@@ -36,6 +37,7 @@ import {
 import { Textarea } from '@client/src/components/ui/textarea';
 import { projectsApi } from '@client/src/api';
 import { getApiErrorMessage } from '@client/src/utils/api-error-message';
+import { confirmDanger } from '@client/src/utils/confirmDanger';
 import type {
   CreateProjectMinutesDto,
   ProjectMinutes,
@@ -128,6 +130,11 @@ const MinutesSection: React.FC<MinutesSectionProps> = ({ projectId, onChanged })
   });
 
   const onDeleteMinutes = async (item: ProjectMinutes) => {
+    const ok = await confirmDanger(
+      `确认删除纪要「${item.title}」？此操作不可恢复。`,
+      { title: '确认删除' },
+    );
+    if (!ok) return;
     setDeletingId(item.id);
     try {
       await projectsApi.deleteMinutes(item.id);
@@ -143,7 +150,7 @@ const MinutesSection: React.FC<MinutesSectionProps> = ({ projectId, onChanged })
   return (
     <div className="flex flex-col gap-3">
       <div className="flex items-center justify-between">
-        <h3 className="text-base font-semibold">周报/纪要</h3>
+        <SectionTitle>周报/纪要</SectionTitle>
         <CanRole roles={['admin']}>
           <Button size="sm" variant="outline" onClick={() => setAddOpen(true)}>
             <Plus className="h-4 w-4" />

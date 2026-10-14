@@ -10,6 +10,7 @@ import type { ComboboxSize } from '@client/src/components/business-ui/entity-com
 import { UserProfile } from '@client/src/components/business-ui/user-profile/user-profile';
 import type { AccountType } from '@client/src/components/business-ui/user-select/types';
 import { cn } from '@/lib/utils';
+import { Button } from '@/components/ui/button';
 import {
   Popover,
   PopoverContent,
@@ -105,13 +106,15 @@ export const UserPill: React.FC<UserPillProps> = ({
     return (
       <Popover>
         <PopoverTrigger asChild>
-          <button
+          <Button
             type="button"
-            className={cn('cursor-pointer rounded-full')}
+            variant="ghost"
+            size="icon"
+            className={cn('size-auto cursor-pointer rounded-full p-0')}
             onClick={handleClick}
           >
             {baseAvatarElement}
-          </button>
+          </Button>
         </PopoverTrigger>
         <PopoverContent
           side="bottom"

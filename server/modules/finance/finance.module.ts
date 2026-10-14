@@ -3,6 +3,8 @@ import { VoucherModule } from '@server/modules/voucher/voucher.module';
 import { TaxModule } from '@server/modules/tax/tax.module';
 import { NotificationsModule } from '@server/modules/notifications/notifications.module';
 import { AutomationConfigModule } from '@server/modules/admin/automation-config.module';
+// B-02：数据级权限（应收/应付/发票按纳税主体与部门行级隔离）
+import { DataScopeService } from '@server/common/auth/data-scope.service';
 import { FinanceController } from './finance.controller';
 import { ArService } from './ar.service';
 import { ApService } from './ap.service';
@@ -11,6 +13,7 @@ import { InvoiceService } from './invoice.service';
 import { FinanceService } from './finance.service';
 import { VendorSettlementService } from './vendor-settlement.service';
 import { ArReminderAutomationTasksService } from './ar-reminder.automation';
+import { ReconciliationService } from './reconciliation.service';
 
 @Module({
   imports: [VoucherModule, NotificationsModule, AutomationConfigModule, TaxModule],
@@ -23,6 +26,8 @@ import { ArReminderAutomationTasksService } from './ar-reminder.automation';
     FinanceService,
     VendorSettlementService,
     ArReminderAutomationTasksService,
+    ReconciliationService,
+    DataScopeService,
   ],
   exports: [ArService],
 })

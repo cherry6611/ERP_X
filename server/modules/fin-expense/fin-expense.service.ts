@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   Inject,
   Injectable,
   Logger,
@@ -29,6 +30,7 @@ import {
   type DocDims,
   type ExpenseRecordDims,
 } from '../fin-budget/fin-budget.service';
+import { todayInShanghai } from '@server/common/utils/biz-date';
 import type {
   CreateExpenseApplyDto,
   CreateExpenseClaimDto,
@@ -685,7 +687,7 @@ export class FinExpenseService {
     /* 审批通过：事务内两写 —— 应付账单 + 项目成本 */
     const amount = Number(claim.amount ?? 0);
     const expenseDate =
-      claim.expenseDate ?? new Date().toISOString().slice(0, 10);
+      claim.expenseDate ?? todayInShanghai();
     const apCode = await generateBizCode(
       this.db,
       erpApBill,
@@ -700,13 +702,19 @@ export class FinExpenseService {
     );
 
     await this.db.transaction(async (tx) => {
+      // F4X-9：CAS 状态流转，防双击重复入账
       const updated = await tx
         .update(finExpenseClaim)
         .set({ status: 'approved', updatedAt: new Date() })
-        .where(eq(finExpenseClaim.id, id))
+        .where(
+          and(
+            eq(finExpenseClaim.id, id),
+            inArray(finExpenseClaim.status, ['pending', 'escalated']),
+          ),
+        )
         .returning({ id: finExpenseClaim.id });
       if (updated.length === 0) {
-        throw new NotFoundException('报销单不存在');
+        throw new ConflictException('该报销单已被处理，请刷新后重试');
       }
       await tx.insert(erpApBill).values({
         code: apCode,
@@ -717,6 +725,7 @@ export class FinExpenseService {
         dueDate: expenseDate,
         status: 'pending',
         source: 'expense',
+        sourceRef: `expense:${claim.code}`,
         remark: `报销单${claim.code}`,
       });
       if (claim.projectId) {

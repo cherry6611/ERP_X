@@ -122,7 +122,7 @@ export class ProjectsStatusService {
       patch.closeSummary = closeDto?.closeSummary ?? null;
       patch.satisfaction = closeDto?.satisfaction ?? null;
       patch.retrospective = closeDto?.retrospective ?? null;
-      patch.closedAt = new Date().toISOString().slice(0, 10);
+      patch.closedAt = todayInShanghai();
     }
     const rows = await this.db
       .update(erpProject)

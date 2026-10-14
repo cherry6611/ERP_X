@@ -24,7 +24,8 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@client/src/components/ui/dropdown-menu';
-import { useDebouncedValue } from '@client/src/hooks/useDebouncedValue';
+import { useListQuery } from '@client/src/hooks/useListQuery';
+import { confirmDanger } from '@client/src/utils/confirmDanger';
 import {
   Dialog,
   DialogContent,
@@ -190,19 +191,17 @@ type CustomerFormData = z.output<typeof customerSchema>;
 type CustomerFormInput = z.input<typeof customerSchema>;
 
 const CustomersPage: React.FC = () => {
-  const [keyword, setKeyword] = useState('');
-  const keywordQuery = useDebouncedValue(keyword);
+  const { q, setQ, debouncedQ, page, setPage, debouncing } = useListQuery();
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editing, setEditing] = useState<Customer | null>(null);
   const [contactsCustomer, setContactsCustomer] = useState<Customer | null>(null);
   const [creditCustomer, setCreditCustomer] = useState<Customer | null>(null);
   const [importOpen, setImportOpen] = useState(false);
-  const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
 
   const { data, loading, error, reload } = useAsyncData<PagedResult<Customer>>(
-    () => masterDataApi.listCustomersPaged(page, pageSize, keywordQuery || undefined),
-    [page, pageSize, keywordQuery],
+    () => masterDataApi.listCustomersPaged(page, pageSize, debouncedQ || undefined),
+    [page, pageSize, debouncedQ],
   );
 
   const form = useForm<CustomerFormInput, unknown, CustomerFormData>({
@@ -295,6 +294,13 @@ const CustomersPage: React.FC = () => {
   const toggleStatus = async (customer: Customer) => {
     const next: 'active' | 'inactive' =
       customer.status === 'inactive' ? 'active' : 'inactive';
+    if (next === 'inactive') {
+      const ok = await confirmDanger(
+        `确认停用客户 ${customer.name}？停用后不可用于新合同。`,
+        { title: '确认停用' },
+      );
+      if (!ok) return;
+    }
     try {
       await masterDataApi.setCustomerStatus(customer.id, next);
       toast.success(next === 'inactive' ? '客户已停用' : '客户已启用');
@@ -378,12 +384,12 @@ const CustomersPage: React.FC = () => {
           aria-label="搜索客户"
           placeholder="搜索客户名称或编号"
           className="w-64"
-          value={keyword}
-          onChange={(e) => {
-            setKeyword(e.target.value);
-            setPage(1);
-          }}
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
         />
+        {debouncing ? (
+          <span className="text-xs text-muted-foreground">筛选中…</span>
+        ) : null}
         <CanRole roles={['admin']}>
           <Button onClick={openCreate}>
             <Plus className="h-4 w-4" />

@@ -3,7 +3,7 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { useForm } from 'react-hook-form';
 import { z } from 'zod';
 import { toast } from 'sonner';
-import { Plus, Search } from 'lucide-react';
+import { Plus } from 'lucide-react';
 import { Table, TableColumnsType } from 'antd';
 import { CanRole } from '@client/src/platform/auth';
 import { AccountStatusBadge, ACCOUNT_TYPE_LABELS } from './VoucherBadges';
@@ -34,6 +34,7 @@ import {
 } from '@client/src/components/ui/select';
 import { voucherApi } from '@client/src/api';
 import { useAsyncData } from '@client/src/hooks/useAsyncData';
+import { useListQuery } from '@client/src/hooks/useListQuery';
 import type { AccountItem, CreateAccountDto } from '@shared/api.interface';
 
 const accountSchema = z.object({
@@ -55,15 +56,18 @@ const EMPTY_FORM: AccountFormData = {
 const PAGE_SIZE = 20;
 
 const AccountPanel: React.FC = () => {
-  const [page, setPage] = useState<number>(1);
-  const [keywordInput, setKeywordInput] = useState<string>('');
-  const [keyword, setKeyword] = useState<string>('');
+  const { q, setQ, debouncedQ, page, setPage, debouncing } = useListQuery();
   const [createOpen, setCreateOpen] = useState(false);
   const [operating, setOperating] = useState(false);
 
   const { data, loading, error, reload } = useAsyncData(
-    () => voucherApi.listAccounts({ page, pageSize: PAGE_SIZE, keyword }),
-    [page, keyword],
+    () =>
+      voucherApi.listAccounts({
+        page,
+        pageSize: PAGE_SIZE,
+        keyword: debouncedQ || undefined,
+      }),
+    [page, debouncedQ],
   );
 
   const form = useForm<AccountFormData>({
@@ -74,11 +78,6 @@ const AccountPanel: React.FC = () => {
   const openCreate = () => {
     form.reset(EMPTY_FORM);
     setCreateOpen(true);
-  };
-
-  const onSearch = () => {
-    setKeyword(keywordInput.trim());
-    setPage(1);
   };
 
   const onSubmit = form.handleSubmit(async (values) => {
@@ -133,18 +132,14 @@ const AccountPanel: React.FC = () => {
             id="voucher-account-keyword"
             className="w-56"
             placeholder="搜索科目编码或名称"
-            value={keywordInput}
+            value={q}
             onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
-              setKeywordInput(e.target.value)
+              setQ(e.target.value)
             }
-            onKeyDown={(e: React.KeyboardEvent<HTMLInputElement>) => {
-              if (e.key === 'Enter') onSearch();
-            }}
           />
-          <Button variant="outline" onClick={onSearch}>
-            <Search className="h-4 w-4" />
-            搜索
-          </Button>
+          {debouncing ? (
+            <span className="text-xs text-muted-foreground">筛选中…</span>
+          ) : null}
         </div>
         <CanRole roles={['admin']}>
           <Button onClick={openCreate}>

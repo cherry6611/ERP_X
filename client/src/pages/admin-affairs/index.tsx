@@ -17,11 +17,12 @@ import PageShell from '@client/src/components/PageShell';
 import { DataState } from '@client/src/components/DataState';
 import { adminApi } from '@client/src/api';
 import { useAsyncData } from '@client/src/hooks/useAsyncData';
+import { useListQuery } from '@client/src/hooks/useListQuery';
 import { formatMoney } from '@client/src/utils/format';
 import { getApiErrorMessage } from '@client/src/utils/api-error-message';
+import { confirmDanger } from '@client/src/utils/confirmDanger';
 import AffairFormDialog from './components/AffairFormDialog';
 import AffairStatusBadge from './components/AffairStatusBadge';
-import DeleteConfirmDialog from './components/DeleteConfirmDialog';
 import type { AdminAffairItem } from '@shared/api.interface';
 
 const PAGE_SIZE = 20;
@@ -44,14 +45,11 @@ const TYPE_LABELS: Record<string, string> = {
 };
 
 const AdminAffairsPage: React.FC = () => {
-  const [page, setPage] = useState<number>(1);
+  const { page, setPage } = useListQuery();
   const [typeFilter, setTypeFilter] = useState<string>('all');
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [formOpen, setFormOpen] = useState(false);
   const [editTarget, setEditTarget] = useState<AdminAffairItem | null>(null);
-  const [deleteTarget, setDeleteTarget] = useState<AdminAffairItem | null>(
-    null,
-  );
   const [operating, setOperating] = useState(false);
 
   const { data, loading, error, reload } = useAsyncData(
@@ -90,13 +88,16 @@ const AdminAffairsPage: React.FC = () => {
     }
   };
 
-  const doDelete = async () => {
-    if (!deleteTarget) return;
+  const doDelete = async (record: AdminAffairItem) => {
+    const ok = await confirmDanger(
+      `确认删除事务 ${record.code}？此操作不可恢复。`,
+      { title: '确认删除' },
+    );
+    if (!ok) return;
     setOperating(true);
     try {
-      await adminApi.deleteAdminAffair(deleteTarget.id);
+      await adminApi.deleteAdminAffair(record.id);
       toast.success('事务已删除');
-      setDeleteTarget(null);
       await reload();
     } catch (err) {
       toast.error(getApiErrorMessage(err, '删除失败'));
@@ -182,7 +183,8 @@ const AdminAffairsPage: React.FC = () => {
               variant="ghost"
               size="sm"
               className="text-destructive"
-              onClick={() => setDeleteTarget(record)}
+              disabled={operating}
+              onClick={() => void doDelete(record)}
               aria-label={`删除事务 ${record.code}`}
             >
               删除
@@ -275,15 +277,6 @@ const AdminAffairsPage: React.FC = () => {
         target={editTarget}
         onOpenChange={setFormOpen}
         onSuccess={reload}
-      />
-      <DeleteConfirmDialog
-        open={deleteTarget !== null}
-        code={deleteTarget?.code ?? null}
-        operating={operating}
-        onConfirm={() => void doDelete()}
-        onOpenChange={(open) => {
-          if (!open) setDeleteTarget(null);
-        }}
       />
     </PageShell>
   );

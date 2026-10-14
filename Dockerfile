@@ -14,7 +14,9 @@ COPY --from=build /app/package.json /app/package-lock.json ./
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/server/database/migrations ./server/database/migrations
-COPY --from=build /app/scripts ./scripts
+# L10：仅拷贝运行期必需脚本，避免把本地 DB/隧道等开发工具带入镜像
+COPY --from=build /app/scripts/db-migrate.mjs ./scripts/db-migrate.mjs
+COPY --from=build /app/scripts/start.mjs ./scripts/start.mjs
 
 # A7：上传目录属主为 node，避免卷挂载后 EACCES
 RUN mkdir -p /app/data/uploads \

@@ -79,8 +79,8 @@ interface AssetChangeRow {
   id: string;
   code: string;
   assetId: string | null;
-  assetCode: string;
-  assetName: string;
+  assetCode: string | null;
+  assetName: string | null;
   changeType: string | null;
   beforeValue: string | null;
   afterValue: string | null;
@@ -125,8 +125,8 @@ export class AssetService {
       id: row.id,
       code: row.code,
       assetId: row.assetId ?? '',
-      assetCode: row.assetCode,
-      assetName: row.assetName,
+      assetCode: row.assetCode ?? '',
+      assetName: row.assetName ?? '',
       changeType: (row.changeType ?? 'receive') as AssetChangeType,
       beforeValue: row.beforeValue,
       afterValue: row.afterValue,

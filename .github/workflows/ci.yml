@@ -18,7 +18,22 @@ jobs:
       - run: npm run lint
       - run: npm run check:need-login
       - run: npm run check:contract
+      # B-01：RBAC 一致性——不得残留 @CanRole、能力码必须存在于 shared/rbac.ts、
+      # 写方法不得使用只读装饰器、控制器必须标注 @NeedLogin/@Public
+      - name: rbac consistency
+        run: npm run check:rbac
+      # B-10/B-11：无真实数据库时用 pglite（WASM PostgreSQL）验证迁移链；
+      # 任一条迁移失败即退出码 1（白名单为空，不存在静默跳过）
+      - name: migrate dryrun (pglite)
+        run: npm run migrate:dryrun
+      # B-14：后端业务失败必须返回可读中文原因（API-5）；确属内部/第三方消息需在脚本白名单登记
+      - name: audit error messages
+        run: node ./scripts/audit-error-messages.mjs
+      # 全量测试：既有单元测试 + server/test/integration/（迁移链 & 核心账务链路集成测试）
       - run: npm test
+      # B-11：覆盖率门槛独立可观测步骤（门槛见 jest.config.cjs，收窄 collectCoverageFrom 后真实可过）
+      - name: coverage gate
+        run: npm run test:cov
       - run: npm run build
       - run: npm audit --audit-level=high
       # U-25：构建产物冒烟（无 DB 时仅校验 dist 存在；有 DATABASE_URL 可扩）
@@ -26,3 +41,6 @@ jobs:
         run: |
           test -f dist/server/main.js || test -f dist/main.js || ls dist
           test -d dist/client
+          test -f dist/client/index.html
+          # 至少产出一个打包后的 JS 资源，避免空壳目录误报绿灯
+          test -n "$(find dist/client -name '*.js' -type f | head -n 1)"

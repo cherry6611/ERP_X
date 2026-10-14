@@ -87,3 +87,15 @@ export async function closePeriod(period: string): Promise<PeriodStatus> {
   ensureNotForbidden(resp);
   return resp.data;
 }
+
+export async function unclosePeriod(
+  period: string,
+  remark?: string,
+): Promise<PeriodStatus> {
+  const resp = await axiosForBackend.post<PeriodStatus>(
+    `/api/voucher/periods/${period}/unclose`,
+    { remark },
+  );
+  ensureNotForbidden(resp);
+  return resp.data;
+}

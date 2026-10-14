@@ -21,6 +21,7 @@ import type {
   ProjectListParams,
   ProjectRevenueItem,
   ProjectStatusAction,
+  ProjectStatusCloseDto,
   ReturnDeliverableDto,
   UpdateDeliverableDto,
   UpdateProjectDto,
@@ -61,7 +62,7 @@ export async function updateProject(id: string, dto: UpdateProjectDto): Promise<
 export async function changeProjectStatus(
   id: string,
   action: ProjectStatusAction,
-  closeDto?: { closeSummary?: string; satisfaction?: number; retrospective?: string },
+  closeDto?: ProjectStatusCloseDto,
 ): Promise<Project> {
   const resp = await axiosForBackend.post<Project>(`/api/projects/${id}/status`, {
     action,

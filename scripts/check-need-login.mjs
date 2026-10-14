@@ -23,7 +23,8 @@ function walk(dir) {
     for (const mark of marks) {
       const block = source.slice(cursor, mark.index);
       cursor = mark.index + mark[0].length;
-      if (!block.includes('@NeedLogin()')) {
+      // 类级 @NeedLogin() 为默认；纯公开控制器可用类级 @Public()（如 health）
+      if (!block.includes('@NeedLogin()') && !block.includes('@Public()')) {
         failures.push(full);
         break;
       }

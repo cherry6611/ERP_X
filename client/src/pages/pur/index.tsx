@@ -1,5 +1,8 @@
-import React, { useState } from 'react';
+import React from 'react';
+import { useSearchParams } from 'react-router-dom';
 import PageShell from '@client/src/components/PageShell';
+import { Button } from '@client/src/components/ui/button';
+import { cn } from '@client/src/lib/utils';
 import PurRequestPanel from './components/PurRequestPanel';
 import PurOrderPanel from './components/PurOrderPanel';
 import PurChainPanel from './components/PurChainPanel';
@@ -10,6 +13,8 @@ const PUR_TABS = [
   { key: 'chain', label: '采购看板' },
 ] as const;
 
+const TAB_SET = new Set(PUR_TABS.map((t) => t.key));
+
 const PUR_TAB_CONTENT: Record<string, React.ReactNode> = {
   requests: <PurRequestPanel />,
   orders: <PurOrderPanel />,
@@ -17,7 +22,11 @@ const PUR_TAB_CONTENT: Record<string, React.ReactNode> = {
 };
 
 const PurPage: React.FC = () => {
-  const [tab, setTab] = useState<string>('requests');
+  const [params, setParams] = useSearchParams();
+  const raw = params.get('tab') ?? 'requests';
+  const tab = TAB_SET.has(raw as (typeof PUR_TABS)[number]['key'])
+    ? raw
+    : 'requests';
 
   return (
     <PageShell
@@ -26,18 +35,30 @@ const PurPage: React.FC = () => {
     >
       <div className="flex gap-2 flex-wrap" data-ai-section-type="card-list">
         {PUR_TABS.map((item) => (
-          <button
+          <Button
             key={item.key}
             type="button"
-            onClick={() => setTab(item.key)}
-            className={`rounded-md px-3 py-1.5 text-sm transition-colors ${
+            variant="ghost"
+            size="sm"
+            onClick={() => {
+              setParams(
+                (prev) => {
+                  const next = new URLSearchParams(prev);
+                  if (item.key === 'requests') next.delete('tab');
+                  else next.set('tab', item.key);
+                  return next;
+                },
+                { replace: true },
+              );
+            }}
+            className={cn(
               tab === item.key
-                ? 'bg-primary/10 text-primary font-medium'
-                : 'text-foreground/80 hover:bg-muted'
-            }`}
+                ? 'bg-primary/10 font-medium text-primary'
+                : 'text-foreground/80',
+            )}
           >
             {item.label}
-          </button>
+          </Button>
         ))}
       </div>
       <div>{PUR_TAB_CONTENT[tab]}</div>

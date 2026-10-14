@@ -9,14 +9,26 @@ import {
   Query,
   Req,
 } from '@nestjs/common';
-import { CanRole, NeedLogin } from '@server/platform';
+import { NeedLogin } from '@server/platform';
 import type { Request } from 'express';
-import { IsIn, IsNotEmpty, IsNumber, IsOptional, IsString, IsUUID, Min } from 'class-validator';
+import {
+  IsIn,
+  IsNotEmpty,
+  IsNumber,
+  IsOptional,
+  IsString,
+  IsUUID,
+  Min,
+} from 'class-validator';
 import { AttachmentService } from './attachment.service';
-import { ATTACHMENT_RESOURCE_TYPES, type AttachmentResourceType } from '@shared/api.interface';
+import {
+  ATTACHMENT_RESOURCE_TYPES,
+  type AttachmentResourceType,
+} from '@shared/api.interface';
 import type {
   Attachment,
   CreateAttachmentDto as ICreateAttachmentDto,
+  ParsedFeishuDocLink,
 } from '@shared/api.interface';
 
 export class ListAttachmentsQueryDto {
@@ -52,6 +64,24 @@ export class CreateAttachmentDto implements ICreateAttachmentDto {
   @IsOptional()
   @IsIn(['upload', 'feishu_doc'])
   sourceType?: 'upload' | 'feishu_doc';
+
+  @IsOptional()
+  @IsString()
+  feishuToken?: string;
+
+  @IsOptional()
+  @IsString()
+  feishuDocType?: string;
+
+  @IsOptional()
+  @IsString()
+  feishuUrl?: string;
+}
+
+export class ParseFeishuUrlDto {
+  @IsString()
+  @IsNotEmpty()
+  url!: string;
 }
 
 @NeedLogin()
@@ -60,42 +90,48 @@ export class AttachmentController {
   constructor(private readonly attachmentService: AttachmentService) {}
 
   @Get()
-  @NeedLogin()
   async list(
     @Req() req: Request,
     @Query() query: ListAttachmentsQueryDto,
   ): Promise<Attachment[]> {
+    const userId = req.userContext?.userId ?? '';
     return this.attachmentService.listWithAclCheck(
-      req.userContext.userId,
-      req.userContext.userName ?? req.userContext.userId,
+      userId,
+      req.userContext?.userName ?? userId,
       query.resourceType,
       query.resourceId,
     );
   }
 
+  @Post('parse-feishu-url')
+  async parseFeishuUrl(
+    @Body() dto: ParseFeishuUrlDto,
+  ): Promise<ParsedFeishuDocLink> {
+    return this.attachmentService.parseFeishuUrl(dto.url);
+  }
+
   @Post()
-  @NeedLogin()
   async create(
     @Req() req: Request,
     @Body() dto: CreateAttachmentDto,
   ): Promise<Attachment> {
+    const userId = req.userContext?.userId ?? '';
     return this.attachmentService.create(
-      req.userContext.userId,
-      req.userContext.userName ?? req.userContext.userId,
+      userId,
+      req.userContext?.userName ?? userId,
       dto,
     );
   }
 
   @Delete(':id')
-  @NeedLogin()
   async remove(
     @Req() req: Request,
     @Param('id', ParseUUIDPipe) id: string,
   ): Promise<void> {
     return this.attachmentService.remove(
-      req.userContext.userId,
+      req.userContext?.userId ?? '',
       id,
-      req.userContext.roles ?? []
+      req.userContext?.roles ?? [],
     );
   }
 }

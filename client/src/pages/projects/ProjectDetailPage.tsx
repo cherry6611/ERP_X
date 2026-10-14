@@ -10,7 +10,8 @@ import StatCard from '@client/src/components/erp/StatCard';
 import StatusBadge from '@client/src/components/erp/StatusBadge';
 import { Badge } from '@client/src/components/ui/badge';
 import { Button } from '@client/src/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@client/src/components/ui/card';
+import { SectionTitle } from '@client/src/components/SectionTitle';
+import { Card, CardContent, CardHeader } from '@client/src/components/ui/card';
 import { biApi, projectsApi } from '@client/src/api';
 import { useAsyncData } from '@client/src/hooks/useAsyncData';
 import { formatMoney, formatPercent } from '@client/src/utils/format';
@@ -24,7 +25,6 @@ import InvoiceSection from '@client/src/pages/projects/components/InvoiceSection
 import MilestoneSection from '@client/src/pages/projects/components/MilestoneSection';
 import MinutesSection from '@client/src/pages/projects/components/MinutesSection';
 import ProjectDocSection from '@client/src/pages/projects/components/ProjectDocSection';
-import ProjectEditDialog from '@client/src/pages/projects/components/ProjectEditDialog';
 import ProjectOverviewSection from '@client/src/pages/projects/components/ProjectOverviewSection';
 import QuotationSection from '@client/src/pages/projects/components/QuotationSection';
 import RevenueSection from '@client/src/pages/projects/components/RevenueSection';
@@ -67,7 +67,6 @@ const ProjectDetailPage: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const [acting, setActing] = useState(false);
-  const [editOpen, setEditOpen] = useState(false);
 
   const {
     data: detail,
@@ -207,37 +206,70 @@ const ProjectDetailPage: React.FC = () => {
     <PageShell
       title={`${detail.code} ${detail.name}`}
       description="项目全链路信息：客户、合同、收入成本、发票、结算与工时"
-      actions={
-        <>
-          <Button variant="outline" onClick={() => navigate('/projects')}>
-            <ArrowLeft className="h-4 w-4" />
-            返回列表
-          </Button>
-          <CanRole roles={['admin']}>
-            <Button variant="outline" onClick={() => setEditOpen(true)}>
-              <Pencil className="h-4 w-4" />
-              编辑项目
-            </Button>
-            {actions.map((item) => (
-              <Button
-                key={item.action}
-                disabled={acting}
-                onClick={() => void doAction(item.action)}
-              >
-                {item.label}
-              </Button>
-            ))}
-          </CanRole>
-        </>
-      }
     >
-      <div className="flex items-center gap-2 text-sm text-muted-foreground">
-        <StatusBadge status={detail.status} labels={PROJECT_STATUS_LABELS} />
-        <span>
-          项目经理 {detail.pm ?? '-'} · 部门 {detail.deptName ?? '-'} · 进度{' '}
-          {formatPercent(detail.progress)} · 预算 {formatMoney(detail.budget)} ·
-          预计总成本 {formatMoney(detail.estimatedTotalCost)}
-        </span>
+      <div className="sticky top-14 z-10 -mx-6 flex flex-wrap items-center gap-2 border-b bg-background/95 px-6 py-2 backdrop-blur">
+        <Button variant="outline" onClick={() => navigate('/projects')}>
+          <ArrowLeft className="h-4 w-4" />
+          返回列表
+        </Button>
+        <CanRole roles={['admin']}>
+          <Button
+            variant="outline"
+            onClick={() => navigate(`/projects/${detail.id}/edit`)}
+          >
+            <Pencil className="h-4 w-4" />
+            编辑项目
+          </Button>
+          {actions.map((item) => (
+            <Button
+              key={item.action}
+              disabled={acting}
+              onClick={() => void doAction(item.action)}
+            >
+              {item.label}
+            </Button>
+          ))}
+        </CanRole>
+      </div>
+
+      <div className="flex flex-col gap-1 text-sm text-muted-foreground">
+        <div className="flex flex-wrap items-center gap-2">
+          <StatusBadge status={detail.status} labels={PROJECT_STATUS_LABELS} />
+          <span>
+            项目经理 {detail.pm ?? '-'} · 部门 {detail.deptName ?? '-'} · 进度{' '}
+            {formatPercent(detail.progress)} · 预算 {formatMoney(detail.budget)} ·
+            预计总成本 {formatMoney(detail.estimatedTotalCost)}
+          </span>
+        </div>
+        <div>
+          最终成交报价：
+          {detail.wonQuotationId ? (
+            <Link
+              to={`/crm/quotations/${detail.wonQuotationId}`}
+              className="text-primary underline-offset-2 hover:underline"
+            >
+              {detail.wonQuotationCode}
+              {detail.wonQuotationTitle ? ` · ${detail.wonQuotationTitle}` : ''}
+              {detail.wonQuotationAmount != null
+                ? `（${formatMoney(detail.wonQuotationAmount)}）`
+                : ''}
+            </Link>
+          ) : (
+            '未关联'
+          )}
+          {detail.opportunityId ? (
+            <>
+              {' · '}
+              商机：
+              <Link
+                to={`/crm/opportunities/${detail.opportunityId}`}
+                className="text-primary underline-offset-2 hover:underline"
+              >
+                {detail.opportunityTitle ?? detail.opportunityId}
+              </Link>
+            </>
+          ) : null}
+        </div>
       </div>
 
       <div className="grid grid-cols-2 gap-4 xl:grid-cols-4" data-ai-section-type="card-stat">
@@ -280,7 +312,7 @@ const ProjectDetailPage: React.FC = () => {
 
       <Card>
         <CardHeader>
-          <CardTitle>项目健康指标（EVM）</CardTitle>
+          <SectionTitle>项目健康指标（EVM）</SectionTitle>
         </CardHeader>
         <CardContent>
           <DataState
@@ -325,7 +357,7 @@ const ProjectDetailPage: React.FC = () => {
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
         <Card>
           <CardHeader>
-            <CardTitle>客户信息</CardTitle>
+            <SectionTitle>客户信息</SectionTitle>
           </CardHeader>
           <CardContent>
             {chain?.customer ? (
@@ -339,7 +371,7 @@ const ProjectDetailPage: React.FC = () => {
         </Card>
         <Card>
           <CardHeader>
-            <CardTitle>关联合同</CardTitle>
+            <SectionTitle>关联合同</SectionTitle>
           </CardHeader>
           <CardContent>
             {chain?.contract ? (
@@ -374,13 +406,6 @@ const ProjectDetailPage: React.FC = () => {
       <MinutesSection projectId={projectId} onChanged={reloadAll} />
 
       <CloseProjectSection projectId={projectId} onChanged={reloadAll} />
-
-      <ProjectEditDialog
-        project={detail}
-        open={editOpen}
-        onOpenChange={setEditOpen}
-        onSaved={reloadAll}
-      />
     </PageShell>
   );
 };

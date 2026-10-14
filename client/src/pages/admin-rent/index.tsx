@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 import { Plus } from 'lucide-react';
 import { Table, TableColumnsType } from 'antd';
@@ -15,11 +16,11 @@ import {
 } from '@client/src/components/ui/select';
 import { adminApi } from '@client/src/api';
 import { useAsyncData } from '@client/src/hooks/useAsyncData';
+import { confirmDanger } from '@client/src/utils/confirmDanger';
 import { formatMoney } from '@client/src/utils/format';
 import RentStatsCards from './components/RentStatsCards';
 import RentStatusBadge from './components/RentStatusBadge';
 import RentContractFormDialog from './components/RentContractFormDialog';
-import RentContractDetailDialog from './components/RentContractDetailDialog';
 import type {
   AdminPaymentCycle,
   AdminRentContractAction,
@@ -44,14 +45,13 @@ const PAYMENT_CYCLE_LABELS: Record<AdminPaymentCycle, string> = {
 };
 
 const AdminRentPage: React.FC = () => {
+  const navigate = useNavigate();
   const [page, setPage] = useState<number>(1);
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [formOpen, setFormOpen] = useState(false);
   const [editTarget, setEditTarget] = useState<AdminRentContractItem | null>(
     null,
   );
-  const [detailTarget, setDetailTarget] =
-    useState<AdminRentContractItem | null>(null);
   const [operating, setOperating] = useState(false);
 
   const { data, loading, error, reload } = useAsyncData(() =>
@@ -86,6 +86,13 @@ const AdminRentPage: React.FC = () => {
     item: AdminRentContractItem,
     action: AdminRentContractAction,
   ) => {
+    if (action === 'terminate') {
+      const ok = await confirmDanger(
+        `确认终止租房合同 ${item.code}？终止后不可恢复为生效状态。`,
+        { title: '确认终止', confirmLabel: '确认终止' },
+      );
+      if (!ok) return;
+    }
     setOperating(true);
     try {
       await adminApi.rentContractAction(item.id, action);
@@ -113,7 +120,9 @@ const AdminRentPage: React.FC = () => {
           variant="ghost"
           size="sm"
           className="h-auto p-0 text-primary underline-offset-2 hover:underline"
-          onClick={() => setDetailTarget(record)}
+          onClick={() =>
+            navigate(`/admin-rent/${record.id}`, { state: { item: record } })
+          }
           aria-label={`查看租房合同详情 ${record.code}`}
         >
           {v}
@@ -277,12 +286,6 @@ const AdminRentPage: React.FC = () => {
         target={editTarget}
         onOpenChange={setFormOpen}
         onSuccess={refreshAll}
-      />
-      <RentContractDetailDialog
-        contract={detailTarget}
-        onOpenChange={(open) => {
-          if (!open) setDetailTarget(null);
-        }}
       />
     </PageShell>
   );

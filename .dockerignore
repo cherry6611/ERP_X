@@ -7,3 +7,10 @@ data
 coverage
 logs
 *.md
+*.tsbuildinfo
+backup-*.sql
+*.dump
+*.sql.gz
+.agent-memory
+.githooks
+.github

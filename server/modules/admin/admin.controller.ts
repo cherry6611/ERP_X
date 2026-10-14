@@ -11,7 +11,7 @@ import {
   Query,
   Req,
 } from '@nestjs/common';
-import { CanRole, NeedLogin } from '@server/platform';
+import { CanCapability, NeedLogin } from '@server/platform';
 import { AdminRead } from '@server/common/auth/read-roles';
 import { IsBoolean } from 'class-validator';
 import type { Request } from 'express';
@@ -60,7 +60,7 @@ export class AdminController {
     return this.automationConfigService.listAll();
   }
 
-  @CanRole(['admin'])
+  @CanCapability('admin_ops')
   @Put('automation-config/:taskKey')
   async updateAutomationConfig(
     @Param('taskKey') taskKey: string,
@@ -70,7 +70,7 @@ export class AdminController {
     return this.automationConfigService.setEnabled(
       taskKey,
       dto.enabled,
-      req.userContext.userId
+      req.userContext?.userId ?? ''
     );
   }
 
@@ -96,7 +96,7 @@ export class AdminController {
     );
   }
 
-  @CanRole(['admin'])
+  @CanCapability('admin_ops')
   @Post('rent-contracts')
   async createRentContract(
     @Body() dto: CreateAdminRentContractDto
@@ -104,7 +104,7 @@ export class AdminController {
     return this.adminService.createRentContract(dto);
   }
 
-  @CanRole(['admin'])
+  @CanCapability('admin_ops')
   @Patch('rent-contracts/:id')
   async updateRentContract(
     @Param('id', ParseUUIDPipe) id: string,
@@ -113,7 +113,7 @@ export class AdminController {
     return this.adminService.updateRentContract(id, dto);
   }
 
-  @CanRole(['admin'])
+  @CanCapability('admin_ops')
   @Post('rent-contracts/:id/actions/:action')
   async rentContractAction(
     @Param('id', ParseUUIDPipe) id: string,
@@ -148,7 +148,7 @@ export class AdminController {
     );
   }
 
-  @CanRole(['admin'])
+  @CanCapability('admin_ops')
   @Post('bills')
   async createBill(
     @Body() dto: CreateAdminBillDto
@@ -156,7 +156,7 @@ export class AdminController {
     return this.adminService.createBill(dto);
   }
 
-  @CanRole(['admin'])
+  @CanCapability('admin_ops')
   @Patch('bills/:id')
   async updateBill(
     @Param('id', ParseUUIDPipe) id: string,
@@ -165,7 +165,7 @@ export class AdminController {
     return this.adminService.updateBill(id, dto);
   }
 
-  @CanRole(['admin'])
+  @CanCapability('admin_ops')
   @Post('bills/:id/actions/submit')
   async submitBill(
     @Param('id', ParseUUIDPipe) id: string
@@ -173,7 +173,7 @@ export class AdminController {
     return this.adminService.billAction(id, 'submit', {});
   }
 
-  @CanRole(['admin'])
+  @CanCapability('admin_ops')
   @Post('bills/:id/actions/approve')
   async approveBill(
     @Param('id', ParseUUIDPipe) id: string
@@ -181,7 +181,7 @@ export class AdminController {
     return this.adminService.billAction(id, 'approve', {});
   }
 
-  @CanRole(['admin'])
+  @CanCapability('admin_ops')
   @Post('bills/:id/actions/reject')
   async rejectBill(
     @Param('id', ParseUUIDPipe) id: string,
@@ -190,7 +190,7 @@ export class AdminController {
     return this.adminService.billAction(id, 'reject', dto);
   }
 
-  @CanRole(['admin'])
+  @CanCapability('admin_ops')
   @Post('bills/:id/actions/pay')
   async payBill(
     @Param('id', ParseUUIDPipe) id: string,
@@ -217,7 +217,7 @@ export class AdminController {
     );
   }
 
-  @CanRole(['admin'])
+  @CanCapability('admin_ops')
   @Post('assets')
   async createAsset(
     @Body() dto: CreateAdminAssetDto
@@ -225,7 +225,7 @@ export class AdminController {
     return this.adminService.createAsset(dto);
   }
 
-  @CanRole(['admin'])
+  @CanCapability('admin_ops')
   @Patch('assets/:id')
   async updateAsset(
     @Param('id', ParseUUIDPipe) id: string,
@@ -234,7 +234,7 @@ export class AdminController {
     return this.adminService.updateAsset(id, dto);
   }
 
-  @CanRole(['admin'])
+  @CanCapability('admin_ops')
   @Delete('assets/:id')
   async deleteAsset(
     @Param('id', ParseUUIDPipe) id: string
@@ -260,7 +260,7 @@ export class AdminController {
     );
   }
 
-  @CanRole(['admin'])
+  @CanCapability('admin_ops')
   @Post('affairs')
   async createAffair(
     @Body() dto: CreateAdminAffairDto
@@ -268,7 +268,7 @@ export class AdminController {
     return this.adminService.createAffair(dto);
   }
 
-  @CanRole(['admin'])
+  @CanCapability('admin_ops')
   @Patch('affairs/:id')
   async updateAffair(
     @Param('id', ParseUUIDPipe) id: string,
@@ -277,7 +277,7 @@ export class AdminController {
     return this.adminService.updateAffair(id, dto);
   }
 
-  @CanRole(['admin'])
+  @CanCapability('admin_ops')
   @Post('affairs/:id/actions/settle')
   async settleAffair(
     @Param('id', ParseUUIDPipe) id: string
@@ -285,7 +285,7 @@ export class AdminController {
     return this.adminService.affairAction(id, 'settle');
   }
 
-  @CanRole(['admin'])
+  @CanCapability('admin_ops')
   @Delete('affairs/:id')
   async deleteAffair(
     @Param('id', ParseUUIDPipe) id: string

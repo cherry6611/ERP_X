@@ -23,7 +23,8 @@ import {
 import { generateBizCode } from '@server/common/utils/biz-code';
 import { TaxEntityService } from '@server/modules/tax/tax-entity.service';
 import { TaxResolverService } from '@server/modules/tax/tax-resolver.service';
-import { splitTax } from '@shared/tax';
+import { isVatRate, lineAmount, splitTax } from '@shared/tax';
+import { todayInShanghai } from '@server/common/utils/biz-date';
 import type {
   BillableSummary,
   Calloff,
@@ -305,6 +306,29 @@ export class ContractsService {
         }))
       );
     }
+    // 提交/生效要求至少一条明细；新建时按合同金额自动生成一行，避免「有金额无明细」无法推进
+    if (dto.amount > 0 && isVatRate(resolved.rate)) {
+      const amount = lineAmount(1, dto.amount, 0);
+      const itemSplit = splitTax(amount, resolved.rate);
+      await this.db.insert(erpContractItem).values({
+        contractId,
+        versionNo: 1,
+        isCurrent: 1,
+        seq: 1,
+        itemName: dto.name,
+        unit: '项',
+        quantity: '1',
+        unitPrice: String(dto.amount),
+        discountPct: '0',
+        taxRate: String(resolved.rate),
+        amount: String(amount),
+        netAmount: String(itemSplit.net),
+        taxAmount: String(itemSplit.tax),
+        estUnitCost: '0',
+        sourceType: 'manual',
+        sourceItemId: null,
+      });
+    }
     return this.getContract(contractId);
   }
 
@@ -469,7 +493,7 @@ export class ContractsService {
     const patch: Record<string, unknown> = { updatedAt: new Date() };
     if (dto.status === 'reached') {
       patch.status = 'reached';
-      patch.actualDate = dto.actualDate ?? new Date().toISOString().slice(0, 10);
+      patch.actualDate = dto.actualDate ?? todayInShanghai();
     }
     if (dto.name !== undefined) patch.name = dto.name;
     if (dto.amount !== undefined) patch.amount = String(dto.amount);
@@ -593,10 +617,48 @@ export class ContractsService {
           updatedAt: new Date(),
         })
         .where(eq(erpContract.id, contractId));
-      await tx
-        .update(erpProject)
-        .set({ budget: String(split.net), updatedAt: new Date() })
-        .where(eq(erpProject.contractId, contractId));
+      // D-16：合同变更预算回写按项目精确处理，禁止把同一净额覆盖到全部项目
+      const linkedProjects = await tx
+        .select({
+          id: erpProject.id,
+          budget: erpProject.budget,
+        })
+        .from(erpProject)
+        .where(eq(erpProject.contractId, contractId))
+        .for('update');
+      if (linkedProjects.length === 1) {
+        await tx
+          .update(erpProject)
+          .set({ budget: String(split.net), updatedAt: new Date() })
+          .where(eq(erpProject.id, linkedProjects[0].id));
+      } else if (linkedProjects.length > 1) {
+        const totalBudget = linkedProjects.reduce(
+          (s, p) => s + Number(p.budget ?? 0),
+          0,
+        );
+        let allocated = 0;
+        for (let i = 0; i < linkedProjects.length; i += 1) {
+          const p = linkedProjects[i];
+          let share: number;
+          if (i === linkedProjects.length - 1) {
+            share = Number((split.net - allocated).toFixed(2));
+          } else if (totalBudget > 0.009) {
+            share = Number(
+              ((split.net * Number(p.budget ?? 0)) / totalBudget).toFixed(2),
+            );
+            allocated += share;
+          } else {
+            share = Number(
+              (split.net / linkedProjects.length).toFixed(2),
+            );
+            allocated += share;
+          }
+          await tx
+            .update(erpProject)
+            .set({ budget: String(share), updatedAt: new Date() })
+            .where(eq(erpProject.id, p.id));
+        }
+      }
       const rows = await tx
         .insert(erpContractVersion)
         .values({
@@ -758,24 +820,42 @@ export class ContractsService {
         )
       );
     const code = await generateBizCode(this.db, erpProject, erpProject.code, 'PRJ');
-    const inserted = await this.db
-      .insert(erpProject)
-      .values({
-        code,
-        name: contract.name,
-        contractId: contract.id,
-        budget: String(contract.netAmount ?? contract.amount ?? 0),
-        estimatedTotalCost: String(Number(costRows[0]?.total ?? 0)),
-        startDate: contract.startDate,
-        endDate: contract.endDate,
-        progress: 0,
-        status: 'initiating',
-      })
-      .returning({ id: erpProject.id });
+    // D-17：依赖 uq_erp_project_one_contract，并发生效时捕获 23505 返回既有项目
+    let projectId: string;
+    try {
+      const inserted = await this.db
+        .insert(erpProject)
+        .values({
+          code,
+          name: contract.name,
+          contractId: contract.id,
+          budget: String(contract.netAmount ?? contract.amount ?? 0),
+          estimatedTotalCost: String(Number(costRows[0]?.total ?? 0)),
+          startDate: contract.startDate,
+          endDate: contract.endDate,
+          progress: 0,
+          status: 'initiating',
+        })
+        .returning({ id: erpProject.id });
+      projectId = inserted[0].id;
+    } catch (error) {
+      const pgCode =
+        error && typeof error === 'object' && 'code' in error
+          ? String((error as { code: unknown }).code)
+          : '';
+      if (pgCode !== '23505') throw error;
+      const again = await this.db
+        .select({ id: erpProject.id })
+        .from(erpProject)
+        .where(eq(erpProject.contractId, contract.id))
+        .limit(1);
+      if (again.length === 0) throw error;
+      return;
+    }
     if (milestones.length > 0) {
       await this.db.insert(erpProjectMilestone).values(
         milestones.map((row) => ({
-          projectId: inserted[0].id,
+          projectId,
           name: row.name,
           planDate: row.dueDate,
           status: 'pending',

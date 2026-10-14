@@ -4,3 +4,8 @@ export function todayInShanghai(): string {
     timeZone: 'Asia/Shanghai',
   }).format(new Date());
 }
+
+/** 业务时区当前月份，格式 YYYY-MM */
+export function monthInShanghai(): string {
+  return todayInShanghai().slice(0, 7);
+}

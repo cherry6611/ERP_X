@@ -12,7 +12,7 @@ import {
 } from '@nestjs/common';
 import { IsInt, IsNotEmpty, IsOptional, IsString, Max, Min } from 'class-validator';
 import type { Request } from 'express';
-import { CanRole, NeedLogin } from '@server/platform';
+import { CanCapability, NeedLogin } from '@server/platform';
 import { DriveEditor } from '@server/common/auth/read-roles';
 import { consumeRate } from '@server/common/security/rate-limit';
 import { actorFromRequest } from '@server/common/auth/actor';
@@ -139,7 +139,7 @@ export class DriveController {
     @Body() dto: UploadFileDto,
   ): Promise<DriveCreatedItem> {
     const actor = actorFromRequest(req);
-    consumeRate(`drive-upload:${actor.userId}`, 20, 60 * 60 * 1000);
+    await consumeRate(`drive-upload:${actor.userId}`, 20, 60 * 60 * 1000);
     return this.driveService.uploadFile(
       dto.folderToken,
       dto.fileName,
@@ -148,7 +148,7 @@ export class DriveController {
     );
   }
 
-  @CanRole(['admin'])
+  @CanCapability('drive_write')
   @Patch('files/:fileToken')
   async renameFile(
     @Param('fileToken') fileToken: string,
@@ -158,7 +158,7 @@ export class DriveController {
     return this.driveService.renameFile(fileToken, type, dto.name);
   }
 
-  @CanRole(['admin'])
+  @CanCapability('drive_write')
   @Delete('files/:fileToken')
   async deleteFile(
     @Param('fileToken') fileToken: string,
@@ -168,7 +168,7 @@ export class DriveController {
     return { token: fileToken, deleted: true };
   }
 
-  @CanRole(['admin'])
+  @CanCapability('drive')
   @Get('files/:fileToken/members')
   async listMembers(
     @Param('fileToken') fileToken: string,
@@ -177,19 +177,19 @@ export class DriveController {
     return this.driveService.listPermissionMembers(fileToken, type || 'docx');
   }
 
-  @CanRole(['admin'])
+  @CanCapability('drive')
   @Get('config')
   async getConfig(): Promise<FeishuDriveConfigResponse> {
     return this.configService.getConfigForAdmin();
   }
 
-  @CanRole(['admin'])
+  @CanCapability('drive_write')
   @Put('config')
   async updateConfig(
     @Req() req: Request,
     @Body() dto: UpdateDriveConfigDto,
   ): Promise<FeishuDriveConfigResponse> {
-    await this.configService.updateConfig(dto, req.userContext.userId);
+    await this.configService.updateConfig(dto, req.userContext?.userId ?? '');
     this.feishuClient.invalidateToken();
     return this.configService.getConfigForAdmin();
   }

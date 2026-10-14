@@ -8,7 +8,7 @@ import {
   Post,
   Query,
 } from '@nestjs/common';
-import { CanRole, NeedLogin } from '@server/platform';
+import { CanCapability, NeedLogin } from '@server/platform';
 import {
   IsDateString,
   IsIn,
@@ -131,7 +131,7 @@ export class DataAssetController {
     );
   }
 
-  @CanRole(['admin'])
+  @CanCapability('audit')
   @Post('datasets')
   async createDataset(
     @Body() dto: CreateDatasetDto
@@ -139,7 +139,7 @@ export class DataAssetController {
     return this.dataAssetService.createDataset(dto);
   }
 
-  @CanRole(['admin'])
+  @CanCapability('audit')
   @Patch('datasets/:id')
   async updateDataset(
     @Param('id', ParseUUIDPipe) id: string,
@@ -148,7 +148,7 @@ export class DataAssetController {
     return this.dataAssetService.updateDataset(id, dto);
   }
 
-  @CanRole(['admin'])
+  @CanCapability('audit')
   @Post('datasets/:id/actions/:action')
   async datasetAction(
     @Param('id', ParseUUIDPipe) id: string,
@@ -174,13 +174,13 @@ export class DataAssetController {
     );
   }
 
-  @CanRole(['admin'])
+  @CanCapability('audit')
   @Post('grants')
   async createGrant(@Body() dto: CreateGrantDto): Promise<GrantItem> {
     return this.dataAssetService.createGrant(dto);
   }
 
-  @CanRole(['admin'])
+  @CanCapability('audit')
   @Post('grants/:id/actions/expire')
   async expireGrant(
     @Param('id', ParseUUIDPipe) id: string

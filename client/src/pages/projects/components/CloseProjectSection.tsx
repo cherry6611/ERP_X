@@ -6,6 +6,7 @@ import { toast } from 'sonner';
 import { CheckCircle2 } from 'lucide-react';
 import { CanRole } from '@client/src/platform/auth';
 import { DataState } from '@client/src/components/DataState';
+import { SectionTitle } from '@client/src/components/SectionTitle';
 import { Button } from '@client/src/components/ui/button';
 import {
   Dialog,
@@ -103,7 +104,7 @@ const CloseProjectSection: React.FC<CloseProjectSectionProps> = ({ projectId, on
   if (detail.closedAt) {
     return (
       <div className="flex flex-col gap-3 rounded-lg border p-4 text-sm">
-        <h3 className="text-base font-semibold">结项信息</h3>
+        <SectionTitle>结项信息</SectionTitle>
         <div>
           <p className="text-muted-foreground">结项总结</p>
           <p className="break-words">{detail.closeSummary ?? '-'}</p>

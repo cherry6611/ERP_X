@@ -8,15 +8,19 @@ import {
   Logger,
   ValidationPipe,
 } from '@nestjs/common';
-import { appendFileSync, mkdirSync } from 'fs';
+import { appendFile, mkdirSync } from 'fs';
 import { join } from 'path';
 import { __express as hbsExpressEngine } from 'hbs';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 import { json, urlencoded, static as expressStatic } from 'express';
+import type { Sql } from 'postgres';
 
 import type { NestExpressApplication } from '@nestjs/platform-express';
 import { AppModule } from './app.module';
+import { PG_CLIENT } from '@server/platform';
+import { bindRateLimitSql } from '@server/common/security/rate-limit';
+import { PostgresRateLimitStore } from '@server/common/security/pg-rate-limit.store';
 
 /** D7：LOG_DIR 已设置时，在控制台之外追加 JSON Lines 到文件 */
 class JsonFileLogger extends ConsoleLogger {
@@ -29,19 +33,16 @@ class JsonFileLogger extends ConsoleLogger {
   }
 
   private append(level: string, message: unknown, context?: string): void {
-    try {
-      appendFileSync(
-        this.filePath,
-        `${JSON.stringify({
-          ts: new Date().toISOString(),
-          level,
-          context: context ?? this.context,
-          message,
-        })}\n`
-      );
-    } catch {
-      // 文件写入失败不影响主流程
-    }
+    // L2：异步追加，避免高 QPS 下 sync IO 阻塞事件循环
+    const line = `${JSON.stringify({
+      ts: new Date().toISOString(),
+      level,
+      context: context ?? this.context,
+      message,
+    })}\n`;
+    appendFile(this.filePath, line, () => {
+      /* 文件写入失败不影响主流程 */
+    });
   }
 
   override log(message: unknown, context?: string): void {
@@ -145,12 +146,22 @@ async function bootstrap() {
       },
     })
   );
+  // L1：优先用 PG 共享限速（多实例一致）；失败时回退内存桶
+  let rateLimitStore: PostgresRateLimitStore | undefined;
+  try {
+    const sql = app.get<Sql>(PG_CLIENT);
+    bindRateLimitSql(sql);
+    rateLimitStore = new PostgresRateLimitStore(sql);
+  } catch {
+    /* 启动早期若尚未注册 PG_CLIENT，保持进程内桶 */
+  }
   app.use(
     rateLimit({
       windowMs: 60_000,
       limit: 600,
       standardHeaders: true,
       legacyHeaders: false,
+      ...(rateLimitStore ? { store: rateLimitStore } : {}),
     })
   );
   // 修复 P1-9：ValidationPipe 默认只回 "Bad Request Exception"，
@@ -211,6 +222,34 @@ async function bootstrap() {
   process.once('SIGTERM', () => void shutdown('SIGTERM'));
   process.once('SIGINT', () => void shutdown('SIGINT'));
 
+  // F4-1：未处理 Promise / 未捕获异常兜底（配合 F4X-1，避免限流未 await 打崩进程）
+  let uncaughtBurst = 0;
+  let uncaughtWindowStart = Date.now();
+  process.on('unhandledRejection', (reason) => {
+    logger.error(
+      '未处理的 Promise 拒绝',
+      reason instanceof Error ? (reason.stack ?? reason.message) : String(reason),
+    );
+  });
+  process.on('uncaughtException', (error) => {
+    logger.error('未捕获异常，准备优雅退出', error.stack ?? error.message);
+    const now = Date.now();
+    if (now - uncaughtWindowStart > 60_000) {
+      uncaughtWindowStart = now;
+      uncaughtBurst = 0;
+    }
+    uncaughtBurst += 1;
+    if (uncaughtBurst >= 5) {
+      logger.error('60 秒内未捕获异常 ≥5 次，强制退出交由编排重启');
+      process.exit(1);
+      return;
+    }
+    void shutdown('uncaughtException');
+  });
+
+  logger.log(
+    `进程时区 = ${Intl.DateTimeFormat().resolvedOptions().timeZone}`,
+  );
   await app.listen(port, host);
   logger.log(`Server running on ${host}:${port}`);
   logger.log(`API endpoints ready at http://${host}:${port}/api`);

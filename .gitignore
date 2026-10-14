@@ -63,8 +63,16 @@ pnpm-lock.yaml
 .eslintcache
 *.tsbuildinfo
 
+# DB dumps / backups (never commit)
+backup-*.sql
+*.dump
+*.sql.gz
+
 # swc wasm
 .swc
+
+# C-12：openapi 快速编译产物（gen:openapi:build 的中间目录，不提交）
+.openapi-build/
 
 # Agent files
 .agent/

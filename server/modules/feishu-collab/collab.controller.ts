@@ -1,6 +1,6 @@
 import { BadRequestException, Body, Controller, Get, Inject, Param, Post } from '@nestjs/common';
 import { IsArray, IsIn, IsNotEmpty, IsString } from 'class-validator';
-import { CanRole, NeedLogin, DRIZZLE_DATABASE, type PostgresJsDatabase } from '@server/platform';
+import { CanCapability, DRIZZLE_DATABASE, NeedLogin, type PostgresJsDatabase } from '@server/platform';
 import { compFeishuApproval } from '@server/database/schema';
 import { FeishuClientService } from '@server/modules/feishu-drive/feishu-client.service';
 import { FeishuContactService } from './contact.service';
@@ -51,19 +51,19 @@ export class FeishuCollabController {
     @Inject(DRIZZLE_DATABASE) private readonly db: PostgresJsDatabase,
   ) {}
 
-  @CanRole(['admin'])
+  @CanCapability('drive_write')
   @Post('contact/sync')
   syncContact() {
     return this.contact.fullSync();
   }
 
-  @CanRole(['admin'])
+  @CanCapability('drive')
   @Get('contact/conflicts')
   conflicts() {
     return this.contact.listConflicts();
   }
 
-  @CanRole(['admin'])
+  @CanCapability('drive_write')
   @Post('approval')
   async startApproval(@Body() dto: ApprovalDto): Promise<{ instanceCode: string }> {
     // D4：审批未配置时 fail-closed，不再返回 200 + unconfigured
@@ -96,7 +96,7 @@ export class FeishuCollabController {
     return { instanceCode };
   }
 
-  @CanRole(['admin'])
+  @CanCapability('drive_write')
   @Post('calendar/events')
   async createEvent(@Body() dto: CalendarDto): Promise<{ eventId: string }> {
     const data = await this.feishu.request<{ event?: { event_id?: string } }>(
@@ -107,7 +107,7 @@ export class FeishuCollabController {
     return { eventId: data.event?.event_id ?? '' };
   }
 
-  @CanRole(['admin'])
+  @CanCapability('drive_write')
   @Post('calendar/freebusy')
   async freebusy(@Body() dto: CalendarDto): Promise<unknown> {
     return this.feishu.request('POST', '/open-apis/calendar/v4/freebusy/list', {
@@ -115,7 +115,7 @@ export class FeishuCollabController {
     });
   }
 
-  @CanRole(['admin'])
+  @CanCapability('drive_write')
   @Post('chats')
   async createChat(@Body() dto: ChatDto): Promise<{ chatId: string }> {
     const data = await this.feishu.request<{ chat_id?: string }>('POST', '/open-apis/im/v1/chats', {
@@ -124,7 +124,7 @@ export class FeishuCollabController {
     return { chatId: data.chat_id ?? '' };
   }
 
-  @CanRole(['admin'])
+  @CanCapability('drive_write')
   @Post('chats/:chatId/members')
   async addChatMembers(
     @Param('chatId') chatId: string,

@@ -39,6 +39,7 @@ import FeishuSyncRecordsDialog from '@client/src/components/erp/FeishuSyncRecord
 import { useAsyncData } from '@client/src/hooks/useAsyncData';
 import { TIMESHEET_STATUS_LABELS } from '@client/src/utils/biz-labels';
 import { getApiErrorMessage } from '@client/src/utils/api-error-message';
+import { confirmDanger } from '@client/src/utils/confirmDanger';
 import type {
   CreateTimesheetDto,
   Employee,
@@ -172,6 +173,13 @@ const TimesheetsTab: React.FC = () => {
   };
 
   const doAction = async (ts: Timesheet, action: TimesheetAction) => {
+    if (action === 'reject') {
+      const ok = await confirmDanger(
+        `确认退回工时 ${ts.code}？`,
+        { title: '确认退回', confirmLabel: '确认退回' },
+      );
+      if (!ok) return;
+    }
     try {
       await costsApi.timesheetAction(ts.id, action);
       toast.success(action === 'confirm' ? '工时已确认并折算成本' : '操作成功');

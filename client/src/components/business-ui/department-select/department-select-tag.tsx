@@ -10,6 +10,7 @@ import {
   tagIconVariants,
   type ComboboxSize,
 } from '@client/src/components/business-ui/entity-combobox/size-variants';
+import { Button } from '@/components/ui/button';
 
 export const DepartmentSelectTag = ({
   departmentValue,
@@ -32,14 +33,16 @@ export const DepartmentSelectTag = ({
   };
 
   const closeButton = !disabled ? (
-    <button
+    <Button
       type="button"
-      className="rounded-sm opacity-70 ring-offset-background transition-opacity hover:opacity-100 focus:outline-none"
+      variant="ghost"
+      size="icon"
+      className="size-auto rounded-sm p-0 opacity-70 ring-offset-background transition-opacity hover:opacity-100 focus:outline-none"
       onClick={handleClose}
     >
       <X className={tagCloseIconVariants({ size })} />
       <span className="sr-only">移除 {departmentValue.name}</span>
-    </button>
+    </Button>
   ) : null;
 
   return (

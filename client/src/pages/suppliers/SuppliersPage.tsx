@@ -45,8 +45,9 @@ import {
 } from '@client/src/components/excel/excel-utils';
 import { masterDataApi } from '@client/src/api';
 import { useAsyncData } from '@client/src/hooks/useAsyncData';
-import { useDebouncedValue } from '@client/src/hooks/useDebouncedValue';
+import { useListQuery } from '@client/src/hooks/useListQuery';
 import { getApiErrorMessage } from '@client/src/utils/api-error-message';
+import { confirmDanger } from '@client/src/utils/confirmDanger';
 import {
   resolveRateOptions,
 } from '@client/src/utils/tax-rate-options';
@@ -190,14 +191,13 @@ type SupplierFormData = z.output<typeof supplierSchema>;
 type SupplierFormInput = z.input<typeof supplierSchema>;
 
 const SuppliersPage: React.FC = () => {
-  const [keyword, setKeyword] = useState('');
-  const keywordQuery = useDebouncedValue(keyword);
+  const { q, setQ, debouncedQ, debouncing } = useListQuery();
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editing, setEditing] = useState<Supplier | null>(null);
   const [importOpen, setImportOpen] = useState(false);
   const { data, loading, error, reload } = useAsyncData<Supplier[]>(
-    () => masterDataApi.listSuppliers(keywordQuery || undefined),
-    [keywordQuery],
+    () => masterDataApi.listSuppliers(debouncedQ || undefined),
+    [debouncedQ],
   );
 
   const form = useForm<SupplierFormInput, unknown, SupplierFormData>({
@@ -290,6 +290,13 @@ const SuppliersPage: React.FC = () => {
   const toggleStatus = async (supplier: Supplier) => {
     const next: 'active' | 'inactive' =
       supplier.status === 'inactive' ? 'active' : 'inactive';
+    if (next === 'inactive') {
+      const ok = await confirmDanger(
+        `确认停用供应商 ${supplier.name}？停用后不可用于新采购。`,
+        { title: '确认停用' },
+      );
+      if (!ok) return;
+    }
     try {
       await masterDataApi.setSupplierStatus(supplier.id, next);
       toast.success(next === 'inactive' ? '供应商已停用' : '供应商已启用');
@@ -355,9 +362,12 @@ const SuppliersPage: React.FC = () => {
           aria-label="搜索供应商"
           placeholder="搜索供应商名称或编号"
           className="w-64"
-          value={keyword}
-          onChange={(e) => setKeyword(e.target.value)}
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
         />
+        {debouncing ? (
+          <span className="text-xs text-muted-foreground">筛选中…</span>
+        ) : null}
         <CanRole roles={['admin']}>
           <Button onClick={openCreate}>
             <Plus className="h-4 w-4" />

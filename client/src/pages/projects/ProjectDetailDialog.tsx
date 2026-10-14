@@ -89,7 +89,6 @@ const ProjectDetailDialog: React.FC<ProjectDetailDialogProps> = ({
 
   useEffect(() => {
     if (open) void load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, projectId]);
 
   const doAction = async (action: ProjectStatusAction) => {

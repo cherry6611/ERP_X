@@ -1,9 +1,9 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useForm } from 'react-hook-form';
 import { z } from 'zod';
 import { toast } from 'sonner';
-import { FileDown, Loader2, Plus, Trash2 } from 'lucide-react';
+import { FileDown, Loader2, Plus, Table2, Trash2, Upload } from 'lucide-react';
 import DateField from '@client/src/components/erp/DateField';
 import {
   Dialog,
@@ -78,11 +78,14 @@ export interface QuotationFormPreset {
 }
 
 interface QuotationFormDialogProps {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
+  /** 整页模式：不使用弹窗外壳 */
+  asPage?: boolean;
   preset?: QuotationFormPreset;
   editTarget?: Quotation | null;
   onSaved: (quotation: Quotation) => void;
+  onCancel?: () => void;
 }
 
 const MARGIN_RED_LINE = 20;
@@ -103,54 +106,30 @@ const toNum = (value: string): number => {
 };
 
 const QuotationFormDialog: React.FC<QuotationFormDialogProps> = ({
-  open,
+  open = false,
   onOpenChange,
+  asPage = false,
   preset,
   editTarget,
   onSaved,
+  onCancel,
 }) => {
+  const active = asPage || open;
   const [items, setItems] = useState<QuotationItemRow[]>([EMPTY_ITEM]);
   const [docUrl, setDocUrl] = useState<string>('');
   const [parsing, setParsing] = useState<boolean>(false);
+  const [uploading, setUploading] = useState<boolean>(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [bitableConfigured, setBitableConfigured] = useState(false);
+  const [bitableRecords, setBitableRecords] = useState<
+    Array<{ recordId: string; fields: Record<string, unknown> }>
+  >([]);
+  const [selectedRecordIds, setSelectedRecordIds] = useState<string[]>([]);
+  const [bitableLoading, setBitableLoading] = useState(false);
+  const [bitablePreviewing, setBitablePreviewing] = useState(false);
 
-  const isValidDocUrl = docUrl.includes('/docx/');
+  const isValidDocUrl = /\/(docx|docs|wiki|file|sheets)\//i.test(docUrl);
   const showDocFormatError = docUrl.trim() !== '' && !isValidDocUrl;
-
-  const handleDocParse = async () => {
-    if (!isValidDocUrl || parsing) return;
-    setParsing(true);
-    try {
-      const draft: ParsedQuotationDraft = await crmApi.parseQuotationDoc(docUrl);
-      const current = form.getValues();
-      form.reset({
-        title: draft.title ?? current.title,
-        customerId: current.customerId,
-        opportunityId: current.opportunityId,
-        quoteDate: draft.quoteDate || current.quoteDate || todayIso(),
-        validUntil: draft.validUntil || current.validUntil || '',
-        discountPct: current.discountPct,
-        remark: draft.remark ?? current.remark,
-      });
-      const parsedRows: QuotationItemRow[] = draft.items.map(
-        (item: ParsedQuotationItem): QuotationItemRow => ({
-          itemName: item.itemName,
-          unit: item.unit ?? '人天',
-          quantity: item.quantity,
-          unitPrice: item.unitPrice,
-          discountPct: item.discountPct ?? 0,
-          estUnitCost: item.estUnitCost ?? 0,
-          remark: item.remark ?? '',
-        }),
-      );
-      setItems(parsedRows.length > 0 ? parsedRows : [{ ...EMPTY_ITEM }]);
-      setDocUrl('');
-      toast.success('解析成功，请确认明细');
-    } catch (err) {
-      toast.error(getApiErrorMessage(err, '解析失败，请稍后重试'));
-    } finally {
-      setParsing(false);
-    }
-  };
 
   const form = useForm<QuoteFormInput, unknown, QuoteFormData>({
     resolver: zodResolver(quoteSchema),
@@ -165,6 +144,97 @@ const QuotationFormDialog: React.FC<QuotationFormDialogProps> = ({
     },
   });
 
+  useEffect(() => {
+    if (!active || editTarget) return;
+    void crmApi
+      .getFeishuBitableMeta()
+      .then((meta) => setBitableConfigured(meta.configured))
+      .catch(() => setBitableConfigured(false));
+  }, [active, editTarget]);
+
+  const applyDraft = (draft: ParsedQuotationDraft) => {
+    const current = form.getValues();
+    form.reset({
+      title: draft.title ?? current.title,
+      customerId: current.customerId,
+      opportunityId: current.opportunityId,
+      quoteDate: draft.quoteDate || current.quoteDate || todayIso(),
+      validUntil: draft.validUntil || current.validUntil || '',
+      discountPct: current.discountPct,
+      remark: draft.remark ?? current.remark,
+    });
+    const parsedRows: QuotationItemRow[] = draft.items.map(
+      (item: ParsedQuotationItem): QuotationItemRow => ({
+        itemName: item.itemName,
+        unit: item.unit ?? '人天',
+        quantity: item.quantity,
+        unitPrice: item.unitPrice,
+        discountPct: item.discountPct ?? 0,
+        estUnitCost: item.estUnitCost ?? 0,
+        remark: item.remark ?? '',
+      }),
+    );
+    setItems(parsedRows.length > 0 ? parsedRows : [{ ...EMPTY_ITEM }]);
+  };
+
+  const loadBitableRecords = async () => {
+    setBitableLoading(true);
+    try {
+      const res = await crmApi.listFeishuBitableRecords();
+      setBitableRecords(res.records);
+      setSelectedRecordIds([]);
+      if (res.records.length === 0) toast.message('多维表格暂无记录');
+    } catch (err) {
+      toast.error(getApiErrorMessage(err, '加载多维表格失败'));
+    } finally {
+      setBitableLoading(false);
+    }
+  };
+
+  const handleBitablePreview = async () => {
+    if (selectedRecordIds.length === 0 || bitablePreviewing) return;
+    setBitablePreviewing(true);
+    try {
+      const draft = await crmApi.previewFeishuBitable(selectedRecordIds);
+      applyDraft(draft);
+      toast.success('已从多维表格填充，请确认明细');
+    } catch (err) {
+      toast.error(getApiErrorMessage(err, '预览失败'));
+    } finally {
+      setBitablePreviewing(false);
+    }
+  };
+
+  const handleDocParse = async () => {
+    if (!isValidDocUrl || parsing) return;
+    setParsing(true);
+    try {
+      const draft: ParsedQuotationDraft = await crmApi.parseQuotationDoc(docUrl);
+      applyDraft(draft);
+      setDocUrl('');
+      toast.success('解析成功，请确认明细');
+    } catch (err) {
+      toast.error(getApiErrorMessage(err, '解析失败，请稍后重试'));
+    } finally {
+      setParsing(false);
+    }
+  };
+
+  const handleFileParse = async (file: File | undefined) => {
+    if (!file || uploading) return;
+    setUploading(true);
+    try {
+      const draft = await crmApi.parseQuotationFile(file);
+      applyDraft(draft);
+      toast.success('本地表格解析成功，请确认明细');
+    } catch (err) {
+      toast.error(getApiErrorMessage(err, '本地文件解析失败'));
+    } finally {
+      setUploading(false);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  };
+
   const { data: customers } = useAsyncData<Customer[]>(
     () => masterDataApi.listCustomers(),
     [],
@@ -175,7 +245,7 @@ const QuotationFormDialog: React.FC<QuotationFormDialogProps> = ({
   );
 
   useEffect(() => {
-    if (!open) return;
+    if (!active) return;
     if (editTarget) {
       form.reset({
         title: editTarget.title,
@@ -222,7 +292,7 @@ const QuotationFormDialog: React.FC<QuotationFormDialogProps> = ({
       );
       setItems(presetRows.length > 0 ? presetRows : [{ ...EMPTY_ITEM }]);
     }
-  }, [open, editTarget, preset, form]);
+  }, [active, editTarget, preset, form]);
 
   const addItem = () => {
     setItems((prev: QuotationItemRow[]) => [...prev, { ...EMPTY_ITEM }]);
@@ -295,19 +365,14 @@ const QuotationFormDialog: React.FC<QuotationFormDialogProps> = ({
         ? await crmApi.updateQuotation(editTarget.id, dto)
         : await crmApi.createQuotation(dto);
       toast.success(editTarget ? '报价单已更新' : '报价单已创建');
-      onOpenChange(false);
+      onOpenChange?.(false);
       onSaved(saved);
     } catch (err) {
       toast.error(getApiErrorMessage(err, '保存失败'));
     }
   });
 
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
-        <DialogHeader>
-          <DialogTitle>{editTarget ? '编辑报价单' : '新建报价单'}</DialogTitle>
-        </DialogHeader>
+  const formInner = (
         <Form {...form}>
           <form onSubmit={onSubmit} className="space-y-4">
             {!editTarget ? (
@@ -316,13 +381,14 @@ const QuotationFormDialog: React.FC<QuotationFormDialogProps> = ({
                   <FileDown className="h-4 w-4 text-muted-foreground" />
                   <Label htmlFor="quotation-doc-url">云文档解析</Label>
                   <span className="text-xs text-muted-foreground">
-                    粘贴飞书 docx 文档链接，自动抓取报价信息填充下方表单
+                    支持 /docx/、/docs/、/wiki/、/sheets/；/file/ 附件与本地上传支持
+                    .docx/.xlsx/.txt/.csv（飞书链接需分享给应用可读）
                   </span>
                 </div>
                 <div className="flex items-start gap-2">
                   <Input
                     id="quotation-doc-url"
-                    placeholder="https://xxx.feishu.cn/docx/xxxx"
+                    placeholder="https://xxx.feishu.cn/sheets/xxxx 或 /docx/…"
                     value={docUrl}
                     onChange={(e) => setDocUrl(e.target.value)}
                   />
@@ -338,8 +404,104 @@ const QuotationFormDialog: React.FC<QuotationFormDialogProps> = ({
                 </div>
                 {showDocFormatError ? (
                   <p className="text-sm text-destructive">
-                    链接格式不正确，需包含 /docx/ 路径
+                    链接格式不正确，需包含 /docx/、/docs/、/wiki/、/sheets/ 或 /file/ 路径
                   </p>
+                ) : null}
+                <div className="flex flex-wrap items-center gap-2 pt-1">
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept=".xlsx,.xls,.csv,.txt,.docx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv,text/plain"
+                    className="hidden"
+                    onChange={(e) => {
+                      void handleFileParse(e.target.files?.[0]);
+                    }}
+                  />
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    disabled={uploading || parsing}
+                    onClick={() => fileInputRef.current?.click()}
+                  >
+                    {uploading ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <Upload className="h-4 w-4" />
+                    )}
+                    {uploading ? '上传解析中…' : '上传本地表格'}
+                  </Button>
+                  <span className="text-xs text-muted-foreground">
+                    本地 .xlsx / .csv / .txt / .docx
+                  </span>
+                </div>
+                {bitableConfigured ? (
+                  <div className="mt-3 space-y-2 border-t pt-3">
+                    <div className="flex items-center gap-2">
+                      <Table2 className="h-4 w-4 text-muted-foreground" />
+                      <Label>多维表格导入</Label>
+                      <span className="text-xs text-muted-foreground">
+                        勾选记录后预览填充明细
+                      </span>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        disabled={bitableLoading}
+                        onClick={() => void loadBitableRecords()}
+                      >
+                        {bitableLoading ? (
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                        ) : null}
+                        加载记录
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        disabled={selectedRecordIds.length === 0 || bitablePreviewing}
+                        onClick={() => void handleBitablePreview()}
+                      >
+                        {bitablePreviewing ? (
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                        ) : null}
+                        预览并填充
+                      </Button>
+                    </div>
+                    {bitableRecords.length > 0 ? (
+                      <ul className="max-h-36 space-y-1 overflow-y-auto rounded border bg-background p-2 text-sm">
+                        {bitableRecords.map((rec) => {
+                          const label =
+                            Object.values(rec.fields)
+                              .map((v) => {
+                                if (typeof v === 'string' || typeof v === 'number') return String(v);
+                                return '';
+                              })
+                              .filter(Boolean)
+                              .slice(0, 3)
+                              .join(' · ') || rec.recordId;
+                          return (
+                            <li key={rec.recordId} className="flex items-center gap-2">
+                              <input
+                                type="checkbox"
+                                checked={selectedRecordIds.includes(rec.recordId)}
+                                onChange={(e) => {
+                                  setSelectedRecordIds((prev) =>
+                                    e.target.checked
+                                      ? [...prev, rec.recordId]
+                                      : prev.filter((id) => id !== rec.recordId),
+                                  );
+                                }}
+                              />
+                              <span className="truncate">{label}</span>
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    ) : null}
+                  </div>
                 ) : null}
               </div>
             ) : null}
@@ -598,11 +760,29 @@ const QuotationFormDialog: React.FC<QuotationFormDialogProps> = ({
               </span>
             </div>
 
-            <DialogFooter>
+            <div className="flex justify-end gap-2 border-t pt-3">
+              {asPage && onCancel ? (
+                <Button type="button" variant="outline" onClick={onCancel}>
+                  取消
+                </Button>
+              ) : null}
               <Button type="submit">{editTarget ? '保存修改' : '保存'}</Button>
-            </DialogFooter>
+            </div>
           </form>
         </Form>
+  );
+
+  if (asPage) {
+    return <div className="mx-auto max-w-4xl space-y-4">{formInner}</div>;
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle>{editTarget ? '编辑报价单' : '新建报价单'}</DialogTitle>
+        </DialogHeader>
+        {formInner}
       </DialogContent>
     </Dialog>
   );

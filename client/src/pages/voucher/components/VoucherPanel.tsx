@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useFieldArray, useForm } from 'react-hook-form';
 import { z } from 'zod';
@@ -38,7 +39,6 @@ import {
   SelectValue,
 } from '@client/src/components/ui/select';
 import DateField from '@client/src/components/erp/DateField';
-import { AttachmentList } from '@client/src/components/attachments/AttachmentList';
 import {
   exportRowsToXlsx,
   type ExcelSheetColumn,
@@ -113,13 +113,13 @@ const VOUCHER_EXPORT_COLUMNS: ExcelSheetColumn<VoucherItem>[] = [
 ];
 
 const VoucherPanel: React.FC = () => {
+  const navigate = useNavigate();
   const [page, setPage] = useState<number>(1);
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [periodFilter, setPeriodFilter] = useState<string>('all');
   const [sourceFilter, setSourceFilter] = useState<string>('all');
   const [createOpen, setCreateOpen] = useState(false);
-  const [detailTarget, setDetailTarget] = useState<VoucherItem | null>(null);
-  const [confirmTarget, setConfirmTarget] = useState<ConfirmTarget | null>(null);
+    const [confirmTarget, setConfirmTarget] = useState<ConfirmTarget | null>(null);
   const [operating, setOperating] = useState(false);
 
   const { data, loading, error, reload } = useAsyncData(
@@ -311,7 +311,7 @@ const VoucherPanel: React.FC = () => {
       width: 190,
       render: (_: unknown, record: VoucherItem) => (
         <div className="flex gap-1">
-          <Button variant="ghost" size="sm" onClick={() => setDetailTarget(record)}>
+          <Button variant="ghost" size="sm" onClick={() => navigate(`/voucher/${record.id}`, { state: { item: record } })}>
             详情
           </Button>
           <CanRole roles={['admin']}>
@@ -466,69 +466,6 @@ const VoucherPanel: React.FC = () => {
         }}
         locale={{ emptyText: '暂无凭证，手工新增或等待业务事件自动生成' }}
       />
-
-      {/* 凭证详情 */}
-      <Dialog
-        open={detailTarget !== null}
-        onOpenChange={(open: boolean) => {
-          if (!open) setDetailTarget(null);
-        }}
-      >
-        <DialogContent className="max-w-3xl">
-          <DialogHeader>
-            <DialogTitle>凭证详情 {detailTarget?.code ?? ''}</DialogTitle>
-            {detailTarget ? (
-              <DialogDescription>
-                日期 {detailTarget.voucherDate ?? '-'} · 期间 {detailTarget.period} · 来源{' '}
-                {VOUCHER_SOURCE_LABELS[detailTarget.sourceType] ?? detailTarget.sourceType}
-              </DialogDescription>
-            ) : null}
-          </DialogHeader>
-          {detailTarget ? (
-            <div className="flex flex-col gap-4">
-              <div className="grid grid-cols-2 gap-x-6 gap-y-1 text-sm">
-                <p>
-                  <span className="text-muted-foreground">摘要：</span>
-                  {detailTarget.summary ?? '-'}
-                </p>
-                <p className="flex items-center gap-2">
-                  <span className="text-muted-foreground">状态：</span>
-                  <VoucherStatusBadge status={detailTarget.status} />
-                </p>
-                <p>
-                  <span className="text-muted-foreground">关联单号：</span>
-                  {detailTarget.sourceRef ?? '-'}
-                </p>
-                <p>
-                  <span className="text-muted-foreground">备注：</span>
-                  {detailTarget.remark ?? '-'}
-                </p>
-              </div>
-              <Table
-                columns={lineColumns}
-                dataSource={detailTarget.lines}
-                rowKey="id"
-                loading={false}
-                pagination={false}
-                scroll={{ y: 300 }}
-              />
-              <p className="text-sm">
-                借方合计 <span className="font-medium">{formatMoney(detailTarget.totalDebit)}</span>
-                {'　'}贷方合计{' '}
-                <span className="font-medium">{formatMoney(detailTarget.totalCredit)}</span>
-                {Math.abs(detailTarget.totalDebit - detailTarget.totalCredit) < 0.001 ? (
-                  <span className="ml-3 text-muted-foreground">借贷平衡</span>
-                ) : (
-                  <span className="ml-3 text-destructive">借贷不平衡</span>
-                )}
-              </p>
-              <div className="border-t pt-4">
-                <AttachmentList resourceType="fin_voucher" resourceId={detailTarget.id} />
-              </div>
-            </div>
-          ) : null}
-        </DialogContent>
-      </Dialog>
 
       {/* 新增手工凭证 */}
       <Dialog open={createOpen} onOpenChange={setCreateOpen}>

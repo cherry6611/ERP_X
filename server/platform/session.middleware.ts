@@ -18,6 +18,18 @@ export class SessionMiddleware implements NestMiddleware {
   ) {}
 
   use(req: Request, res: Response, next: NextFunction): void {
+    const path = (req.originalUrl ?? req.url ?? '').split('?')[0] ?? '';
+    // 健康检查/静态资源不持有 DB 事务，避免连接池被无关请求占满
+    if (
+      path === '/api/health' ||
+      path.startsWith('/assets/') ||
+      path === '/favicon.svg' ||
+      path === '/favicon.ico'
+    ) {
+      req.userContext = { roles: [] };
+      next();
+      return;
+    }
     const header = req.headers.authorization;
     const bearer = header?.startsWith('Bearer ') ? header.slice(7) : null;
     const token = bearer ?? readCookie(req.headers.cookie, SESSION_COOKIE);

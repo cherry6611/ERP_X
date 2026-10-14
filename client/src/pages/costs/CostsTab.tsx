@@ -65,7 +65,7 @@ import {
 import { costsApi, feishuSyncApi, projectsApi } from '@client/src/api';
 import FeishuSyncRecordsDialog from '@client/src/components/erp/FeishuSyncRecordsDialog';
 import { useAsyncData } from '@client/src/hooks/useAsyncData';
-import { useDebouncedValue } from '@client/src/hooks/useDebouncedValue';
+import { useListQuery } from '@client/src/hooks/useListQuery';
 import { formatMoney } from '@client/src/utils/format';
 import { COST_TYPE_LABELS } from '@client/src/utils/biz-labels';
 import { getApiErrorMessage } from '@client/src/utils/api-error-message';
@@ -121,10 +121,9 @@ type CostFormData = z.output<typeof costSchema>;
 type CostFormInput = z.input<typeof costSchema>;
 
 const CostsTab: React.FC = () => {
+  const { q, setQ, debouncedQ, debouncing } = useListQuery();
   const [projectFilter, setProjectFilter] = useState<string>('all');
   const [typeFilter, setTypeFilter] = useState<string>('all');
-  const [keyword, setKeyword] = useState('');
-  const keywordQuery = useDebouncedValue(keyword);
   const [createOpen, setCreateOpen] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [syncConfirm, setSyncConfirm] = useState(false);
@@ -141,8 +140,8 @@ const CostsTab: React.FC = () => {
   );
   const filteredData = React.useMemo(() => {
     const rows = data ?? [];
-    const q = keywordQuery.trim().toLowerCase();
-    if (!q) return rows;
+    const needle = debouncedQ.trim().toLowerCase();
+    if (!needle) return rows;
     return rows.filter((row) => {
       const haystack = [
         row.code,
@@ -154,9 +153,9 @@ const CostsTab: React.FC = () => {
         .filter(Boolean)
         .join(' ')
         .toLowerCase();
-      return haystack.includes(q);
+      return haystack.includes(needle);
     });
-  }, [data, keywordQuery]);
+  }, [data, debouncedQ]);
   const { data: summary } = useAsyncData(() => costsApi.getCostSummary(), []);
   const { data: projects } = useAsyncData<Project[]>(() => projectsApi.listProjects(), []);
 
@@ -300,9 +299,12 @@ const CostsTab: React.FC = () => {
             id="cost-keyword"
             className="w-56"
             placeholder="编号 / 项目 / 摘要…"
-            value={keyword}
-            onChange={(e) => setKeyword(e.target.value)}
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
           />
+          {debouncing ? (
+            <span className="text-xs text-muted-foreground">筛选中…</span>
+          ) : null}
         </div>
         <div className="flex items-center gap-2">
           <Label htmlFor="cost-type-filter">类型</Label>

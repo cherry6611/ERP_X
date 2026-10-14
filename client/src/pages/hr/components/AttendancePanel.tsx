@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useForm } from 'react-hook-form';
 import { z } from 'zod';
@@ -6,6 +7,7 @@ import { toast } from 'sonner';
 import { Plus } from 'lucide-react';
 import { Table, TableColumnsType } from 'antd';
 import { CanRole } from '@client/src/platform/auth';
+import { SectionTitle } from '@client/src/components/SectionTitle';
 import DateField from '@client/src/components/erp/DateField';
 import HrStatusBadge, {
   ATTENDANCE_STATUS_LABELS,
@@ -39,7 +41,6 @@ import {
 } from '@client/src/components/ui/select';
 import { hrApi } from '@client/src/api';
 import { sendApprovalNotification } from '@client/src/api/notifications';
-import { AttachmentField } from '@client/src/components/attachments/AttachmentField';
 import AttachmentHint from '@client/src/components/attachments/AttachmentHint';
 import { useAsyncData } from '@client/src/hooks/useAsyncData';
 import { currentPeriod } from '@client/src/utils/format';
@@ -94,6 +95,7 @@ const amendmentSchema = z.object({
 });
 
 const AttendancePanel: React.FC = () => {
+  const navigate = useNavigate();
   const [month, setMonth] = useState<string>(currentPeriod());
   const [attEmpFilter, setAttEmpFilter] = useState<string>('all');
   const [leaveStatus, setLeaveStatus] = useState<string>('all');
@@ -103,8 +105,7 @@ const AttendancePanel: React.FC = () => {
   const [leaveOpen, setLeaveOpen] = useState(false);
   const [balanceOpen, setBalanceOpen] = useState(false);
   const [initingLeave, setInitingLeave] = useState(false);
-  const [leaveDetail, setLeaveDetail] = useState<LeaveRequest | null>(null);
-  const [operating, setOperating] = useState(false);
+    const [operating, setOperating] = useState(false);
 
   const { data: attendance, loading: attLoading, error: attError, reload: reloadAtt } =
     useAsyncData<AttendanceRecord[]>(
@@ -205,7 +206,7 @@ const AttendancePanel: React.FC = () => {
       });
       toast.success('请假申请已提交');
       setLeaveOpen(false);
-      setLeaveDetail(req);
+      navigate(`/hr/leaves/${req.id}`, { state: { item: req } });
       leaveForm.reset({
         employeeId: '',
         leaveType: 'annual',
@@ -384,7 +385,7 @@ const AttendancePanel: React.FC = () => {
       width: 130,
       render: (_: unknown, record: LeaveRequest) => (
         <div className="flex gap-1">
-          <Button variant="ghost" size="sm" onClick={() => setLeaveDetail(record)}>
+          <Button variant="ghost" size="sm" onClick={() => navigate(`/hr/leaves/${record.id}`, { state: { item: record } })}>
             详情
           </Button>
           {record.status === 'pending' ? (
@@ -432,7 +433,7 @@ const AttendancePanel: React.FC = () => {
       <section className="flex flex-col gap-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex flex-wrap items-center gap-3">
-            <h3 className="text-base font-semibold">考勤记录</h3>
+            <SectionTitle>考勤记录</SectionTitle>
             <div className="flex items-center gap-2">
               <Label htmlFor="att-month">月份</Label>
               <Input
@@ -487,7 +488,7 @@ const AttendancePanel: React.FC = () => {
 
       <section className="flex flex-col gap-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <h3 className="text-base font-semibold">补卡申请</h3>
+          <SectionTitle>补卡申请</SectionTitle>
           <p className="text-sm text-muted-foreground">按当前登录账号绑定的员工提交</p>
         </div>
         <Form {...amendmentForm}>
@@ -555,7 +556,7 @@ const AttendancePanel: React.FC = () => {
       <section className="flex flex-col gap-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex flex-wrap items-center gap-3">
-            <h3 className="text-base font-semibold">请假申请</h3>
+            <SectionTitle>请假申请</SectionTitle>
             <div className="flex items-center gap-2">
               <Label htmlFor="leave-status">状态</Label>
               <Select value={leaveStatus} onValueChange={setLeaveStatus}>
@@ -615,7 +616,7 @@ const AttendancePanel: React.FC = () => {
       <section className="flex flex-col gap-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-2">
-            <h3 className="text-base font-semibold">请假余额</h3>
+            <SectionTitle>请假余额</SectionTitle>
             <div className="flex items-center gap-2">
               <Label htmlFor="balance-year">年度</Label>
               <Input
@@ -890,59 +891,6 @@ const AttendancePanel: React.FC = () => {
         </DialogContent>
       </Dialog>
 
-      <Dialog
-        open={leaveDetail !== null}
-        onOpenChange={(open: boolean) => {
-          if (!open) setLeaveDetail(null);
-        }}
-      >
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle>请假详情 {leaveDetail?.code ?? ''}</DialogTitle>
-          </DialogHeader>
-          {leaveDetail ? (
-            <div className="flex flex-col gap-4">
-              <div className="grid grid-cols-2 gap-x-6 gap-y-1 text-sm">
-                <p>
-                  <span className="text-muted-foreground">员工：</span>
-                  {leaveDetail.employeeName}
-                </p>
-                <p>
-                  <span className="text-muted-foreground">类型：</span>
-                  {LEAVE_TYPE_LABELS[leaveDetail.leaveType] ?? leaveDetail.leaveType}
-                </p>
-                <p>
-                  <span className="text-muted-foreground">开始日期：</span>
-                  {leaveDetail.startDate}
-                </p>
-                <p>
-                  <span className="text-muted-foreground">结束日期：</span>
-                  {leaveDetail.endDate}
-                </p>
-                <p>
-                  <span className="text-muted-foreground">天数：</span>
-                  {leaveDetail.days}
-                </p>
-                <p className="flex items-center gap-2">
-                  <span className="text-muted-foreground">状态：</span>
-                  <HrStatusBadge status={leaveDetail.status} labels={LEAVE_STATUS_LABELS} />
-                </p>
-              </div>
-              <p className="text-sm">
-                <span className="text-muted-foreground">事由：</span>
-                {leaveDetail.reason ?? '-'}
-              </p>
-              <div className="border-t pt-4">
-                <AttachmentField
-                  resourceType="hr_leave_request"
-                  resourceId={leaveDetail.id}
-                  usageHint="病假条、请假证明材料等"
-                />
-              </div>
-            </div>
-          ) : null}
-        </DialogContent>
-      </Dialog>
 
       <Dialog open={balanceOpen} onOpenChange={setBalanceOpen}>
         <DialogContent className="max-w-md">

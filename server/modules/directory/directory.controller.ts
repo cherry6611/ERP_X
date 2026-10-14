@@ -1,7 +1,7 @@
 import { Body, Controller, Get, Param, Post, Query, Req } from '@nestjs/common';
 import { IsArray, IsString } from 'class-validator';
 import type { Request } from 'express';
-import { CanRole, NeedLogin } from '@server/platform';
+import { CanCapability, NeedLogin } from '@server/platform';
 import { DirectoryService } from './directory.service';
 
 class BatchUsersDto {
@@ -58,7 +58,7 @@ export class DirectoryController {
     return { data: { departmentList } };
   }
 
-  @CanRole(['admin', 'hr_manager'])
+  @CanCapability('dashboard')
   @Get('users/:id/profile')
   async profile(@Param('id') id: string) {
     return this.directory.profile(id);

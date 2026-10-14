@@ -1,6 +1,10 @@
 import { axiosForBackend } from '@client/src/platform/request';
 import { ensureNotForbidden } from '@client/src/utils/api-error';
-import type { Attachment, CreateAttachmentDto } from '@shared/api.interface';
+import type {
+  Attachment,
+  CreateAttachmentDto,
+  ParsedFeishuDocLink,
+} from '@shared/api.interface';
 
 export async function listAttachments(
   resourceType: string,
@@ -18,6 +22,17 @@ export async function createAttachment(
   const resp = await axiosForBackend.post<Attachment>(
     '/api/attachments',
     dto,
+  );
+  ensureNotForbidden(resp);
+  return resp.data;
+}
+
+export async function parseFeishuDocUrl(
+  url: string,
+): Promise<ParsedFeishuDocLink> {
+  const resp = await axiosForBackend.post<ParsedFeishuDocLink>(
+    '/api/attachments/parse-feishu-url',
+    { url },
   );
   ensureNotForbidden(resp);
   return resp.data;

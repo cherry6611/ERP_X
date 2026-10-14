@@ -49,9 +49,10 @@ const payrollSchema = z.object({
   baseSalary: z.coerce.number().min(0, '基本工资不能为负'),
   perfSalary: z.coerce.number().min(0),
   allowance: z.coerce.number().min(0),
-  socialInsurance: z.coerce.number().min(0),
-  housingFund: z.coerce.number().min(0),
-  tax: z.coerce.number().min(0),
+  /** 留空则走后端社保/个税引擎（F4X-5） */
+  socialInsurance: z.union([z.literal(''), z.coerce.number().min(0)]).optional(),
+  housingFund: z.union([z.literal(''), z.coerce.number().min(0)]).optional(),
+  tax: z.union([z.literal(''), z.coerce.number().min(0)]).optional(),
   remark: z.string(),
 });
 
@@ -61,9 +62,9 @@ const EMPTY_FORM = {
   baseSalary: 0,
   perfSalary: 0,
   allowance: 0,
-  socialInsurance: 0,
-  housingFund: 0,
-  tax: 0,
+  socialInsurance: '' as const,
+  housingFund: '' as const,
+  tax: '' as const,
   remark: '',
 };
 
@@ -93,15 +94,27 @@ const PayrollPanel: React.FC = () => {
   });
 
   const onSubmit = form.handleSubmit(async (values) => {
+    const manual =
+      values.socialInsurance !== '' &&
+      values.socialInsurance != null &&
+      values.housingFund !== '' &&
+      values.housingFund != null &&
+      values.tax !== '' &&
+      values.tax != null;
     const dto: CreatePayrollDto = {
       employeeId: values.employeeId,
       period: values.period,
       baseSalary: values.baseSalary,
       perfSalary: values.perfSalary,
       allowance: values.allowance,
-      socialInsurance: values.socialInsurance,
-      housingFund: values.housingFund,
-      tax: values.tax,
+      useEngine: !manual,
+      ...(manual
+        ? {
+            socialInsurance: Number(values.socialInsurance),
+            housingFund: Number(values.housingFund),
+            tax: Number(values.tax),
+          }
+        : {}),
       remark: values.remark || undefined,
     };
     setOperating(true);

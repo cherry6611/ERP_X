@@ -1,6 +1,8 @@
 import { Controller, Get, NotFoundException, Render, Req } from '@nestjs/common';
+import { Public } from '@server/platform';
 import type { Request } from 'express';
 
+@Public()
 @Controller()
 export class ViewController {
 

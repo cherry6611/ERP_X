@@ -6,11 +6,12 @@ import { toast } from 'sonner';
 import { TrendingUp, Wallet } from 'lucide-react';
 import { Table, TableColumnsType } from 'antd';
 import { DataState } from '@client/src/components/DataState';
+import { SectionTitle } from '@client/src/components/SectionTitle';
 import StatCard from '@client/src/components/erp/StatCard';
 import { financeApi } from '@client/src/api';
 import { useAsyncData } from '@client/src/hooks/useAsyncData';
+import { seriesColor } from '@client/src/theme/tokens';
 import { formatMoney } from '@client/src/utils/format';
-import { CHART_SEMANTIC_COLORS } from '@client/src/utils/chart-colors';
 import type { CashFlowForecast, CashFlowWeek } from '@shared/api.interface';
 
 const FORECAST_WEEKS = 13;
@@ -52,13 +53,13 @@ const CashFlowTab: React.FC = () => {
         type: 'bar',
         name: '流入',
         data: weeks.map((w: CashFlowWeek) => w.inflow),
-        itemStyle: { color: CHART_SEMANTIC_COLORS.success },
+        itemStyle: { color: seriesColor('budget') },
       },
       {
         type: 'bar',
         name: '流出',
         data: weeks.map((w: CashFlowWeek) => -w.outflow),
-        itemStyle: { color: CHART_SEMANTIC_COLORS.danger },
+        itemStyle: { color: seriesColor('cost') },
       },
       {
         type: 'line',
@@ -66,8 +67,8 @@ const CashFlowTab: React.FC = () => {
         yAxisIndex: 1,
         data: weeks.map((w: CashFlowWeek) => w.cumulativeCash),
         smooth: true,
-        itemStyle: { color: CHART_SEMANTIC_COLORS.revenue },
-        lineStyle: { color: CHART_SEMANTIC_COLORS.revenue },
+        itemStyle: { color: seriesColor('revenue') },
+        lineStyle: { color: seriesColor('revenue') },
       },
     ],
   };
@@ -137,8 +138,10 @@ const CashFlowTab: React.FC = () => {
         skeleton="table"
       >
         <div className="rounded-lg border bg-card p-4">
-          <h3 className="text-base font-semibold">未来 {FORECAST_WEEKS} 周现金流预测</h3>
-          <ReactECharts option={option} theme="ud" className="h-[360px] w-full" />
+          <SectionTitle>未来 {FORECAST_WEEKS} 周现金流预测</SectionTitle>
+          <div role="img" aria-label={`未来 ${FORECAST_WEEKS} 周现金流预测图`}>
+            <ReactECharts option={option} theme="ud" className="h-[360px] w-full" />
+          </div>
         </div>
         <Table
           columns={columns}

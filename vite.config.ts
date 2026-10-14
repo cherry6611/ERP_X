@@ -37,11 +37,22 @@ export default defineConfig({
     emptyOutDir: true,
     rollupOptions: {
       output: {
-        // C：按厂商拆包，降低首屏主包体积
-        manualChunks: {
-          react: ['react', 'react-dom', 'react-router-dom'],
-          antd: ['antd', '@ant-design/icons'],
-          charts: ['echarts', 'echarts-for-react'],
+        // Vite 8 / rolldown 要求 manualChunks 为函数（对象形式会 TypeError）
+        manualChunks(id) {
+          if (!id.includes('node_modules')) return;
+          if (
+            id.includes('react-dom') ||
+            id.includes('react-router') ||
+            /[/\\]react[/\\]/.test(id)
+          ) {
+            return 'react';
+          }
+          if (id.includes('antd') || id.includes('@ant-design')) {
+            return 'antd';
+          }
+          if (id.includes('echarts')) {
+            return 'charts';
+          }
         },
       },
     },

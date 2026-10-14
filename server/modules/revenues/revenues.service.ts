@@ -23,6 +23,7 @@ import { TaxResolverService } from '@server/modules/tax/tax-resolver.service';
 import { VoucherHookService } from '@server/modules/voucher/voucher-hook.service';
 import { outputIssueLines, outputVoidLines } from '@server/common/tax/posting';
 import { FALLBACK_RATE } from '@shared/tax';
+import { todayInShanghai } from '@server/common/utils/biz-date';
 import type {
   AdjustType,
   CreateRevenueAdjustDto,
@@ -148,25 +149,31 @@ export class RevenuesService {
           projectId: dto.projectId,
           amount: dto.amount,
           source: 'revenue',
+          sourceRef: `revenue:${code}`,
           remark: `收入确认 ${code}`,
         });
       } catch (error) {
         const reason = error instanceof Error ? error.message : String(error);
         this.logger.error(`收入确认生成应收失败：${code} ${reason}`);
-        await this.voucherHookService.recordCompensation(
-          'revenue-ar',
-          `revenue-ar:${code}`,
-          reason
-        );
       }
     }
-    await this.voucherHookService.generateVoucherDraft({
+    const lines = outputIssueLines(dto.amount, taxRate);
+    const voucherResult = await this.voucherHookService.generateVoucherDraft({
       sourceType: 'revenue',
       sourceRef: `revenue:${code}`,
       voucherDate: `${dto.period}-01`,
       summary: `收入确认 ${code}`,
-      lines: outputIssueLines(dto.amount, taxRate),
+      lines,
     });
+    if (voucherResult === 'failed') {
+      await this.voucherHookService.recordCompensation(
+        'revenue',
+        `revenue:${code}`,
+        '收入确认凭证生成失败',
+        lines,
+        `${dto.period}-01`,
+      );
+    }
 
     return {
       id: row.id,
@@ -281,7 +288,7 @@ export class RevenuesService {
     await this.voucherHookService.generateVoucherDraft({
       sourceType: 'revenue',
       sourceRef: `revenue-reverse:${revenue.code}`,
-      voucherDate: new Date().toISOString().slice(0, 10),
+      voucherDate: todayInShanghai(),
       summary: `收入冲回 ${revenue.code}`,
       lines: outputVoidLines(amount, taxRate),
     });
@@ -330,7 +337,7 @@ export class RevenuesService {
       await this.voucherHookService.generateVoucherDraft({
         sourceType: 'revenue',
         sourceRef: `revenue-adjust:${row.code}`,
-        voucherDate: new Date().toISOString().slice(0, 10),
+        voucherDate: todayInShanghai(),
         summary: `收入调整冲回 ${row.code}`,
         lines: outputVoidLines(Math.abs(dto.amount), taxRate),
       });

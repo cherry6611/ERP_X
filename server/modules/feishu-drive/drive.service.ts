@@ -193,7 +193,8 @@ export class DriveService {
     size: number,
   ): Promise<DriveCreatedItem> {
     await this.assertFolderAllowed(folderToken);
-    const buffer = assertUploadPayload(fileName, base64Content, size);
+    // assertUploadPayload 现在同时返回魔数校验结论（B-06），这里只取 buffer
+    const { buffer } = assertUploadPayload(fileName, base64Content, size);
     const data = await this.client.uploadForm(
       {
         file_name: fileName,

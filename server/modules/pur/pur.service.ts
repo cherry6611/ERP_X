@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   Inject,
   Injectable,
   Logger,
@@ -22,10 +23,12 @@ import {
   purRequest,
 } from '@server/database/schema';
 import { generateBizCode } from '@server/common/utils/biz-code';
-import { inputIssueLines } from '@server/common/tax/posting';
+import { inputCapitalizeLines, inputIssueLines } from '@server/common/tax/posting';
 import { TaxResolverService } from '@server/modules/tax/tax-resolver.service';
 import { VoucherHookService } from '@server/modules/voucher/voucher-hook.service';
 import { isVatRate } from '@shared/tax';
+import { todayInShanghai } from '@server/common/utils/biz-date';
+import { assertPeriodOpen } from '@server/common/utils/period-guard';
 import type {
   AcceptPurOrderDto,
   CreatePurOrderDto,
@@ -227,7 +230,7 @@ export class PurService {
         departmentId: dto.departmentId,
         projectId: dto.projectId,
         supplierId: dto.supplierId,
-        amount: String(dto.amount),
+        amount: String(Math.round(dto.amount * 100) / 100),
         expectDate: dto.expectDate,
         status: 'pending',
         reason: dto.reason,
@@ -367,63 +370,107 @@ export class PurService {
       );
     }
 
-    const amount = dto.quantity * dto.unitPrice;
+    // F4：金额按分取整，避免凭证借贷 1 分差
+    const amount =
+      Math.round(dto.quantity * dto.unitPrice * 100) / 100;
     if (dto.taxRate != null && !isVatRate(dto.taxRate)) {
       throw new BadRequestException(
         `非法税率 ${dto.taxRate}，允许值为 0/1/3/6/9/13`
       );
     }
 
-    if (dto.contractId) {
-      const contractRows = await this.db
-        .select({ code: erpContract.code, amount: erpContract.amount })
-        .from(erpContract)
-        .where(eq(erpContract.id, dto.contractId));
-      if (contractRows.length === 0) {
-        throw new BadRequestException('关联合同不存在，无法创建采购订单');
+    const code = await generateBizCode(this.db, purOrder, purOrder.code, 'PO');
+    const inserted = await this.db.transaction(async (tx) => {
+      // F4X-7：必须关联已批准采购申请，且一申请一有效订单
+      if (!dto.requestId) {
+        throw new BadRequestException('采购订单必须关联已批准的采购申请');
       }
-      const contractAmount = Number(contractRows[0].amount ?? 0);
-      const orderedRows = await this.db
-        .select({ total: sum(purOrder.amount) })
+      const reqRows = await tx
+        .select({
+          id: purRequest.id,
+          code: purRequest.code,
+          status: purRequest.status,
+        })
+        .from(purRequest)
+        .where(eq(purRequest.id, dto.requestId))
+        .for('update');
+      if (reqRows.length === 0) {
+        throw new BadRequestException('采购申请不存在');
+      }
+      if (reqRows[0].status !== 'approved') {
+        throw new BadRequestException(
+          `采购申请 ${reqRows[0].code} 当前状态为 ${reqRows[0].status}，仅已批准申请可下单`,
+        );
+      }
+      const occupied = await tx
+        .select({ id: purOrder.id })
         .from(purOrder)
         .where(
           and(
-            eq(purOrder.contractId, dto.contractId),
-            ne(purOrder.status, 'cancelled')
-          )
-        );
-      const orderedAmount = Number(orderedRows[0]?.total ?? 0);
-      const cumulative = orderedAmount + amount;
-      if (cumulative > contractAmount) {
-        throw new BadRequestException(
-          `采购订单金额超出合同额度：合同 ${contractRows[0].code} ` +
-            `总额 ${contractAmount.toFixed(2)}，已下单 ${orderedAmount.toFixed(2)}，` +
-            `本次 ${amount.toFixed(2)}，累计 ${cumulative.toFixed(2)}，` +
-            `超出 ${(cumulative - contractAmount).toFixed(2)}`
+            eq(purOrder.requestId, dto.requestId),
+            ne(purOrder.status, 'cancelled'),
+          ),
+        )
+        .limit(1);
+      if (occupied.length > 0) {
+        throw new ConflictException(
+          `采购申请 ${reqRows[0].code} 已生成订单，请勿重复下单`,
         );
       }
-    }
 
-    const code = await generateBizCode(this.db, purOrder, purOrder.code, 'PO');
-    const inserted = await this.db
-      .insert(purOrder)
-      .values({
-        code,
-        requestId: dto.requestId,
-        contractId: dto.contractId,
-        supplierId: dto.supplierId,
-        projectId: dto.projectId,
-        itemName: dto.itemName,
-        category: dto.category,
-        quantity: dto.quantity,
-        unitPrice: String(dto.unitPrice),
-        amount: String(amount),
-        taxRate: dto.taxRate != null ? String(dto.taxRate) : null,
-        orderDate: dto.orderDate,
-        status: 'pending',
-        remark: dto.remark,
-      })
-      .returning({ id: purOrder.id });
+      // F5：合同额度校验加行锁，防并发超额穿透
+      if (dto.contractId) {
+        const contractRows = await tx
+          .select({ code: erpContract.code, amount: erpContract.amount })
+          .from(erpContract)
+          .where(eq(erpContract.id, dto.contractId))
+          .for('update');
+        if (contractRows.length === 0) {
+          throw new BadRequestException('关联合同不存在，无法创建采购订单');
+        }
+        const contractAmount = Number(contractRows[0].amount ?? 0);
+        const orderedRows = await tx
+          .select({ total: sum(purOrder.amount) })
+          .from(purOrder)
+          .where(
+            and(
+              eq(purOrder.contractId, dto.contractId),
+              ne(purOrder.status, 'cancelled')
+            )
+          );
+        const orderedAmount = Number(orderedRows[0]?.total ?? 0);
+        const cumulative =
+          Math.round((orderedAmount + amount) * 100) / 100;
+        if (cumulative > contractAmount + 0.001) {
+          throw new BadRequestException(
+            `采购订单金额超出合同额度：合同 ${contractRows[0].code} ` +
+              `总额 ${contractAmount.toFixed(2)}，已下单 ${orderedAmount.toFixed(2)}，` +
+              `本次 ${amount.toFixed(2)}，累计 ${cumulative.toFixed(2)}，` +
+              `超出 ${(cumulative - contractAmount).toFixed(2)}`
+          );
+        }
+      }
+
+      return tx
+        .insert(purOrder)
+        .values({
+          code,
+          requestId: dto.requestId,
+          contractId: dto.contractId,
+          supplierId: dto.supplierId,
+          projectId: dto.projectId,
+          itemName: dto.itemName,
+          category: dto.category,
+          quantity: dto.quantity,
+          unitPrice: String(dto.unitPrice),
+          amount: String(amount),
+          taxRate: dto.taxRate != null ? String(dto.taxRate) : null,
+          orderDate: dto.orderDate,
+          status: 'pending',
+          remark: dto.remark,
+        })
+        .returning({ id: purOrder.id });
+    });
     return this.getOrderById(inserted[0].id);
   }
 
@@ -464,8 +511,9 @@ export class PurService {
     let voucherAmount = 0;
     let voucherSupplierId = '';
     let voucherTaxRate: number | null = null;
-    let acceptDate = new Date().toISOString().slice(0, 10);
+    let acceptDate = todayInShanghai();
     let orderCode = '';
+    let capitalizeAsset = false;
 
     await this.db.transaction(async (tx) => {
       // T12：事务内 FOR UPDATE，防并发重复验收
@@ -476,12 +524,19 @@ export class PurService {
         .for('update');
       if (locked.length === 0) throw new NotFoundException('采购订单不存在');
       const order = locked[0];
+      // F6：已整单验收不可再验；分批验收期间保持 pending，收满后才置 accepted
+      if ((order.status ?? 'pending') === 'accepted') {
+        throw new BadRequestException('订单已整单验收完成，不可再次验收');
+      }
       if ((order.status ?? 'pending') !== 'pending') {
         throw new BadRequestException('仅待验收状态的订单可验收');
       }
       const quantity = order.quantity ?? 0;
       const accepted = order.acceptedQuantity ?? 0;
       const remaining = quantity - accepted;
+      if (remaining <= 0) {
+        throw new BadRequestException('订单已全部验收，不可再次验收');
+      }
       if (dto.quantity > remaining) {
         throw new BadRequestException(
           `验收数量超出订单余量：订单数量 ${quantity}，已验收 ${accepted}，` +
@@ -489,10 +544,11 @@ export class PurService {
         );
       }
 
-      acceptDate = dto.acceptDate ?? new Date().toISOString().slice(0, 10);
+      acceptDate = dto.acceptDate ?? todayInShanghai();
+      await assertPeriodOpen(this.db, acceptDate, '采购验收');
       const period = acceptDate.slice(0, 7);
       const unitPrice = Number(order.unitPrice ?? 0);
-      const amount = dto.quantity * unitPrice;
+      const amount = Math.round(dto.quantity * unitPrice * 100) / 100;
       const supplierId = order.supplierId ?? '';
       const projectId = order.projectId;
       const category = order.category ?? 'service';
@@ -512,13 +568,16 @@ export class PurService {
         category === 'equipment'
           ? await generateBizCode(tx, astAsset, astAsset.code, 'AST')
           : null;
+      capitalizeAsset = Boolean(astCode);
 
+      const newAccepted = accepted + dto.quantity;
+      const fullyAccepted = newAccepted >= quantity;
       const updated = await tx
         .update(purOrder)
         .set({
-          acceptedQuantity: accepted + dto.quantity,
+          acceptedQuantity: newAccepted,
           acceptDate,
-          status: 'accepted',
+          status: fullyAccepted ? 'accepted' : 'pending',
           updatedAt: new Date(),
         })
         .where(eq(purOrder.id, id))
@@ -584,7 +643,10 @@ export class PurService {
           sourceRef: `ap:${apCode}`,
           voucherDate: acceptDate,
           summary: `采购验收 ${orderCode}`,
-          lines: inputIssueLines(voucherAmount, resolved.rate),
+          // F4X-8：设备资本化走 1601，不进当期管理费用
+          lines: capitalizeAsset
+            ? inputCapitalizeLines(voucherAmount, resolved.rate)
+            : inputIssueLines(voucherAmount, resolved.rate),
         });
       } catch (error) {
         this.logger.error(

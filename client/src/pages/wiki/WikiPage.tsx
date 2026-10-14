@@ -132,6 +132,14 @@ const WikiPage: React.FC = () => {
             请管理员在飞书知识库空间「设置 → 成员管理」中，将本应用（云空间集成）添加为知识库成员并授予可编辑权限，完成后回到本页刷新即可。
           </p>
         </div>
+      ) : error && /未配置|空间未配置|FEISHU_WIKI/.test(error) ? (
+        <div className="rounded-md border bg-muted/40 p-4 text-sm">
+          <p className="font-medium">知识库尚未配置</p>
+          <p className="mt-2 text-muted-foreground">
+            请管理员在环境变量中配置 <code className="rounded bg-muted px-1">FEISHU_WIKI_SPACE_ID</code>
+            ，或在飞书云空间集成配置中写入知识库空间 ID 后刷新本页。配置完成前不影响其他业务模块使用。
+          </p>
+        </div>
       ) : error ? (
         <div className="rounded-md border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive">
           加载失败：{error}

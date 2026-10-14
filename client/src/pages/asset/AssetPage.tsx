@@ -1,5 +1,7 @@
 import React, { useState } from 'react';
 import PageShell from '@client/src/components/PageShell';
+import { Button } from '@client/src/components/ui/button';
+import { cn } from '@client/src/lib/utils';
 import AssetPanel from './components/AssetPanel';
 import AssetDepreciationPanel from './components/AssetDepreciationPanel';
 import AssetChangePanel from './components/AssetChangePanel';
@@ -26,18 +28,20 @@ const AssetPage: React.FC = () => {
     >
       <div className="flex gap-2 flex-wrap" data-ai-section-type="card-list">
         {ASSET_TABS.map((item) => (
-          <button
+          <Button
             key={item.key}
             type="button"
+            variant="ghost"
+            size="sm"
             onClick={() => setTab(item.key)}
-            className={`rounded-md px-3 py-1.5 text-sm transition-colors ${
+            className={cn(
               tab === item.key
-                ? 'bg-primary/10 text-primary font-medium'
-                : 'text-foreground/80 hover:bg-muted'
-            }`}
+                ? 'bg-primary/10 font-medium text-primary'
+                : 'text-foreground/80',
+            )}
           >
             {item.label}
-          </button>
+          </Button>
         ))}
       </div>
       <div>{ASSET_TAB_CONTENT[tab]}</div>

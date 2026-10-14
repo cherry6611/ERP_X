@@ -12,4 +12,8 @@ export const CRON_BY_TRIGGER: Record<string, string> = {
   voucher_job_retry: '*/10 * * * *',
   /** U-06：会话表每日清理（30 天前） */
   session_cleanup_daily: '15 3 * * *',
+  /** B-07：数据保留与归档（每日 03:30，审计日志超期归档） */
+  retention_daily: '30 3 * * *',
+  /** A-04：年结提醒（12 月 20 日起每日提醒 admin 做年结前置检查） */
+  year_end_reminder_daily: '0 9 * * *',
 };

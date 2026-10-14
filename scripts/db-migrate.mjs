@@ -30,7 +30,16 @@ await sql.unsafe(`
 // 否则从仓库父目录（如 晟笙ERP/）执行会 ENOENT。
 const ROOT = resolve(fileURLToPath(new URL('.', import.meta.url)), '..');
 const dir = join(ROOT, 'server', 'database', 'migrations');
-const files = readdirSync(dir).filter((name) => name.endsWith('.sql')).sort();
+// L14：忽略含 SKIP / .disabled 的迁移，避免与 drizzle baseline 漂移的半成品被误执行
+const files = readdirSync(dir)
+  .filter(
+    (name) =>
+      name.endsWith('.sql') &&
+      !name.includes('SKIP') &&
+      !name.includes('.disabled') &&
+      !name.endsWith('.sql.disabled'),
+  )
+  .sort();
 for (const file of files) {
   const applied = await sql`select id from schema_migrations where id = ${file}`;
   if (applied.length > 0) {

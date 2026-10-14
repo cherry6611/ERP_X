@@ -25,7 +25,7 @@ import {
 import { generateBizCode } from '@server/common/utils/biz-code';
 import { VoucherHookService } from '@server/modules/voucher/voucher-hook.service';
 import { costConfirmLines } from '@server/common/tax/posting';
-import { todayInShanghai } from '@server/common/utils/biz-date';
+import { todayInShanghai, monthInShanghai } from '@server/common/utils/biz-date';
 import { ActorAccessService } from '@server/common/auth/actor-access.service';
 import type { RequestActor } from '@server/common/auth/actor';
 import {
@@ -72,7 +72,7 @@ const COST_TYPE_LABELS: Record<string, string> = {
 };
 
 function currentPeriod(): string {
-  return new Date().toISOString().slice(0, 7);
+  return monthInShanghai();
 }
 
 @Injectable()
@@ -258,7 +258,7 @@ export class CostsService {
       erpProjectCost.code,
       'CST'
     );
-    const occurredDate = dto.occurredDate ?? new Date().toISOString().slice(0, 10);
+    const occurredDate = dto.occurredDate ?? todayInShanghai();
     const rows = await this.db
       .insert(erpProjectCost)
       .values({
@@ -364,18 +364,39 @@ export class CostsService {
       .where(eq(erpProject.id, dto.projectId));
     if (project.length === 0) throw new NotFoundException('项目不存在');
     if (dto.hours <= 0) throw new BadRequestException('工时必须大于 0');
-    const employees = await this.db
-      .select({
-        id: mdEmployee.id,
-        name: mdEmployee.name,
-        status: mdEmployee.status,
-        roleName: hrPosition.roleName,
-      })
+
+    const employeeSelect = {
+      id: mdEmployee.id,
+      name: mdEmployee.name,
+      status: mdEmployee.status,
+      roleName: hrPosition.roleName,
+    };
+    let employees = await this.db
+      .select(employeeSelect)
       .from(mdEmployee)
       .leftJoin(hrPosition, eq(hrPosition.id, mdEmployee.positionId))
       .where(or(eq(mdEmployee.feishuUnionId, userId), eq(mdEmployee.platformUserId, userId)));
+
+    // 管理员可指定员工代登（本人未绑定时）
+    if (employees.length === 0 && dto.employeeId) {
+      const isAdmin = await this.actorAccess.hasAnyRole(userId, ['admin']);
+      if (!isAdmin) {
+        throw new ForbiddenException('仅管理员可为其他员工代登记工时');
+      }
+      employees = await this.db
+        .select(employeeSelect)
+        .from(mdEmployee)
+        .leftJoin(hrPosition, eq(hrPosition.id, mdEmployee.positionId))
+        .where(eq(mdEmployee.id, dto.employeeId));
+      if (employees.length === 0) {
+        throw new NotFoundException('指定的员工不存在');
+      }
+    }
+
     if (employees.length === 0) {
-      throw new BadRequestException('当前账号未绑定员工，无法登记工时');
+      throw new BadRequestException(
+        '当前账号未绑定员工，无法登记工时。请到「人力资源 → 员工档案」将平台账号关联到员工；管理员可在登记时指定员工代登',
+      );
     }
     const employee = employees[0];
     if (employee.status === 'resigned') {
@@ -385,7 +406,7 @@ export class CostsService {
     const roleName: string | null = employee.roleName || dto.roleName || null;
     const employeeId: string = employee.id;
     if (!roleName) {
-      throw new BadRequestException('缺少角色，无法计算费率');
+      throw new BadRequestException('缺少角色，无法计算费率（请为员工配置岗位角色，或在登记时填写角色）');
     }
     const code = await generateBizCode(
       this.db,
@@ -467,8 +488,8 @@ export class CostsService {
         erpProjectCost.code,
         'CST'
       );
-      const workDate = sheet.workDate ?? new Date().toISOString().slice(0, 10);
-      await this.db.transaction(async (tx) => {
+      const workDate = sheet.workDate ?? todayInShanghai();
+      postedCost = await this.db.transaction(async (tx) => {
         const claimed = await tx
           .update(erpTimesheet)
           .set({ status: 'confirmed', costGenerated: true, updatedAt: new Date() })
@@ -539,10 +560,10 @@ export class CostsService {
           isAccrual: 1,
           remark: `工时折算（预提）：${sheet.employeeName} ${sheet.hours}h × 费率 ${rate}`,
         });
-        postedCost = { code: costCode, amount, date: workDate };
+        return { code: costCode, amount, date: workDate };
       });
     }
-    if (postedCost && postedCost.amount > 0) {
+    if (postedCost !== null && postedCost.amount > 0) {
       await this.voucherHookService.generateVoucherDraft({
         sourceType: 'cost',
         sourceRef: `cost:${postedCost.code}`,
@@ -619,10 +640,18 @@ export class CostsService {
       throw new ForbiddenException('仅管理员或项目经理可确认工时');
     }
     const projects = await this.db
-      .select({ pm: erpProject.pm })
+      .select({ pm: erpProject.pm, pmUserId: erpProject.pmUserId })
       .from(erpProject)
       .where(eq(erpProject.id, sheet.projectId))
       .limit(1);
+    const pmUserId: string = projects[0]?.pmUserId ?? '';
+    // F7：优先按 pmUserId 授权，杜绝同名互获确认权
+    if (pmUserId.length > 0) {
+      if (pmUserId !== actor.userId) {
+        throw new ForbiddenException('仅管理员或项目经理可确认工时');
+      }
+      return;
+    }
     const pm: string = projects[0]?.pm ?? '';
     const me = await this.db
       .select({ name: mdEmployee.name })
@@ -655,7 +684,7 @@ export class CostsService {
         roleName: dto.roleName,
         rate: String(dto.rate),
         effectiveFrom:
-          dto.effectiveFrom ?? new Date().toISOString().slice(0, 10),
+          dto.effectiveFrom ?? todayInShanghai(),
       })
       .returning();
     const row = rows[0];
@@ -788,24 +817,36 @@ export class CostsService {
       'CST'
     );
     const amount = -Number(source.amount ?? 0);
-    let inserted: { id: string }[];
+    // D-18：红冲行与原行 offset_of、凭证同事务意图——先落库再出凭证；期间跟随原成本
+    const voucherDate =
+      source.occurredDate ??
+      (source.period ? `${source.period}-01` : todayInShanghai());
+    let insertedId = '';
     try {
-      inserted = await this.db
-        .insert(erpProjectCost)
-        .values({
-          code,
-          projectId: source.projectId,
-          costType: source.costType,
-          amount: String(amount),
-          period: source.period,
-          occurredDate: new Date().toISOString().slice(0, 10),
-          sourceRef: redflushRef,
-          supplierId: source.supplierId,
-          departmentId: source.departmentId,
-          contractId: source.contractId,
-          remark: `红冲 ${source.code}`,
-        })
-        .returning({ id: erpProjectCost.id });
+      await this.db.transaction(async (tx) => {
+        const inserted = await tx
+          .insert(erpProjectCost)
+          .values({
+            code,
+            projectId: source.projectId,
+            costType: source.costType,
+            amount: String(amount),
+            period: source.period,
+            occurredDate: voucherDate.slice(0, 10),
+            sourceRef: redflushRef,
+            offsetOf: source.id,
+            supplierId: source.supplierId,
+            departmentId: source.departmentId,
+            contractId: source.contractId,
+            remark: `红冲 ${source.code}`,
+          })
+          .returning({ id: erpProjectCost.id });
+        insertedId = inserted[0].id;
+        await tx
+          .update(erpProjectCost)
+          .set({ offsetOf: insertedId, updatedAt: new Date() })
+          .where(eq(erpProjectCost.id, source.id));
+      });
     } catch (error) {
       if (this.extractPostgresErrorCode(error) === '23505') {
         throw new BadRequestException(
@@ -815,19 +856,29 @@ export class CostsService {
       throw error;
     }
     if (amount !== 0) {
-      await this.voucherHookService.generateVoucherDraft({
+      const lines = [
+        { accountCode: '2202', debit: Math.abs(amount) },
+        { accountCode: '6401', credit: Math.abs(amount) },
+      ];
+      const result = await this.voucherHookService.generateVoucherDraft({
         sourceType: 'cost',
         sourceRef: `cost-void:${code}`,
-        voucherDate: new Date().toISOString().slice(0, 10),
+        voucherDate: voucherDate.slice(0, 10),
         summary: `成本红冲 ${code}`,
-        lines: [
-          { accountCode: '2202', debit: Math.abs(amount) },
-          { accountCode: '6401', credit: Math.abs(amount) },
-        ],
+        lines,
       });
+      if (result === 'failed') {
+        await this.voucherHookService.recordCompensation(
+          'cost',
+          `cost-void:${code}`,
+          '成本红冲凭证生成失败',
+          lines,
+          voucherDate.slice(0, 10),
+        );
+      }
     }
     const items = await this.listCosts();
-    const found = items.find((item) => item.id === inserted[0].id);
+    const found = items.find((item) => item.id === insertedId);
     if (!found) throw new NotFoundException('红冲记录写入后未能读回');
     return found;
   }

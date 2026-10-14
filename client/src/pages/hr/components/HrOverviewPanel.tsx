@@ -3,11 +3,12 @@ import ReactECharts from 'echarts-for-react';
 import type { EChartsOption } from 'echarts';
 import { Clock, Coins, Timer, UserCheck, UserMinus, UserPlus, Wallet } from 'lucide-react';
 import { DataState } from '@client/src/components/DataState';
+import { SectionTitle } from '@client/src/components/SectionTitle';
 import StatCard from '@client/src/components/erp/StatCard';
 import { hrApi } from '@client/src/api';
 import { useAsyncData } from '@client/src/hooks/useAsyncData';
+import { seriesColor } from '@client/src/theme/tokens';
 import { formatMoney, formatNumber } from '@client/src/utils/format';
-import { CHART_SEMANTIC_COLORS } from '@client/src/utils/chart-colors';
 import type {
   DepartmentHeadcount,
   HeadcountPoint,
@@ -36,7 +37,7 @@ const HrOverviewPanel: React.FC = () => {
         name: '在职人数',
         type: 'bar',
         data: trend.map((p: HeadcountPoint) => p.count),
-        itemStyle: { color: CHART_SEMANTIC_COLORS.primary },
+        itemStyle: { color: seriesColor('revenue') },
       },
     ],
   };
@@ -56,7 +57,7 @@ const HrOverviewPanel: React.FC = () => {
         name: '在职人数',
         type: 'bar',
         data: deptData.map((d: DepartmentHeadcount) => d.count),
-        itemStyle: { color: CHART_SEMANTIC_COLORS.other },
+        itemStyle: { color: seriesColor('other') },
       },
     ],
   };
@@ -77,13 +78,13 @@ const HrOverviewPanel: React.FC = () => {
         name: '工资总包',
         type: 'bar',
         data: laborTrend.map((p: LaborCostPoint) => p.payrollCost),
-        itemStyle: { color: CHART_SEMANTIC_COLORS.cost },
+        itemStyle: { color: seriesColor('cost') },
       },
       {
         name: '项目人力成本',
         type: 'bar',
         data: laborTrend.map((p: LaborCostPoint) => p.projectLaborCost),
-        itemStyle: { color: CHART_SEMANTIC_COLORS.warning },
+        itemStyle: { color: seriesColor('warning') },
       },
     ],
   };
@@ -99,7 +100,7 @@ const HrOverviewPanel: React.FC = () => {
     >
       {data ? (
         <div className="flex flex-col gap-6">
-          <h3 className="text-base font-semibold">人力看板</h3>
+          <SectionTitle>人力看板</SectionTitle>
           <div className="grid grid-cols-4 gap-4">
             <StatCard
               label="在职人数"
@@ -149,7 +150,9 @@ const HrOverviewPanel: React.FC = () => {
             <div className="rounded-lg border bg-card p-4">
               <p className="text-sm text-muted-foreground">近 12 个月人数趋势</p>
               {trend.length > 0 ? (
-                <ReactECharts option={trendOption} theme="ud" className="h-[300px]" />
+                <div role="img" aria-label="近12个月人数趋势图">
+                  <ReactECharts option={trendOption} theme="ud" className="h-[300px]" />
+                </div>
               ) : (
                 <p className="py-8 text-center text-sm text-muted-foreground">
                   暂无人数趋势数据
@@ -159,7 +162,9 @@ const HrOverviewPanel: React.FC = () => {
             <div className="rounded-lg border bg-card p-4">
               <p className="text-sm text-muted-foreground">部门人数分布（在职）</p>
               {deptData.length > 0 ? (
-                <ReactECharts option={deptOption} theme="ud" className="h-[300px]" />
+                <div role="img" aria-label="部门人数分布图">
+                  <ReactECharts option={deptOption} theme="ud" className="h-[300px]" />
+                </div>
               ) : (
                 <p className="py-8 text-center text-sm text-muted-foreground">
                   暂无部门人数数据
@@ -170,7 +175,9 @@ const HrOverviewPanel: React.FC = () => {
           <div className="rounded-lg border bg-card p-4">
             <p className="text-sm text-muted-foreground">近 6 个月工资总包 vs 项目人力成本</p>
             {laborTrend.length > 0 ? (
-              <ReactECharts option={laborOption} theme="ud" className="h-[300px]" />
+              <div role="img" aria-label="工资总包与项目人力成本对比图">
+                <ReactECharts option={laborOption} theme="ud" className="h-[300px]" />
+              </div>
             ) : (
               <p className="py-8 text-center text-sm text-muted-foreground">
                 暂无工资与人力成本数据

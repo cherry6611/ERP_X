@@ -13,6 +13,7 @@ import {
   tagCloseIconVariants,
   type ComboboxSize,
 } from '@client/src/components/business-ui/entity-combobox/size-variants';
+import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 
 export const ChatSelectTag = ({
@@ -43,14 +44,16 @@ export const ChatSelectTag = ({
   };
 
   const closeButton = !disabled ? (
-    <button
+    <Button
       type="button"
-      className="rounded-sm text-foreground opacity-70 ring-offset-background transition-opacity hover:opacity-100 focus:outline-none"
+      variant="ghost"
+      size="icon"
+      className="size-auto rounded-sm p-0 text-foreground opacity-70 ring-offset-background transition-opacity hover:opacity-100 focus:outline-none"
       onClick={handleClose}
     >
       <X className={tagCloseIconVariants({ size })} />
       <span className="sr-only">移除 {chatValue.name}</span>
-    </button>
+    </Button>
   ) : null;
 
   // 加载中状态显示 Skeleton

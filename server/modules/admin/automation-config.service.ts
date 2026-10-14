@@ -7,7 +7,7 @@ import {
   type PostgresJsDatabase,
 } from '@server/platform';
 import type { AutomationConfigItem } from '@shared/api.interface';
-import { compAutomationConfig } from '@server/database/schema';
+import { compAuditLog, compAutomationConfig } from '@server/database/schema';
 
 const CACHE_TTL_MS = 60_000;
 
@@ -26,8 +26,8 @@ export class AutomationConfigService {
   async isEnabled(taskKey: string): Promise<boolean> {
     const epoch: string = await this.currentEpoch();
     const cacheKey = `automation:${epoch}:${taskKey}`;
-    const cached: boolean | undefined = await this.cache.get<boolean>(cacheKey);
-    if (typeof cached === 'boolean') return cached;
+    const cached = await this.cache.get<boolean | null>(cacheKey);
+    if (cached === true || cached === false) return cached;
 
     const rows: Array<{ enabled: boolean }> = await this.db
       .select({ enabled: compAutomationConfig.enabled })
@@ -87,6 +87,26 @@ export class AutomationConfigService {
     this.epoch = '';
     this.epochAt = 0;
     this.logger.log(`自动化任务开关更新 task=${taskKey} enabled=${String(enabled)}`);
+    // L17：调度开关变更写入审计留痕
+    void this.db
+      .insert(compAuditLog)
+      .values({
+        actor: userId || 'anonymous',
+        action: 'update',
+        objectType: 'automation-config',
+        objectId: taskKey,
+        objectCode: taskKey,
+        statusBefore: enabled ? 'disabled' : 'enabled',
+        statusAfter: enabled ? 'enabled' : 'disabled',
+        detail: JSON.stringify({
+          taskKey,
+          taskName: row.taskName,
+          enabled,
+        }),
+      })
+      .catch((error: unknown) => {
+        this.logger.error('自动化配置审计写入失败', error as Error);
+      });
     return {
       taskKey: row.taskKey,
       taskName: row.taskName,

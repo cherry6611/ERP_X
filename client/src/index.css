@@ -3,6 +3,26 @@
 @import "./tailwind-theme.css";
 @import "./typography.css";
 
+/* 晟光：全局焦点环 + 数据数字等宽 */
+@layer base {
+  :focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
+  }
+
+  .tabular-nums,
+  [data-numeric],
+  td.ant-table-cell-fix-right {
+    font-variant-numeric: tabular-nums;
+  }
+
+  code,
+  .font-mono,
+  [data-code] {
+    font-family: var(--font-mono);
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

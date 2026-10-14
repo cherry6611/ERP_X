@@ -169,6 +169,7 @@ export class CapabilityService {
           { role: 'user', content: text },
         ],
       }),
+      signal: AbortSignal.timeout(60_000),
     });
     if (!resp.ok) {
       this.logger.error(`报价解析模型返回 HTTP ${resp.status}`);

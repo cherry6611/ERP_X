@@ -7,16 +7,18 @@ import {
   Post,
   Query,
 } from '@nestjs/common';
-import { CanRole, NeedLogin } from '@server/platform';
+import { CanCapability, NeedLogin } from '@server/platform';
 import { RevenuesService } from './revenues.service';
 import type {
-  CreateRevenueAdjustDto,
-  ReverseRevenueDto,
   RevenueAdjust,
   RevenueItem,
   UnbilledItem,
 } from '@shared/api.interface';
-import { CreateRevenueDto } from './revenues.dto';
+import {
+  CreateRevenueAdjustDto,
+  CreateRevenueDto,
+  ReverseRevenueDto,
+} from './revenues.dto';
 
 @NeedLogin()
 @Controller('api/revenues')
@@ -31,7 +33,7 @@ export class RevenuesController {
     return this.revenuesService.listRevenues(projectId, period);
   }
 
-  @CanRole(['admin'])
+  @CanCapability('finance_write')
   @Post()
   async createRevenue(@Body() dto: CreateRevenueDto): Promise<RevenueItem> {
     return this.revenuesService.createRevenue(dto);
@@ -47,7 +49,7 @@ export class RevenuesController {
     return this.revenuesService.listAdjusts(revenueId);
   }
 
-  @CanRole(['admin'])
+  @CanCapability('finance_write')
   @Post('adjusts')
   async createAdjust(
     @Body() dto: CreateRevenueAdjustDto
@@ -55,7 +57,8 @@ export class RevenuesController {
     return this.revenuesService.createAdjust(dto);
   }
 
-  @CanRole(['admin', 'finance_viewer'])
+  // D-21：冲回为写操作，禁止 finance_viewer
+  @CanCapability('finance_write')
   @Post(':id/reverse')
   async reverseRevenue(
     @Param('id', ParseUUIDPipe) id: string,

@@ -1,20 +1,68 @@
-import type { ReactNode } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ConfigProvider } from 'antd';
 import zhCN from 'antd/locale/zh_CN';
+import { ThemeProvider, useTheme } from 'next-themes';
 import { AuthProvider } from './auth';
-import { antdTheme } from '@client/src/theme/antd-theme';
+import { refreshAntdTheme } from '@client/src/theme/antd-theme';
+import '@client/src/theme/ui-stack';
+import { ThemeSync } from '@client/src/components/ThemeSync';
+import { ConfirmProvider } from '@client/src/components/ConfirmProvider';
 import { Button } from '@client/src/components/ui/button';
 
 const queryClient = new QueryClient();
 
-export function AppContainer({ children }: { children: ReactNode; defaultTheme?: string }) {
+function AntdThemeBridge({ children }: { children: ReactNode }) {
+  const { resolvedTheme } = useTheme();
+  const [theme, setTheme] = useState(() => refreshAntdTheme());
+  useEffect(() => {
+    setTheme(refreshAntdTheme());
+  }, [resolvedTheme]);
+  const memo = useMemo(() => theme, [theme]);
   return (
-    <ConfigProvider locale={zhCN} theme={antdTheme}>
-      <QueryClientProvider client={queryClient}>
-        <AuthProvider>{children}</AuthProvider>
-      </QueryClientProvider>
+    <ConfigProvider locale={zhCN} theme={memo}>
+      {children}
     </ConfigProvider>
+  );
+}
+
+function DensityBootstrap() {
+  useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem('erp-density');
+      const density = raw === 'compact' ? 'compact' : 'comfort';
+      document.documentElement.setAttribute('data-density', density);
+    } catch {
+      document.documentElement.setAttribute('data-density', 'comfort');
+    }
+  }, []);
+  return null;
+}
+
+export function AppContainer({
+  children,
+  defaultTheme = 'light',
+}: {
+  children: ReactNode;
+  defaultTheme?: string;
+}) {
+  return (
+    <ThemeProvider
+      attribute="class"
+      defaultTheme={defaultTheme}
+      enableSystem
+      storageKey="erp-theme"
+    >
+      <AntdThemeBridge>
+        <QueryClientProvider client={queryClient}>
+          <ThemeSync />
+          <DensityBootstrap />
+          <ConfirmProvider>
+            <AuthProvider>{children}</AuthProvider>
+          </ConfirmProvider>
+        </QueryClientProvider>
+      </AntdThemeBridge>
+    </ThemeProvider>
   );
 }
 

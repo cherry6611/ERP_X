@@ -8,16 +8,19 @@ import {
   Post,
   Query,
 } from '@nestjs/common';
-import { CanRole, NeedLogin } from '@server/platform';
+import { CanCapability, NeedLogin } from '@server/platform';
 import { CrmService } from './crm.service';
-import type {
-  Contract,
+import {
   CreateLeadDto,
   CreateOpportunityDto,
-  Lead,
-  Opportunity,
   UpdateLeadDto,
   UpdateOpportunityDto,
+} from './crm.dto';
+import type {
+  Contract,
+  Lead,
+  Opportunity,
+  OpportunityDetail,
 } from '@shared/api.interface';
 
 @NeedLogin()
@@ -37,7 +40,7 @@ export class CrmController {
     return this.crmService.createLead(dto);
   }
 
-  @CanRole(['admin'])
+  @CanCapability('crm_write')
   @Post('leads/:id/convert')
   async convertLead(
     @Param('id', ParseUUIDPipe) id: string
@@ -45,7 +48,7 @@ export class CrmController {
     return this.crmService.convertLead(id);
   }
 
-  @CanRole(['admin'])
+  @CanCapability('crm_write')
   @Patch('leads/:id')
   async updateLead(
     @Param('id', ParseUUIDPipe) id: string,
@@ -61,6 +64,13 @@ export class CrmController {
     return this.crmService.listOpportunities(stage);
   }
 
+  @Get('opportunities/:id')
+  async getOpportunity(
+    @Param('id', ParseUUIDPipe) id: string
+  ): Promise<OpportunityDetail> {
+    return this.crmService.getOpportunity(id);
+  }
+
   @Post('opportunities')
   async createOpportunity(
     @Body() dto: CreateOpportunityDto
@@ -68,7 +78,7 @@ export class CrmController {
     return this.crmService.createOpportunity(dto);
   }
 
-  @CanRole(['admin'])
+  @CanCapability('crm_write')
   @Patch('opportunities/:id')
   async updateOpportunity(
     @Param('id', ParseUUIDPipe) id: string,
@@ -77,7 +87,7 @@ export class CrmController {
     return this.crmService.updateOpportunity(id, dto);
   }
 
-  @CanRole(['admin'])
+  @CanCapability('crm_write')
   @Post('opportunities/:id/convert')
   async convertToContract(
     @Param('id', ParseUUIDPipe) id: string

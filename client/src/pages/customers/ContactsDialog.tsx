@@ -26,6 +26,7 @@ import { Button } from '@client/src/components/ui/button';
 import { Badge } from '@client/src/components/ui/badge';
 import { masterDataApi } from '@client/src/api';
 import { getApiErrorMessage } from '@client/src/utils/api-error-message';
+import { confirmDanger } from '@client/src/utils/confirmDanger';
 import type { Customer, CustomerContact } from '@shared/api.interface';
 
 const contactSchema = z.object({
@@ -75,7 +76,6 @@ const ContactsDialog: React.FC<ContactsDialogProps> = ({
 
   useEffect(() => {
     if (open && customer) void load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, customer?.id]);
 
   const openCreate = () => {
@@ -107,6 +107,11 @@ const ContactsDialog: React.FC<ContactsDialogProps> = ({
   };
 
   const remove = async (contact: CustomerContact) => {
+    const ok = await confirmDanger(
+      `确认删除联系人 ${contact.name}？此操作不可恢复。`,
+      { title: '确认删除' },
+    );
+    if (!ok) return;
     try {
       await masterDataApi.deleteContact(contact.id);
       toast.success('联系人已删除');

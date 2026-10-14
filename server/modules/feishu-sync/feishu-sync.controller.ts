@@ -1,5 +1,5 @@
 import { Controller, Get, Post, Query } from '@nestjs/common';
-import { CanRole, NeedLogin } from '@server/platform';
+import { CanCapability, NeedLogin } from '@server/platform';
 import { FeishuSyncService } from './feishu-sync.service';
 import type {
   FeishuSyncRecordItem,
@@ -12,25 +12,25 @@ import type {
 export class FeishuSyncController {
   constructor(private readonly feishuSyncService: FeishuSyncService) {}
 
-  @CanRole(['admin'])
+  @CanCapability('drive_write')
   @Post('outbound/costs')
   async syncCostsToBase(): Promise<FeishuSyncResult> {
     return this.feishuSyncService.syncCostsToBase();
   }
 
-  @CanRole(['admin'])
+  @CanCapability('drive_write')
   @Post('outbound/contracts')
   async syncContractsToBase(): Promise<FeishuSyncResult> {
     return this.feishuSyncService.syncContractsToBase();
   }
 
-  @CanRole(['admin'])
+  @CanCapability('drive_write')
   @Post('inbound/timesheets')
   async syncTimesheetsFromBase(): Promise<FeishuSyncResult> {
     return this.feishuSyncService.syncTimesheetsFromBase();
   }
 
-  @CanRole(['admin'])
+  @CanCapability('drive_write')
   @Post('retry')
   async retry(@Query('bizType') bizType?: string): Promise<{ reset: number }> {
     return this.feishuSyncService.resetFailed(bizType === 'contract' ? 'contract' : 'cost');

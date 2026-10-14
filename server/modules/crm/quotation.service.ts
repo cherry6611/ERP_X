@@ -9,8 +9,9 @@ import {
   DRIZZLE_DATABASE,
   type PostgresJsDatabase,
 } from '@server/platform';
-import { and, desc, eq, inArray } from 'drizzle-orm';
+import { and, desc, eq, inArray, max } from 'drizzle-orm';
 import {
+  crmOpportunity,
   crmQuotation,
   crmQuotationItem,
   erpContract,
@@ -19,8 +20,9 @@ import {
 } from '@server/database/schema';
 import { generateBizCode } from '@server/common/utils/biz-code';
 import { TaxResolverService } from '@server/modules/tax/tax-resolver.service';
-import { lineAmount, splitTax } from '@shared/tax';
+import { splitTax } from '@shared/tax';
 import { NotificationsService } from '@server/modules/notifications/notifications.service';
+import { todayInShanghai } from '@server/common/utils/biz-date';
 import type {
   Contract,
   CreateQuotationDto,
@@ -63,7 +65,7 @@ export class QuotationService {
   private computeTotals(
     items: QuotationItemInput[],
     discountPct: number
-  ): { totalAmount: number; estimatedCost: number } {
+  ): { totalAmount: number; estimatedCost: number; grossAmount: number } {
     let gross = 0;
     let cost = 0;
     for (const item of items) {
@@ -74,16 +76,31 @@ export class QuotationService {
       });
       cost += item.quantity * (item.estUnitCost ?? 0);
     }
+    const headerFactor = 1 - discountPct / 100;
     return {
-      totalAmount: Math.round(gross * (1 - discountPct / 100) * 100) / 100,
+      grossAmount: Math.round(gross * 100) / 100,
+      totalAmount: Math.round(gross * headerFactor * 100) / 100,
       estimatedCost: Math.round(cost * 100) / 100,
     };
+  }
+
+  /** 转合同明细行金额：行折扣后再乘整单折扣，与 computeTotals 同口径 */
+  private convertLineAmount(
+    item: { quantity: number; unitPrice: number; discountPct: number },
+    headerDiscountPct: number,
+  ): number {
+    const line = this.lineAmount(item);
+    return Math.round(line * (1 - headerDiscountPct / 100) * 100) / 100;
   }
 
   private toQuotation(
     row: QuotationRow,
     items: ItemRow[],
-    customerName: string
+    customerName: string,
+    extra?: {
+      opportunityTitle?: string | null;
+      isWon?: boolean;
+    },
   ): Quotation {
     const totalAmount = Number(row.totalAmount ?? 0);
     const estimatedCost = Number(row.estimatedCost ?? 0);
@@ -97,6 +114,8 @@ export class QuotationService {
       customerId: row.customerId,
       customerName,
       opportunityId: row.opportunityId,
+      opportunityTitle: extra?.opportunityTitle ?? null,
+      roundNo: row.roundNo ?? null,
       title: row.title,
       quoteDate: row.quoteDate,
       validUntil: row.validUntil,
@@ -106,6 +125,8 @@ export class QuotationService {
       estimatedCost,
       marginPct,
       remark: row.remark,
+      contractId: row.contractId ?? null,
+      isWon: extra?.isWon ?? false,
       items: items.map((item) => ({
         id: item.id,
         quotationId: item.quotationId,
@@ -155,11 +176,24 @@ export class QuotationService {
   }
 
   private async getDetail(row: QuotationRow): Promise<Quotation> {
-    const [customerName, items] = await Promise.all([
+    const [customerName, items, opp] = await Promise.all([
       this.loadCustomerName(row.customerId),
       this.loadItems(row.id),
+      row.opportunityId
+        ? this.db
+            .select({
+              title: crmOpportunity.title,
+              wonQuotationId: crmOpportunity.wonQuotationId,
+            })
+            .from(crmOpportunity)
+            .where(eq(crmOpportunity.id, row.opportunityId))
+            .limit(1)
+        : Promise.resolve([]),
     ]);
-    return this.toQuotation(row, items, customerName);
+    return this.toQuotation(row, items, customerName, {
+      opportunityTitle: opp[0]?.title ?? null,
+      isWon: opp[0]?.wonQuotationId === row.id,
+    });
   }
 
   async list(params: {
@@ -178,9 +212,18 @@ export class QuotationService {
       conditions.push(eq(crmQuotation.status, params.status));
     }
     const rows = await this.db
-      .select({ quotation: crmQuotation, customerName: mdCustomer.name })
+      .select({
+        quotation: crmQuotation,
+        customerName: mdCustomer.name,
+        opportunityTitle: crmOpportunity.title,
+        wonQuotationId: crmOpportunity.wonQuotationId,
+      })
       .from(crmQuotation)
       .leftJoin(mdCustomer, eq(crmQuotation.customerId, mdCustomer.id))
+      .leftJoin(
+        crmOpportunity,
+        eq(crmQuotation.opportunityId, crmOpportunity.id),
+      )
       .where(conditions.length > 0 ? and(...conditions) : undefined)
       .orderBy(desc(crmQuotation.createdAt));
     const ids = rows.map((row) => row.quotation.id);
@@ -202,7 +245,11 @@ export class QuotationService {
       this.toQuotation(
         row.quotation,
         byQuotation.get(row.quotation.id) ?? [],
-        row.customerName ?? ''
+        row.customerName ?? '',
+        {
+          opportunityTitle: row.opportunityTitle ?? null,
+          isWon: row.wonQuotationId === row.quotation.id,
+        },
       )
     );
   }
@@ -226,6 +273,20 @@ export class QuotationService {
       crmQuotation.code,
       'QUO'
     );
+    let roundNo: number | null = null;
+    if (dto.opportunityId) {
+      const opp = await this.db
+        .select({ id: crmOpportunity.id })
+        .from(crmOpportunity)
+        .where(eq(crmOpportunity.id, dto.opportunityId))
+        .limit(1);
+      if (opp.length === 0) throw new NotFoundException('商机不存在');
+      const maxRows = await this.db
+        .select({ m: max(crmQuotation.roundNo) })
+        .from(crmQuotation)
+        .where(eq(crmQuotation.opportunityId, dto.opportunityId));
+      roundNo = Number(maxRows[0]?.m ?? 0) + 1;
+    }
     const row = await this.db.transaction(async (tx) => {
       const inserted = await tx
         .insert(crmQuotation)
@@ -233,6 +294,7 @@ export class QuotationService {
           code,
           customerId: dto.customerId,
           opportunityId: dto.opportunityId ?? null,
+          roundNo,
           title: dto.title,
           quoteDate: dto.quoteDate ?? null,
           validUntil: dto.validUntil ?? null,
@@ -259,6 +321,20 @@ export class QuotationService {
       );
       return head;
     });
+    if (dto.opportunityId) {
+      const oppRows = await this.db
+        .select({ stage: crmOpportunity.stage })
+        .from(crmOpportunity)
+        .where(eq(crmOpportunity.id, dto.opportunityId))
+        .limit(1);
+      const stage = oppRows[0]?.stage ?? 'new';
+      if (stage === 'new' || stage === 'following') {
+        await this.db
+          .update(crmOpportunity)
+          .set({ stage: 'quoting', updatedAt: new Date() })
+          .where(eq(crmOpportunity.id, dto.opportunityId));
+      }
+    }
     return this.getDetail(row);
   }
 
@@ -275,11 +351,8 @@ export class QuotationService {
     if (dto.items !== undefined && dto.items.length === 0) {
       throw new BadRequestException('报价明细行至少 1 条');
     }
-    const items = dto.items ?? [];
     const discountPct =
       dto.discountPct !== undefined ? dto.discountPct : Number(existing.discountPct ?? 0);
-    const totals =
-      dto.items !== undefined ? this.computeTotals(items, discountPct) : null;
     await this.db.transaction(async (tx) => {
       const patch: Partial<typeof crmQuotation.$inferInsert> = {
         updatedAt: new Date(),
@@ -292,7 +365,31 @@ export class QuotationService {
       if (dto.validUntil !== undefined) patch.validUntil = dto.validUntil || null;
       if (dto.discountPct !== undefined) patch.discountPct = String(dto.discountPct);
       if (dto.remark !== undefined) patch.remark = dto.remark;
-      if (totals) {
+
+      // F10：明细或整单折扣变更时按同口径重算并落库，杜绝脏合计
+      let itemInputs: QuotationItemInput[];
+      if (dto.items !== undefined) {
+        itemInputs = dto.items;
+      } else if (dto.discountPct !== undefined) {
+        const existingItems = await tx
+          .select()
+          .from(crmQuotationItem)
+          .where(eq(crmQuotationItem.quotationId, id))
+          .orderBy(crmQuotationItem.seq);
+        itemInputs = existingItems.map((item) => ({
+          itemName: item.itemName ?? '',
+          unit: item.unit ?? '人天',
+          quantity: Number(item.quantity ?? 0),
+          unitPrice: Number(item.unitPrice ?? 0),
+          discountPct: Number(item.discountPct ?? 0),
+          estUnitCost: Number(item.estUnitCost ?? 0),
+          remark: item.remark ?? undefined,
+        }));
+      } else {
+        itemInputs = [];
+      }
+      if (dto.items !== undefined || dto.discountPct !== undefined) {
+        const totals = this.computeTotals(itemInputs, discountPct);
         patch.totalAmount = String(totals.totalAmount);
         patch.estimatedCost = String(totals.estimatedCost);
       }
@@ -302,7 +399,7 @@ export class QuotationService {
           .delete(crmQuotationItem)
           .where(eq(crmQuotationItem.quotationId, id));
         await tx.insert(crmQuotationItem).values(
-          items.map((item, index) => ({
+          itemInputs.map((item, index) => ({
             quotationId: id,
             seq: index + 1,
             itemName: item.itemName,
@@ -384,7 +481,7 @@ export class QuotationService {
     if (existing.contractId) {
       throw new BadRequestException('该报价已生成合同，请勿重复转换');
     }
-    if (existing.validUntil && existing.validUntil < new Date().toISOString().slice(0, 10)) {
+    if (existing.validUntil && existing.validUntil < todayInShanghai()) {
       throw new BadRequestException('报价已超过有效期，不能转合同');
     }
     const items = await this.db
@@ -422,14 +519,18 @@ export class QuotationService {
           status: 'draft',
         })
         .returning({ id: erpContract.id });
+      const headerDiscountPct = Number(existing.discountPct ?? 0);
       let itemSum = 0;
       if (items.length > 0) {
         await tx.insert(erpContractItem).values(
           items.map((item) => {
-            const line = lineAmount(
-              Number(item.quantity ?? 0),
-              Number(item.unitPrice ?? 0),
-              Number(item.discountPct ?? 0)
+            const line = this.convertLineAmount(
+              {
+                quantity: Number(item.quantity ?? 0),
+                unitPrice: Number(item.unitPrice ?? 0),
+                discountPct: Number(item.discountPct ?? 0),
+              },
+              headerDiscountPct,
             );
             itemSum += line;
             const lineSplit = splitTax(line, resolved.rate);
@@ -453,6 +554,7 @@ export class QuotationService {
             };
           })
         );
+        itemSum = Math.round(itemSum * 100) / 100;
         if (Math.abs(itemSum - amount) > 0.01) {
           throw new BadRequestException(
             `报价明细合计 ${itemSum} 与报价总额 ${amount} 不一致，已回滚`

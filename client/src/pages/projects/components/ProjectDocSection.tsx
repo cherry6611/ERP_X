@@ -58,6 +58,7 @@ import {
   deleteAttachment,
   listAttachments,
 } from '@client/src/api/attachments';
+import { confirmDanger } from '@client/src/utils/confirmDanger';
 import {
   getProjectDriveSyncStatus,
   syncProjectDrive,
@@ -313,6 +314,11 @@ const ProjectDocSection: React.FC<ProjectDocSectionProps> = ({
   });
 
   const handleDelete = async (item: Attachment) => {
+    const ok = await confirmDanger(
+      `确认删除文档「${item.fileName}」？此操作不可恢复。`,
+      { title: '确认删除' },
+    );
+    if (!ok) return;
     setDeletingId(item.id);
     try {
       if (item.sourceType !== 'feishu_doc') {

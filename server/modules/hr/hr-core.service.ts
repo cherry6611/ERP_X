@@ -9,7 +9,7 @@ import {
   DRIZZLE_DATABASE,
   type PostgresJsDatabase,
 } from '@server/platform';
-import { and, asc, desc, eq, gte, ilike, lt, or, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, gte, ilike, inArray, lt, or, sql, type SQL } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
 import {
   hrAttendance,
@@ -21,6 +21,12 @@ import {
   mdSupplier,
 } from '@server/database/schema';
 import { generateBizCode } from '@server/common/utils/biz-code';
+import {
+  DataScopeService,
+  applyScope,
+  type ResolvedScope,
+} from '@server/common/auth/data-scope.service';
+import type { RequestActor } from '@server/common/auth/actor';
 import type {
   AttendanceRecord,
   CreateDepartmentDto,
@@ -40,6 +46,13 @@ import type {
 } from '@shared/api.interface';
 
 const MONTH_PATTERN = /^\d{4}-(0[1-9]|1[0-2])$/;
+
+/** 手机号脱敏：保留前 3 后 4 */
+function maskPhoneNumber(phone: string): string {
+  const digits = phone.replace(/\s+/g, '');
+  if (digits.length < 7) return '****';
+  return `${digits.slice(0, 3)}****${digits.slice(-4)}`;
+}
 
 /** 员工状态机：probation → active → resigned 单向流转 */
 const EMPLOYEE_STATUS_TRANSITIONS: Record<string, readonly string[]> = {
@@ -87,6 +100,8 @@ interface EmployeeRow {
   platformUserId: string | null;
   supplierId: string | null;
   supplierName: string | null;
+  ssCityCode: string | null;
+  ssBase: string | null;
 }
 
 interface AttendanceRow {
@@ -125,8 +140,74 @@ interface LeaveRequestRow {
 @Injectable()
 export class HrCoreService {
   constructor(
-    @Inject(DRIZZLE_DATABASE) private readonly db: PostgresJsDatabase
+    @Inject(DRIZZLE_DATABASE) private readonly db: PostgresJsDatabase,
+    private readonly dataScope: DataScopeService
   ) {}
+
+  /**
+   * B-02：员工档案行级可见范围（SQL 层过滤）。
+   *
+   * `sys_data_scope` 里 `hr_manager × employee` 种为 `dept_and_child`，
+   * 于是"部门经理只能看到本部门及下级部门的员工档案"（需求书验收标准①）
+   * 由 `md_employee.department_id IN (...)` 在 SQL 里完成，而不是取全量后再筛。
+   * 未配置该资源时返回 undefined（保持既有"人事经理可读全量"的行为）。
+   */
+  private async employeeScopeCondition(
+    actor?: RequestActor
+  ): Promise<SQL | undefined> {
+    if (!actor) return undefined;
+    const resolved: ResolvedScope = await this.dataScope.resolveScope(
+      actor.roles ?? [],
+      'employee'
+    );
+    if (resolved.from !== 'config') return undefined;
+    return this.dataScope.conditionFor(
+      'employee',
+      actor,
+      {
+        primary: mdEmployee.id,
+        self: mdEmployee.platformUserId,
+        dept: mdEmployee.departmentId,
+      },
+      { resolved }
+    );
+  }
+
+  /**
+   * B-02：考勤行级可见范围。
+   *
+   * `hr_attendance` 只有 `employee_id`，没有部门列与用户列：
+   *   - `self`             → `employee_id = 当前登录人绑定的员工`
+   *   - `dept/dept_and_child` → 先取"本部门及下级"的员工 id 集合，再 `employee_id IN (...)`
+   *   - `custom`           → `employee_id IN custom_ids`
+   * 部门集合为空时 fail-closed（返回空集并记 warn），不放行全量。
+   */
+  private async attendanceScopeCondition(
+    actor?: RequestActor
+  ): Promise<SQL | undefined> {
+    if (!actor) return undefined;
+    const resolved: ResolvedScope = await this.dataScope.resolveScope(
+      actor.roles ?? [],
+      'attendance'
+    );
+    if (resolved.from !== 'config' || resolved.scope === 'all') return undefined;
+    const ctx = await this.dataScope.resolveContext(actor, 'attendance');
+    if (resolved.scope === 'self' || resolved.scope === 'custom') {
+      return applyScope(hrAttendance.employeeId, resolved, ctx);
+    }
+    const employeeIds: string[] = await this.dataScope.employeeIdsInDepartments(
+      ctx.departmentIds ?? []
+    );
+    if (employeeIds.length === 0) {
+      return this.dataScope.failClosed(
+        'attendance',
+        actor,
+        resolved,
+        'actor 未绑定部门或部门下无员工'
+      );
+    }
+    return inArray(hrAttendance.employeeId, employeeIds);
+  }
 
   private toDepartment(row: DepartmentRow): Department {
     return {
@@ -172,6 +253,8 @@ export class HrCoreService {
       platformUserId: row.platformUserId ?? null,
       supplierId: row.supplierId ?? null,
       supplierName: row.supplierName ?? null,
+      ssCityCode: row.ssCityCode ?? null,
+      ssBase: row.ssBase != null ? Number(row.ssBase) : null,
     };
   }
 
@@ -370,14 +453,25 @@ export class HrCoreService {
 
   /* ========== 员工档案 ========== */
 
-  async listEmployees(keyword?: string): Promise<Employee[]> {
-    const where =
+  async listEmployees(
+    keyword?: string,
+    options?: { maskPhone?: boolean; actor?: RequestActor },
+  ): Promise<Employee[]> {
+    const keywordWhere =
       keyword && keyword.trim() !== ''
         ? or(
             ilike(mdEmployee.name, `%${keyword}%`),
             ilike(mdEmployee.code, `%${keyword}%`)
           )
         : undefined;
+    // B-02：行级可见范围在 SQL 层注入（部门经理仅本部门及下级）
+    const scopeWhere: SQL | undefined = await this.employeeScopeCondition(
+      options?.actor
+    );
+    const where: SQL | undefined =
+      keywordWhere && scopeWhere
+        ? and(keywordWhere, scopeWhere)
+        : (keywordWhere ?? scopeWhere);
     const rows: EmployeeRow[] = await this.db
       .select({
         id: mdEmployee.id,
@@ -397,6 +491,8 @@ export class HrCoreService {
         platformUserId: mdEmployee.platformUserId,
         supplierId: mdEmployee.supplierId,
         supplierName: mdSupplier.name,
+        ssCityCode: mdEmployee.ssCityCode,
+        ssBase: mdEmployee.ssBase,
       })
       .from(mdEmployee)
       .leftJoin(hrDepartment, eq(mdEmployee.departmentId, hrDepartment.id))
@@ -404,7 +500,13 @@ export class HrCoreService {
       .leftJoin(mdSupplier, eq(mdEmployee.supplierId, mdSupplier.id))
       .where(where)
       .orderBy(desc(mdEmployee.createdAt));
-    return rows.map((row: EmployeeRow) => this.toEmployee(row));
+    return rows.map((row: EmployeeRow) => {
+      const emp = this.toEmployee(row);
+      if (options?.maskPhone && emp.phone) {
+        emp.phone = maskPhoneNumber(emp.phone);
+      }
+      return emp;
+    });
   }
 
   async createEmployee(dto: CreateEmployeeDto): Promise<Employee> {
@@ -428,6 +530,8 @@ export class HrCoreService {
           status: dto.status ?? 'probation',
           ...(dto.platformUserId ? { platformUserId: dto.platformUserId } : {}),
           ...(dto.supplierId ? { supplierId: dto.supplierId } : {}),
+          ...(dto.ssCityCode ? { ssCityCode: dto.ssCityCode } : {}),
+          ...(dto.ssBase != null ? { ssBase: String(dto.ssBase) } : {}),
         })
         .returning({ id: mdEmployee.id });
       return await this.getEmployeeById(inserted[0].id);
@@ -514,6 +618,12 @@ export class HrCoreService {
     if (dto.supplierId !== undefined) {
       patch.supplierId = dto.supplierId === '' ? null : dto.supplierId;
     }
+    if (dto.ssCityCode !== undefined) {
+      patch.ssCityCode = dto.ssCityCode === '' ? null : dto.ssCityCode;
+    }
+    if (dto.ssBase !== undefined) {
+      patch.ssBase = dto.ssBase === null ? null : String(dto.ssBase);
+    }
     try {
       const rows = await this.db
         .update(mdEmployee)
@@ -550,6 +660,8 @@ export class HrCoreService {
         platformUserId: mdEmployee.platformUserId,
         supplierId: mdEmployee.supplierId,
         supplierName: mdSupplier.name,
+        ssCityCode: mdEmployee.ssCityCode,
+        ssBase: mdEmployee.ssBase,
       })
       .from(mdEmployee)
       .leftJoin(hrDepartment, eq(mdEmployee.departmentId, hrDepartment.id))
@@ -591,7 +703,8 @@ export class HrCoreService {
 
   async listAttendance(
     month: string,
-    employeeId?: string
+    employeeId?: string,
+    actor?: RequestActor
   ): Promise<AttendanceRecord[]> {
     if (!MONTH_PATTERN.test(month)) {
       throw new BadRequestException('month 参数必须为 YYYY-MM 格式');
@@ -607,6 +720,9 @@ export class HrCoreService {
       lt(hrAttendance.workDate, rangeEnd),
     ];
     if (employeeId) conditions.push(eq(hrAttendance.employeeId, employeeId));
+    // B-02：考勤的行级可见范围（SQL 层，非 UI 隐藏）
+    const scopeWhere: SQL | undefined = await this.attendanceScopeCondition(actor);
+    if (scopeWhere) conditions.push(scopeWhere);
     const rows: AttendanceRow[] = await this.db
       .select({
         id: hrAttendance.id,
@@ -767,7 +883,20 @@ export class HrCoreService {
     if (employees[0].status === 'resigned') {
       throw new BadRequestException('员工已离职，不能申请请假');
     }
-    if (!(dto.days > 0)) {
+    if (!dto.startDate || !dto.endDate) {
+      throw new BadRequestException('请假起止日期必填');
+    }
+    if (dto.endDate < dto.startDate) {
+      throw new BadRequestException('结束日期不得早于开始日期');
+    }
+    // D-23：天数由服务端按自然日重算，忽略客户端自报
+    const startMs = Date.parse(`${dto.startDate}T00:00:00Z`);
+    const endMs = Date.parse(`${dto.endDate}T00:00:00Z`);
+    if (!Number.isFinite(startMs) || !Number.isFinite(endMs)) {
+      throw new BadRequestException('请假日期格式无效');
+    }
+    const days = Math.floor((endMs - startMs) / 86_400_000) + 1;
+    if (!(days > 0)) {
       throw new BadRequestException('请假天数必须大于 0');
     }
     const year: string = dto.startDate.slice(0, 4);
@@ -809,9 +938,9 @@ export class HrCoreService {
       usedDays = Number(balances[0].usedDays ?? 0);
     }
     const remaining = totalDays - usedDays;
-    if (remaining < dto.days) {
+    if (remaining < days) {
       throw new BadRequestException(
-        `请假余额不足：剩余 ${remaining} 天，申请 ${dto.days} 天`
+        `请假余额不足：剩余 ${remaining} 天，申请 ${days} 天`
       );
     }
     const code = await generateBizCode(
@@ -828,7 +957,7 @@ export class HrCoreService {
         leaveType: dto.leaveType,
         startDate: dto.startDate,
         endDate: dto.endDate,
-        days: String(dto.days),
+        days: String(days),
         reason: dto.reason,
         status: 'pending',
       })
@@ -859,14 +988,52 @@ export class HrCoreService {
       const updated = await this.db
         .update(hrLeaveRequest)
         .set({ status: 'rejected', updatedAt: new Date() })
-        .where(eq(hrLeaveRequest.id, id))
+        .where(
+          and(
+            eq(hrLeaveRequest.id, id),
+            eq(hrLeaveRequest.status, 'pending'),
+          ),
+        )
         .returning({ id: hrLeaveRequest.id });
-      if (updated.length === 0) throw new NotFoundException('请假单不存在');
+      if (updated.length === 0) {
+        throw new ConflictException('该请假单已被处理，请刷新后重试');
+      }
       return this.getLeaveRequestById(id);
     }
     const year: string = String(request.startDate ?? '').slice(0, 4);
-    const days: string = String(Number(request.days ?? 0));
+    const daysNum = Number(request.days ?? 0);
+    if (!(daysNum > 0)) {
+      throw new BadRequestException('请假天数无效，无法审批');
+    }
+    const days: string = String(daysNum);
     await this.db.transaction(async (tx) => {
+      // F4X-21：先锁余额行，校验剩余天数，再 CAS 更新请假单与 usedDays
+      const balanceRows = await tx
+        .select({
+          id: hrLeaveBalance.id,
+          totalDays: hrLeaveBalance.totalDays,
+          usedDays: hrLeaveBalance.usedDays,
+        })
+        .from(hrLeaveBalance)
+        .where(
+          and(
+            eq(hrLeaveBalance.employeeId, request.employeeId ?? ''),
+            eq(hrLeaveBalance.leaveType, request.leaveType ?? ''),
+            eq(hrLeaveBalance.year, year),
+          ),
+        )
+        .for('update');
+      if (balanceRows.length === 0) {
+        throw new BadRequestException('请假余额记录不存在，审批失败');
+      }
+      const total = Number(balanceRows[0].totalDays ?? 0);
+      const used = Number(balanceRows[0].usedDays ?? 0);
+      const remaining = total - used;
+      if (daysNum > remaining + 1e-9) {
+        throw new BadRequestException(
+          `请假余额不足：剩余 ${remaining} 天，申请 ${daysNum} 天`,
+        );
+      }
       const updated = await tx
         .update(hrLeaveRequest)
         .set({ status: 'approved', updatedAt: new Date() })
@@ -878,7 +1045,7 @@ export class HrCoreService {
         )
         .returning({ id: hrLeaveRequest.id });
       if (updated.length === 0) {
-        throw new BadRequestException('请假单状态已变更，审批失败');
+        throw new ConflictException('该请假单已被处理，请刷新后重试');
       }
       const balances = await tx
         .update(hrLeaveBalance)
@@ -886,16 +1053,10 @@ export class HrCoreService {
           usedDays: sql`${hrLeaveBalance.usedDays} + ${days}::numeric`,
           updatedAt: new Date(),
         })
-        .where(
-          and(
-            eq(hrLeaveBalance.employeeId, request.employeeId ?? ''),
-            eq(hrLeaveBalance.leaveType, request.leaveType ?? ''),
-            eq(hrLeaveBalance.year, year)
-          )
-        )
+        .where(eq(hrLeaveBalance.id, balanceRows[0].id))
         .returning({ id: hrLeaveBalance.id });
       if (balances.length === 0) {
-        throw new BadRequestException('请假余额记录不存在，审批失败');
+        throw new BadRequestException('请假余额更新失败');
       }
     });
     return this.getLeaveRequestById(id);

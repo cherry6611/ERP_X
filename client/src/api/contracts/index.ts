@@ -5,16 +5,18 @@ import type {
   Calloff,
   Contract,
   ContractDetail,
+  ContractItem,
   ContractListParams,
   ContractMilestone,
   ContractStatusAction,
   ContractVersion,
   CreateCalloffDto,
   CreateContractDto,
+  CreateContractVersionDto,
   CreateMilestoneDto,
-  ContractItem,
   PagedResult,
   UpdateContractDto,
+  UpdateMilestoneDto,
 } from '@shared/api.interface';
 
 export type { ContractItem };
@@ -82,7 +84,7 @@ export async function addMilestone(
 
 export async function updateMilestone(
   milestoneId: string,
-  dto: { status?: 'reached'; actualDate?: string; name?: string; amount?: number },
+  dto: UpdateMilestoneDto,
 ): Promise<ContractMilestone> {
   const resp = await axiosForBackend.patch<ContractMilestone>(
     `/api/contracts/milestones/${milestoneId}`,
@@ -94,7 +96,7 @@ export async function updateMilestone(
 
 export async function createVersion(
   contractId: string,
-  dto: { changeLog: string; newAmount?: number },
+  dto: CreateContractVersionDto,
 ): Promise<ContractVersion> {
   const resp = await axiosForBackend.post<ContractVersion>(
     `/api/contracts/${contractId}/changes`,

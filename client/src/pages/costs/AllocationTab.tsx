@@ -5,6 +5,7 @@ import { z } from 'zod';
 import { toast } from 'sonner';
 import { Table, TableColumnsType } from 'antd';
 import { CanRole } from '@client/src/platform/auth';
+import { SectionTitle } from '@client/src/components/SectionTitle';
 import { Button } from '@client/src/components/ui/button';
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from '@/components/ui/form';
 import { Input } from '@client/src/components/ui/input';
@@ -208,7 +209,7 @@ const AllocationTab: React.FC = () => {
         locale={{ emptyText: '暂无分摊记录，点击「登记分摊」创建' }}
       />
       <div className="rounded-lg border bg-card p-4">
-        <h3 className="text-base font-semibold">当前执行中项目预算占比（分摊依据）</h3>
+        <SectionTitle>当前执行中项目预算占比（分摊依据）</SectionTitle>
         <div className="mt-3 flex flex-col gap-2">
           {executingProjects.length === 0 ? (
             <p className="text-sm text-muted-foreground">暂无执行中项目</p>

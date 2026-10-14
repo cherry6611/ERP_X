@@ -9,6 +9,26 @@ import { registerFeishuTokenInvalidator } from './feishu-token';
 
 const FEISHU_OPEN_BASE = 'https://open.feishu.cn';
 export const FEISHU_TENANT_DOMAIN = 'https://chengshengdata.feishu.cn';
+/** 出站飞书请求默认超时（毫秒），防止接口抖动拖死连接 */
+const FEISHU_FETCH_TIMEOUT_MS = 15_000;
+
+async function feishuFetch(
+  url: string | URL,
+  init: RequestInit = {},
+): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), FEISHU_FETCH_TIMEOUT_MS);
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } catch (error: unknown) {
+    if (error instanceof Error && error.name === 'AbortError') {
+      throw new ServiceUnavailableException('飞书接口超时，请稍后重试');
+    }
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 interface FeishuApiEnvelope<T> {
   code: number;
@@ -76,7 +96,7 @@ export class FeishuClientService {
   private async fetchToken(): Promise<string> {
     const now = Date.now();
     const { appId, appSecret } = await this.configService.getConfig();
-    const resp = await fetch(
+    const resp = await feishuFetch(
       `${FEISHU_OPEN_BASE}/open-apis/auth/v3/tenant_access_token/internal`,
       {
         method: 'POST',
@@ -119,7 +139,7 @@ export class FeishuClientService {
     for (const [key, value] of Object.entries(options.query ?? {})) {
       url.searchParams.set(key, value);
     }
-    const resp = await fetch(url, {
+    const resp = await feishuFetch(url, {
       method,
       headers:
         method.toUpperCase() === 'GET'
@@ -142,6 +162,7 @@ export class FeishuClientService {
       const attempt = options.attempt ?? 0;
       // 修复 P1-3：抖动/限流/5xx 一律纳入重试，并加指数退避 + 抖动。
       // 原来的「零延迟立即重试」在服务端已经过载时会加剧拥塞。
+      // L5：仅 token 失效 / 限流 / 5xx 重试；普通 4xx 不退避，避免错误放大
       const retryable =
         result.code === 99991663 ||
         result.code === 99991661 ||
@@ -170,6 +191,178 @@ export class FeishuClientService {
     return data.content ?? '';
   }
 
+  /** 列出电子表格工作表 */
+  async listSpreadsheetSheets(spreadsheetToken: string): Promise<
+    Array<{ sheetId: string; title: string; hidden: boolean }>
+  > {
+    const data = await this.request<{
+      sheets?: Array<{
+        sheet_id?: string;
+        title?: string;
+        hidden?: boolean;
+      }>;
+    }>('GET', `/open-apis/sheets/v3/spreadsheets/${spreadsheetToken}/sheets/query`);
+    return (data.sheets ?? []).map((s) => ({
+      sheetId: s.sheet_id ?? '',
+      title: s.title ?? '',
+      hidden: Boolean(s.hidden),
+    }));
+  }
+
+  /** 读取电子表格某一范围（ToString，便于文本解析） */
+  async getSpreadsheetValues(
+    spreadsheetToken: string,
+    range: string,
+  ): Promise<unknown[][]> {
+    const data = await this.request<{
+      valueRange?: { values?: unknown[][] };
+      values?: unknown[][];
+    }>('GET', `/open-apis/sheets/v2/spreadsheets/${spreadsheetToken}/values/${encodeURIComponent(range)}`, {
+      query: {
+        valueRenderOption: 'ToString',
+        dateTimeRenderOption: 'FormattedString',
+      },
+    });
+    return data.valueRange?.values ?? data.values ?? [];
+  }
+
+  /** 旧版 Docs（/docs/）纯文本 */
+  async getLegacyDocRawContent(docToken: string): Promise<string> {
+    const data = await this.request<{ content?: string }>(
+      'GET',
+      `/open-apis/doc/v2/${docToken}/raw_content`,
+    );
+    return data.content ?? '';
+  }
+
+  async batchQueryMetas(
+    docs: Array<{ docToken: string; docType: string }>,
+  ): Promise<{
+    metas: Array<{ docToken: string; docType: string; title: string; url?: string }>;
+    failed: Array<{ token: string; code: number }>;
+  }> {
+    if (docs.length === 0) return { metas: [], failed: [] };
+    const data = await this.request<{
+      metas?: Array<{
+        doc_token?: string;
+        doc_type?: string;
+        title?: string;
+        url?: string;
+      }>;
+      failed_list?: Array<{ token?: string; code?: number }>;
+    }>('POST', '/open-apis/drive/v1/metas/batch_query', {
+      body: {
+        request_docs: docs.map((d) => ({
+          doc_token: d.docToken,
+          doc_type: d.docType,
+        })),
+        with_url: true,
+      },
+    });
+    return {
+      metas: (data.metas ?? []).map((m) => ({
+        docToken: m.doc_token ?? '',
+        docType: (m.doc_type ?? '').toLowerCase(),
+        title: m.title ?? '',
+        url: m.url,
+      })),
+      failed: (data.failed_list ?? []).map((f) => ({
+        token: f.token ?? '',
+        code: f.code ?? 0,
+      })),
+    };
+  }
+
+  async getWikiNode(
+    token: string,
+    objType?: string,
+  ): Promise<{ objToken: string; objType: string; title: string } | null> {
+    try {
+      const query: Record<string, string> = { token };
+      if (objType) query.obj_type = objType;
+      const data = await this.request<{
+        node?: { obj_token?: string; obj_type?: string; title?: string };
+      }>('GET', '/open-apis/wiki/v2/spaces/get_node', { query });
+      const node = data.node;
+      if (!node?.obj_token || !node.obj_type) return null;
+      return {
+        objToken: node.obj_token,
+        objType: node.obj_type.toLowerCase(),
+        title: node.title ?? '',
+      };
+    } catch (error: unknown) {
+      if (error instanceof FeishuApiError) return null;
+      throw error;
+    }
+  }
+
+  /**
+   * 下载云空间普通文件（不含在线文档）。成功时返回二进制与文件名。
+   */
+  async downloadFile(fileToken: string): Promise<{
+    buffer: Buffer;
+    contentType: string;
+    fileName: string;
+  }> {
+    await this.pace();
+    const token = await this.getToken();
+    const url = `${FEISHU_OPEN_BASE}/open-apis/drive/v1/files/${encodeURIComponent(fileToken)}/download`;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 60_000);
+    let resp: Response;
+    try {
+      resp = await fetch(url, {
+        method: 'GET',
+        headers: { Authorization: `Bearer ${token}` },
+        signal: controller.signal,
+      });
+    } catch (error: unknown) {
+      if (error instanceof Error && error.name === 'AbortError') {
+        throw new ServiceUnavailableException('飞书文件下载超时，请稍后重试');
+      }
+      throw error;
+    } finally {
+      clearTimeout(timer);
+    }
+
+    const contentType = resp.headers.get('content-type') ?? '';
+    const disposition = resp.headers.get('content-disposition') ?? '';
+    const arrayBuf = await resp.arrayBuffer();
+    const buffer = Buffer.from(arrayBuf);
+
+    // 失败时飞书常返回 JSON envelope
+    if (
+      contentType.includes('application/json') ||
+      (buffer.length > 0 && buffer[0] === 0x7b /* { */)
+    ) {
+      try {
+        const result = JSON.parse(buffer.toString('utf8')) as FeishuApiEnvelope<unknown>;
+        if (typeof result.code === 'number' && result.code !== 0) {
+          throw new FeishuApiError(result.code, result.msg || '文件下载失败');
+        }
+      } catch (error: unknown) {
+        if (error instanceof FeishuApiError) throw error;
+      }
+    }
+    if (!resp.ok) {
+      throw new FeishuApiError(resp.status, `文件下载失败 HTTP ${resp.status}`);
+    }
+
+    let fileName = 'file';
+    const star = /filename\*=UTF-8''([^;]+)/i.exec(disposition);
+    const plain = /filename="?([^";]+)"?/i.exec(disposition);
+    if (star?.[1]) {
+      try {
+        fileName = decodeURIComponent(star[1]);
+      } catch {
+        fileName = star[1];
+      }
+    } else if (plain?.[1]) {
+      fileName = plain[1];
+    }
+    return { buffer, contentType, fileName };
+  }
+
   async uploadForm(
     fields: Record<string, string>,
     fileName: string,
@@ -181,7 +374,7 @@ export class FeishuClientService {
       form.append(key, value);
     }
     form.append('file', new Blob([new Uint8Array(content)]), fileName);
-    const resp = await fetch(
+    const resp = await feishuFetch(
       `${FEISHU_OPEN_BASE}/open-apis/drive/v1/files/upload_all`,
       {
         method: 'POST',

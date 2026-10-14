@@ -7,6 +7,7 @@ import { Download, Plus } from 'lucide-react';
 import { Table, TableColumnsType } from 'antd';
 import { CanRole } from '@client/src/platform/auth';
 import { DataState } from '@client/src/components/DataState';
+import { SectionTitle } from '@client/src/components/SectionTitle';
 import StatusBadge from '@client/src/components/erp/StatusBadge';
 import { Button } from '@client/src/components/ui/button';
 import {
@@ -339,7 +340,7 @@ const ArTab: React.FC = () => {
         skeleton="table"
       >
         <div className="flex flex-col gap-3">
-          <h3 className="text-base font-semibold">应收账款</h3>
+          <SectionTitle>应收账款</SectionTitle>
           <Table
             columns={arColumns}
             dataSource={ars ?? []}
@@ -353,7 +354,7 @@ const ArTab: React.FC = () => {
           />
         </div>
         <div className="flex flex-col gap-3">
-          <h3 className="text-base font-semibold">回款记录</h3>
+          <SectionTitle>回款记录</SectionTitle>
           <Table
             columns={receiptColumns}
             dataSource={receipts ?? []}

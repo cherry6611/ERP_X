@@ -2,6 +2,7 @@ import { useCallback, useState } from 'react';
 import { Bell } from 'lucide-react';
 import { toast } from 'sonner';
 import { notificationsApi } from '@client/src/api';
+import { DataState } from '@client/src/components/DataState';
 import { Button } from '@client/src/components/ui/button';
 import {
   Popover,
@@ -52,15 +53,18 @@ export function InboxBell() {
         <div className="border-b px-3 py-2 text-sm font-medium">站内信</div>
         <div className="max-h-80 overflow-y-auto">
           {loading ? (
-            <p className="px-3 py-6 text-center text-sm text-muted-foreground">加载中…</p>
+            <div className="px-3 py-4">
+              <DataState loading skeleton="default" />
+            </div>
           ) : messages.length === 0 ? (
             <p className="px-3 py-6 text-center text-sm text-muted-foreground">暂无消息</p>
           ) : (
             messages.map((msg) => (
-              <button
+              <Button
                 key={msg.id}
                 type="button"
-                className="flex w-full flex-col gap-0.5 border-b px-3 py-2 text-left hover:bg-muted/60"
+                variant="ghost"
+                className="h-auto w-full flex-col items-start gap-0.5 rounded-none border-b px-3 py-2 text-left"
                 onClick={() => {
                   if (!msg.readAt) void markRead(msg.id);
                 }}
@@ -71,10 +75,10 @@ export function InboxBell() {
                   ) : null}
                   {msg.title}
                 </span>
-                <span className="line-clamp-2 text-xs text-muted-foreground">
+                <span className="line-clamp-2 text-xs font-normal text-muted-foreground">
                   {msg.content}
                 </span>
-              </button>
+              </Button>
             ))
           )}
         </div>

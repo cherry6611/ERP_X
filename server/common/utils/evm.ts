@@ -1,7 +1,8 @@
 export interface EvmMilestoneInput {
   status: string | null;
-  weightPct: string | number;
+  weightPct: string | number | null;
   baselineDate: string | null;
+  forecastDate?: string | null;
 }
 
 export interface EvmResult {

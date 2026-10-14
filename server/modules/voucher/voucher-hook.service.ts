@@ -3,9 +3,11 @@ import {
   DRIZZLE_DATABASE,
   type PostgresJsDatabase,
 } from '@server/platform';
-import { and, eq, inArray, sql } from 'drizzle-orm';
-import { finAccount, finPeriodClose, finVoucher, finVoucherLine } from '@server/database/schema';
+import { and, eq, sql } from 'drizzle-orm';
+import { finPeriodClose, finVoucher, finVoucherLine } from '@server/database/schema';
 import { generateBizCode } from '@server/common/utils/biz-code';
+import { todayInShanghai } from '@server/common/utils/biz-date';
+import { AccountResolverService } from './account-resolver.service';
 
 export interface VoucherHookLine {
   accountCode: string;
@@ -33,7 +35,8 @@ export class VoucherHookService {
   private readonly logger = new Logger(VoucherHookService.name);
 
   constructor(
-    @Inject(DRIZZLE_DATABASE) private readonly db: PostgresJsDatabase
+    @Inject(DRIZZLE_DATABASE) private readonly db: PostgresJsDatabase,
+    private readonly accountResolver: AccountResolverService,
   ) {}
 
   async generateVoucherDraft(
@@ -50,23 +53,11 @@ export class VoucherHookService {
       const codes: string[] = Array.from(
         new Set(params.lines.map((line: VoucherHookLine) => line.accountCode))
       );
-      const accountRows = await this.db
-        .select({
-          id: finAccount.id,
-          code: finAccount.code,
-          name: finAccount.name,
-          status: finAccount.status,
-        })
-        .from(finAccount)
-        .where(inArray(finAccount.code, codes));
-      const accountByCode = new Map<string, { id: string; name: string }>();
-      for (const row of accountRows) {
-        if ((row.status ?? 'active') !== 'active') continue;
-        accountByCode.set(row.code, { id: row.id, name: row.name });
-      }
+      // A-10：把语义编码解析为可做账的末级科目（1002 → 100201、6602 → 660201 等）
+      const resolved = await this.accountResolver.resolveMany(codes);
       for (const code of codes) {
-        if (!accountByCode.has(code)) {
-          await this.markFailed(params, `科目 ${code} 不存在或非 active`);
+        if (!resolved.has(code)) {
+          await this.markFailed(params, `科目 ${code} 不存在、已停用或无可做账末级科目`);
           return 'failed';
         }
       }
@@ -127,13 +118,17 @@ export class VoucherHookService {
           })
           .returning({ id: finVoucher.id });
         await tx.insert(finVoucherLine).values(
-          params.lines.map((line: VoucherHookLine) => ({
-            voucherId: inserted[0].id,
-            accountId: accountByCode.get(line.accountCode)?.id ?? null,
-            summary: line.summary ?? params.summary,
-            debit: String(Number(line.debit ?? 0)),
-            credit: String(Number(line.credit ?? 0)),
-          }))
+          params.lines.map((line: VoucherHookLine) => {
+            const account = resolved.get(line.accountCode);
+            return {
+              voucherId: inserted[0].id,
+              accountId: account?.id ?? null,
+              accountCode: account?.code ?? null,
+              summary: line.summary ?? params.summary,
+              debit: String(Number(line.debit ?? 0)),
+              credit: String(Number(line.credit ?? 0)),
+            };
+          })
         );
       });
       await this.clearFailure(params);
@@ -149,21 +144,32 @@ export class VoucherHookService {
     }
   }
 
-  /** 主业务已成功、后续凭证或应收失败时写入补偿队列。 */
+  /**
+   * 主业务已成功、后续凭证失败时写入补偿队列。
+   * D-20：禁止空 lines 入队（重试端会直接判 dead）；无分录时只记日志，由运维按 source 补录。
+   */
   async recordCompensation(
     sourceType: string,
     sourceRef: string,
-    reason: string
+    reason: string,
+    lines?: VoucherHookLine[],
+    voucherDate?: string,
   ): Promise<void> {
+    if (!lines?.length) {
+      this.logger.error(
+        `补偿登记缺少分录，跳过入队 source=${sourceType}:${sourceRef} reason=${reason}`,
+      );
+      return;
+    }
     await this.markFailed(
       {
         sourceType,
         sourceRef,
-        voucherDate: new Date().toISOString().slice(0, 10),
+        voucherDate: (voucherDate ?? todayInShanghai()).slice(0, 10),
         summary: reason,
-        lines: [],
+        lines,
       },
-      reason
+      reason,
     );
   }
 
@@ -172,60 +178,63 @@ export class VoucherHookService {
    * 最多重试 8 次。
    */
   async retryPendingJobs(limit = 20): Promise<{ retried: number; dead: number }> {
-    const rows = await this.db.execute(sql`
-      SELECT id, source_type, source_ref, payload, attempts
-      FROM comp_voucher_job
-      WHERE status = 'failed'
-        AND (next_retry_at IS NULL OR next_retry_at <= CURRENT_TIMESTAMP)
-        AND attempts < 8
-      ORDER BY next_retry_at NULLS FIRST
-      LIMIT ${limit}
-      FOR UPDATE SKIP LOCKED
-    `);
-    const list = Array.isArray(rows)
-      ? (rows as unknown as {
-          id: string;
-          source_type: string;
-          source_ref: string;
-          payload: string | null;
-          attempts: number;
-        }[])
-      : (((rows as { rows?: {
-          id: string;
-          source_type: string;
-          source_ref: string;
-          payload: string | null;
-          attempts: number;
-        }[] }).rows) ?? []);
+    // L4：必须在事务内使用 FOR UPDATE SKIP LOCKED，否则锁在语句结束即释放
+    return this.db.transaction(async (tx) => {
+      const rows = await tx.execute(sql`
+        SELECT id, source_type, source_ref, payload, attempts
+        FROM comp_voucher_job
+        WHERE status = 'failed'
+          AND (next_retry_at IS NULL OR next_retry_at <= CURRENT_TIMESTAMP)
+          AND attempts < 8
+        ORDER BY next_retry_at NULLS FIRST
+        LIMIT ${limit}
+        FOR UPDATE SKIP LOCKED
+      `);
+      const list = Array.isArray(rows)
+        ? (rows as unknown as {
+            id: string;
+            source_type: string;
+            source_ref: string;
+            payload: string | null;
+            attempts: number;
+          }[])
+        : (((rows as { rows?: {
+            id: string;
+            source_type: string;
+            source_ref: string;
+            payload: string | null;
+            attempts: number;
+          }[] }).rows) ?? []);
 
-    let retried = 0;
-    let dead = 0;
-    for (const job of list) {
-      let params: VoucherDraftParams | null = null;
-      try {
-        params = job.payload
-          ? (JSON.parse(job.payload) as VoucherDraftParams)
-          : null;
-      } catch {
-        params = null;
+      let retried = 0;
+      let dead = 0;
+      for (const job of list) {
+        let params: VoucherDraftParams | null = null;
+        try {
+          params = job.payload
+            ? (JSON.parse(job.payload) as VoucherDraftParams)
+            : null;
+        } catch {
+          params = null;
+        }
+        if (!params?.lines?.length) {
+          await tx.execute(sql`
+            UPDATE comp_voucher_job
+            SET status = 'dead',
+                last_error = coalesce(last_error, '') || ' [无有效分录，无法重试]',
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = ${job.id}
+          `);
+          dead += 1;
+          continue;
+        }
+        const result = await this.generateVoucherDraft(params);
+        if (result === 'created') {
+          retried += 1;
+        }
       }
-      if (!params?.lines?.length) {
-        await this.db.execute(sql`
-          UPDATE comp_voucher_job
-          SET status = 'dead',
-              last_error = coalesce(last_error, '') || ' [无有效分录，无法重试]',
-              updated_at = CURRENT_TIMESTAMP
-          WHERE id = ${job.id}
-        `);
-        dead += 1;
-        continue;
-      }
-      const result = await this.generateVoucherDraft(params);
-      if (result === 'created') {
-        retried += 1;
-      }
-    }
-    return { retried, dead };
+      return { retried, dead };
+    });
   }
 
   /** 将失败记入重试队列。表不存在时只打日志。 */

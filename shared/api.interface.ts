@@ -111,6 +111,43 @@ export interface Employee {
   platformUserId: string | null;
   supplierId: string | null;
   supplierName: string | null;
+  ssCityCode?: string | null;
+  ssBase?: number | null;
+}
+
+/** 身份中心用户（前后端契约） */
+export interface IdentityUser {
+  id: string;
+  username: string;
+  displayName: string;
+  status: string;
+  email: string | null;
+  mobile: string | null;
+  roles: string[];
+  employeeId: string | null;
+  employeeName: string | null;
+  feishuBound: boolean;
+  feishuOpenId: string | null;
+  lastLoginAt: string | null;
+  createdAt: string;
+  temporaryPassword?: string;
+}
+
+/** 品牌公开配置 */
+export interface BrandConfig {
+  brandName: string;
+  logoUrl: string | null;
+  faviconUrl: string | null;
+  logoFileId: string | null;
+}
+
+/** 报价 Bitable 配置 */
+export interface QuotationBitableConfig {
+  configured: boolean;
+  appToken?: string;
+  tableId?: string;
+  fieldMap: Record<string, string>;
+  enabled?: boolean;
 }
 
 /* ========== CRM ========== */
@@ -144,6 +181,12 @@ export interface Opportunity {
   owner: string | null;
   expectedDate: string | null;
   remark: string | null;
+  /** 最终成交报价单 */
+  wonQuotationId: string | null;
+  wonQuotationCode: string | null;
+  wonQuotationTitle: string | null;
+  contractId: string | null;
+  quotationCount: number;
   createdAt: string;
 }
 
@@ -155,6 +198,27 @@ export type QuotationStatus =
   | 'approved'
   | 'converted'
   | 'void';
+
+/** 商机下多轮报价摘要（详情页历史列表） */
+export interface OpportunityQuotationSummary {
+  id: string;
+  code: string;
+  roundNo: number | null;
+  title: string;
+  quoteDate: string | null;
+  validUntil: string | null;
+  status: QuotationStatus;
+  totalAmount: number;
+  estimatedCost: number;
+  marginPct: number;
+  remark: string | null;
+  isWon: boolean;
+  createdAt: string;
+}
+
+export interface OpportunityDetail extends Opportunity {
+  quotations: OpportunityQuotationSummary[];
+}
 
 export interface QuotationItem {
   id: string;
@@ -186,6 +250,8 @@ export interface Quotation {
   customerId: string;
   customerName: string;
   opportunityId: string | null;
+  opportunityTitle: string | null;
+  roundNo: number | null;
   title: string;
   quoteDate: string | null;
   validUntil: string | null;
@@ -195,6 +261,8 @@ export interface Quotation {
   estimatedCost: number;
   marginPct: number;
   remark: string | null;
+  contractId: string | null;
+  isWon: boolean;
   items: QuotationItem[];
   createdAt: string;
 }
@@ -241,6 +309,8 @@ export interface ParsedQuotationDraft {
   quoteDate: string | null;
   validUntil: string | null;
   remark: string | null;
+  /** 整单折扣%（多维表格头字段，与行折扣区分） */
+  headerDiscountPct?: number | null;
   items: ParsedQuotationItem[];
 }
 
@@ -326,7 +396,16 @@ export interface Project {
   name: string;
   contractId: string;
   contractName: string;
+  /** 最终成交报价单 */
+  wonQuotationId: string | null;
+  wonQuotationCode: string | null;
+  wonQuotationTitle: string | null;
+  wonQuotationAmount: number | null;
+  opportunityId: string | null;
+  opportunityTitle: string | null;
   pm: string | null;
+  /** 项目经理系统用户 ID */
+  pmUserId: string | null;
   deptName: string | null;
   budget: number;
   estimatedTotalCost: number;
@@ -746,6 +825,9 @@ export interface InvoiceItem {
   supplierName: string | null;
   arId: string | null;
   arCode: string | null;
+  /** 进项勾稽应付 */
+  apId: string | null;
+  apCode: string | null;
   amount: number;
   taxRate: number;
   taxAmount: number;
@@ -975,6 +1057,10 @@ export interface UpdateOpportunityDto {
   amount?: number;
   winRate?: number;
   remark?: string;
+  owner?: string;
+  expectedDate?: string;
+  /** 选定最终成交报价单；传 null 清除 */
+  wonQuotationId?: string | null;
 }
 
 export interface CreateMilestoneDto {
@@ -1032,7 +1118,10 @@ export interface ContractChangeDto {
 export interface CreateProjectDto {
   name: string;
   contractId: string;
+  /** 关联最终成交报价单（须属于所选合同对应商机，或已转合同的报价） */
+  wonQuotationId?: string;
   pm?: string;
+  pmUserId?: string;
   deptName?: string;
   budget?: number;
   estimatedTotalCost?: number;
@@ -1046,10 +1135,12 @@ export type ProjectStatusAction = 'approve' | 'deliver' | 'accept' | 'close';
 export interface UpdateProjectDto {
   progress?: number;
   pm?: string;
+  pmUserId?: string | null;
   budget?: number;
   estimatedTotalCost?: number;
   endDate?: string;
   remark?: string;
+  wonQuotationId?: string | null;
 }
 
 export interface CreateProjectMilestoneDto {
@@ -1191,6 +1282,8 @@ export interface CreateArDto {
   dueDate?: string;
   projectId?: string;
   source?: string;
+  /** 幂等键（收入确认等）：同一 sourceRef 至多一条应收 */
+  sourceRef?: string;
   remark?: string;
   ownerUserId?: string;
 }
@@ -1300,6 +1393,8 @@ export interface CreateInvoiceDto {
   direction?: InvoiceDirection;
   supplierId?: string;
   arId?: string;
+  /** 进项发票勾稽应付单 */
+  apId?: string;
   amount: number;
   taxRate?: number;
   projectId?: string;
@@ -1526,6 +1621,8 @@ export interface CreateEmployeeDto {
   remark?: string;
   platformUserId?: string;
   supplierId?: string;
+  ssCityCode?: string;
+  ssBase?: number;
 }
 
 export interface UpdateEmployeeDto {
@@ -1539,6 +1636,8 @@ export interface UpdateEmployeeDto {
   resignDate?: string;
   platformUserId?: string | null;
   supplierId?: string | null;
+  ssCityCode?: string | null;
+  ssBase?: number | null;
 }
 
 export interface UpsertAttendanceDto {
@@ -1575,6 +1674,8 @@ export interface CreatePayrollDto {
   socialInsurance?: number;
   housingFund?: number;
   tax?: number;
+  /** 默认 true：走社保/个税引擎；false 时使用手工传入的三金/个税 */
+  useEngine?: boolean;
   remark?: string;
 }
 
@@ -2000,6 +2101,27 @@ export interface AccountItem {
   status: string;
   remark: string | null;
   createdAt: string;
+  /** A-10：上级科目编码（一级科目为 null） */
+  parentCode: string | null;
+  /** A-10：科目层级，1 为一级 */
+  level: number;
+  /** A-10：是否末级科目（只有末级可做账） */
+  isLeaf: boolean;
+  /** A-10：余额方向 */
+  direction: AccountDirection;
+  /** A-05：必填辅助核算维度编码集合 */
+  auxRequired: string[];
+}
+
+/** A-10：会计科目余额方向 */
+export type AccountDirection = 'debit' | 'credit';
+
+/** A-05：凭证行辅助核算值 */
+export interface VoucherLineAuxItem {
+  dimensionCode: string;
+  dimensionName: string | null;
+  dimensionId: string | null;
+  dimensionValue: string | null;
 }
 
 export interface VoucherLineItem {
@@ -2010,6 +2132,8 @@ export interface VoucherLineItem {
   summary: string | null;
   debit: number;
   credit: number;
+  /** A-05：该行挂的辅助核算值 */
+  aux: VoucherLineAuxItem[];
 }
 
 export interface VoucherItem {
@@ -2042,7 +2166,17 @@ export interface CreateAccountDto {
   code: string;
   name: string;
   accountType: AccountType;
+  parentCode?: string;
+  direction?: AccountDirection;
+  auxRequired?: string[];
   remark?: string;
+}
+
+/** A-05：凭证行辅助核算入参 */
+export interface VoucherLineAuxDto {
+  dimensionCode: string;
+  dimensionId?: string;
+  dimensionValue?: string;
 }
 
 export interface CreateVoucherLineDto {
@@ -2050,6 +2184,8 @@ export interface CreateVoucherLineDto {
   summary?: string;
   debit?: number;
   credit?: number;
+  /** A-05：科目要求挂的辅助核算维度值 */
+  auxDimensions?: VoucherLineAuxDto[];
 }
 
 export interface CreateVoucherDto {
@@ -2240,6 +2376,9 @@ export interface Attachment {
   fileUrl: string;
   fileSize: number;
   sourceType: AttachmentSourceType;
+  feishuToken?: string | null;
+  feishuDocType?: string | null;
+  feishuUrl?: string | null;
   uploadedBy: string | null;
   createdAt: string;
   /** 当前用户是否可删除（上传人本人） */
@@ -2253,6 +2392,19 @@ export interface CreateAttachmentDto {
   fileUrl: string;
   fileSize?: number;
   sourceType?: AttachmentSourceType;
+  feishuToken?: string;
+  feishuDocType?: string;
+  feishuUrl?: string;
+}
+
+/** 飞书云文档链接解析结果（可扩展 docType） */
+export interface ParsedFeishuDocLink {
+  title: string;
+  docType: string;
+  token: string;
+  url: string;
+  /** 元数据拉取失败时的提示，仍可登记 */
+  warning?: string;
 }
 
 /* ========== 飞书多维表格同步 ========== */
@@ -2800,4 +2952,1136 @@ export interface TaxDistributionItem {
   taxEntityName: string;
   amount: number;
   taxAmount: number;
+}
+
+
+/* ========== 批次一 A 线：会计账簿与法定报表 ========== */
+
+export type BalanceSide = 'debit' | 'credit' | 'flat';
+
+/** A-03：账簿查询通用参数 */
+export interface LedgerQueryParams {
+  period: string;
+  /** 科目层级上限，缺省全部 */
+  level?: number;
+  taxEntityId?: string;
+}
+
+export interface AccountBalanceRow {
+  accountCode: string;
+  accountName: string;
+  level: number;
+  isLeaf: boolean;
+  direction: AccountDirection;
+  accountType: string;
+  openingDebit: number;
+  openingCredit: number;
+  debitOccur: number;
+  creditOccur: number;
+  closingDebit: number;
+  closingCredit: number;
+  /** 期末净额（借 − 贷） */
+  closingNet: number;
+  closingSide: BalanceSide;
+}
+
+export interface AccountBalanceSheet {
+  period: string;
+  level: number;
+  items: AccountBalanceRow[];
+  totals: {
+    openingDebit: number;
+    openingCredit: number;
+    debitOccur: number;
+    creditOccur: number;
+    closingDebit: number;
+    closingCredit: number;
+  };
+  balanced: boolean;
+}
+
+export interface AuxBalanceRow {
+  dimensionCode: string;
+  dimensionId: string | null;
+  dimensionValue: string | null;
+  accountCode: string;
+  accountName: string;
+  openingDebit: number;
+  openingCredit: number;
+  debitOccur: number;
+  creditOccur: number;
+  closingDebit: number;
+  closingCredit: number;
+  closingNet: number;
+  closingSide: BalanceSide;
+}
+
+export interface AuxBalanceSheet {
+  period: string;
+  dimensionCode: string;
+  dimensionName: string;
+  items: AuxBalanceRow[];
+  totals: {
+    debitOccur: number;
+    creditOccur: number;
+    closingDebit: number;
+    closingCredit: number;
+  };
+  balanced: boolean;
+}
+
+export interface GeneralLedgerRow {
+  accountCode: string;
+  accountName: string;
+  direction: AccountDirection;
+  accountType: string;
+  openingDebit: number;
+  openingCredit: number;
+  debitOccur: number;
+  creditOccur: number;
+  closingDebit: number;
+  closingCredit: number;
+  closingNet: number;
+  closingSide: BalanceSide;
+  childCount: number;
+}
+
+export interface GeneralLedgerSheet {
+  period: string;
+  items: GeneralLedgerRow[];
+  totals: {
+    debitOccur: number;
+    creditOccur: number;
+    closingDebit: number;
+    closingCredit: number;
+  };
+  balanced: boolean;
+}
+
+export interface DetailLedgerLine {
+  lineId: string;
+  voucherId: string;
+  voucherCode: string;
+  voucherDate: string | null;
+  summary: string | null;
+  /** 同一凭证内其他行的科目名称（对方科目） */
+  counterpartAccounts: string[];
+  debit: number;
+  credit: number;
+  /** 逐行滚动余额（借正贷负） */
+  balance: number;
+  balanceSide: BalanceSide;
+  sourceType: string | null;
+  sourceRef: string | null;
+  aux: Array<{ dimensionCode: string; dimensionValue: string | null }>;
+}
+
+export interface DetailLedgerResult {
+  period: string;
+  accountCode: string;
+  accountName: string;
+  direction: AccountDirection;
+  openingBalance: number;
+  openingDebit: number;
+  openingCredit: number;
+  closingBalance: number;
+  closingDebit: number;
+  closingCredit: number;
+  periodDebit: number;
+  periodCredit: number;
+  items: DetailLedgerLine[];
+  total: number;
+  page: number;
+  pageSize: number;
+  pageDebit: number;
+  pageCredit: number;
+}
+
+/** A-05：辅助核算维度定义 */
+export interface AuxDimensionItem {
+  id: string;
+  code: string;
+  name: string;
+  sourceType:
+    | 'department'
+    | 'project'
+    | 'customer'
+    | 'supplier'
+    | 'employee'
+    | 'custom';
+  enabled: boolean;
+  sortNo: number;
+  remark: string | null;
+}
+
+export type ReportCode = 'balance_sheet' | 'income_statement' | 'cash_flow';
+
+/** 报表行的取数明细（用于前端下钻） */
+export interface ReportRowDetail {
+  accountCode: string;
+  accountName: string;
+  amount: number;
+}
+
+export interface ReportRow {
+  rowNo: string;
+  rowName: string;
+  formula: string;
+  indent: number;
+  bold: boolean;
+  /** 本期（资产负债表为期末）金额 */
+  amount: number;
+  /** 累计金额（利润表/现金流量表本年累计；资产负债表与 amount 相同） */
+  ytdAmount: number;
+  /** 上期（资产负债表为年初）金额 */
+  previousAmount: number;
+  /** 该行取数明细（按科目展开） */
+  details: ReportRowDetail[];
+}
+
+export interface ReportCheck {
+  code: string;
+  label: string;
+  left: number;
+  right: number;
+  difference: number;
+  passed: boolean;
+}
+
+export interface ReportSheet {
+  reportCode: ReportCode;
+  reportName: string;
+  period: string;
+  taxEntityId: string | null;
+  taxEntityName: string | null;
+  rows: ReportRow[];
+  checks: ReportCheck[];
+  balanced: boolean;
+  generatedAt: string;
+}
+
+export interface BalanceSheetResult extends ReportSheet {
+  reportCode: 'balance_sheet';
+  assetsTotal: number;
+  liabilitiesTotal: number;
+  equityTotal: number;
+}
+
+export interface IncomeStatementResult extends ReportSheet {
+  reportCode: 'income_statement';
+  revenueTotal: number;
+  costTotal: number;
+  operatingProfit: number;
+  netProfit: number;
+}
+
+export interface CashFlowResult extends ReportSheet {
+  reportCode: 'cash_flow';
+  operatingNet: number;
+  investingNet: number;
+  financingNet: number;
+  netIncrease: number;
+  openingCash: number;
+  closingCash: number;
+  /** 与资产负债表货币资金核对差异 */
+  cashDifference: number;
+}
+
+export interface ReportQueryParams {
+  period: string;
+  taxEntityId?: string;
+  /** 利润表/现金流量表：是否输出累计列 */
+  ytd?: boolean;
+}
+
+/** A-04：期末结转损益与年结 */
+export interface PeriodCarryForwardPreview {
+  period: string;
+  taxEntityId: string | null;
+  items: Array<{
+    accountCode: string;
+    accountName: string;
+    accountType: string;
+    debitOccur: number;
+    creditOccur: number;
+    carryAmount: number;
+    carryDirection: 'debit' | 'credit';
+  }>;
+  totalRevenue: number;
+  totalExpense: number;
+  netProfit: number;
+  checks: Array<{
+    code: string;
+    label: string;
+    passed: boolean;
+    message: string;
+  }>;
+  canCarry: boolean;
+  alreadyCarried: boolean;
+}
+
+export interface YearEndStatusItem {
+  fiscalYear: number;
+  period: string;
+  taxEntityId: string | null;
+  status: 'closed' | 'open';
+  profitAmount: number;
+  carryVoucherId: string | null;
+  carryVoucherCode: string | null;
+  closedAt: string | null;
+  closedBy: string | null;
+  reopenedAt: string | null;
+  reopenedBy: string | null;
+}
+
+export interface YearEndCloseResult {
+  fiscalYear: number;
+  period: string;
+  taxEntityId: string | null;
+  status: 'closed' | 'open';
+  profitAmount: number;
+  carryVoucherId: string | null;
+  carryVoucherCode: string | null;
+  message: string;
+}
+
+/** A-06：增值税申报底稿 */
+export interface VatDeclarationLine {
+  rowNo: string;
+  rowName: string;
+  category: 'output' | 'input' | 'transfer' | 'credit' | 'payable';
+  amount: number;
+  ledgerAmount: number;
+  difference: number;
+  explained: boolean;
+}
+
+export interface VatDeclarationResult {
+  period: string;
+  taxEntityId: string | null;
+  taxEntityName: string | null;
+  status: 'draft' | 'confirmed';
+  lines: VatDeclarationLine[];
+  outputTaxFromInvoices: number;
+  inputTaxFromInvoices: number;
+  outputTaxFromLedger: number;
+  inputTaxFromLedger: number;
+  previousCredit: number;
+  payableTax: number;
+  closingCredit: number;
+  reconciled: boolean;
+  differences: Array<{
+    code: string;
+    label: string;
+    amount: number;
+    reason: string | null;
+  }>;
+  generatedAt: string;
+  generatedBy: string | null;
+}
+
+export interface ConfirmVatDeclarationDto {
+  period: string;
+  taxEntityId?: string;
+  differenceReason?: string;
+}
+
+/** A-07：个税累计预扣预缴 */
+export type TaxDeductionType =
+  | 'child_education'
+  | 'continuing_education'
+  | 'medical'
+  | 'housing_loan'
+  | 'housing_rent'
+  | 'elderly_support'
+  | 'infant_care';
+
+export interface EmployeeTaxDeductionItem {
+  id: string;
+  employeeId: string;
+  employeeName: string | null;
+  taxYear: number;
+  deductionType: TaxDeductionType;
+  monthlyAmount: number;
+  startMonth: number;
+  endMonth: number | null;
+  remark: string | null;
+}
+
+export interface UpsertTaxDeductionDto {
+  employeeId: string;
+  taxYear: number;
+  deductionType: TaxDeductionType;
+  monthlyAmount: number;
+  startMonth?: number;
+  endMonth?: number | null;
+  remark?: string;
+}
+
+export interface PayrollTaxPreview {
+  employeeId: string;
+  period: string;
+  monthIndex: number;
+  ytdIncome: number;
+  ytdTaxFreeIncome: number;
+  ytdBasicDeduction: number;
+  ytdSpecialDeduction: number;
+  ytdAdditionalDeduction: number;
+  ytdOtherDeduction: number;
+  taxableIncome: number;
+  taxRate: number;
+  quickDeduction: number;
+  ytdTaxPayable: number;
+  ytdTaxWithheld: number;
+  currentTax: number;
+  netSalary: number;
+}
+
+/* ========== 批次二 C 线：银行账户/流水、银企对账、异步导出、待办中心 ========== */
+
+/** C-02：银行流水借贷方向（income=收款入账，expense=付款出账） */
+export type BankStatementDirection = 'income' | 'expense';
+/** C-02：流水匹配状态 */
+export type BankStatementMatchStatus = 'unmatched' | 'matched' | 'manual' | 'ignored';
+/** C-02：匹配到的对方单据类型 */
+export type BankMatchBizType = 'receipt' | 'payment' | 'voucher';
+
+export interface BankAccountItem {
+  id: string;
+  code: string;
+  name: string;
+  accountNo: string;
+  bankName: string;
+  branchName: string | null;
+  currency: string;
+  /** 关联会计科目编码（通常为 1002 银行存款，可细化到末级明细科目） */
+  accountCode: string | null;
+  accountName: string | null;
+  /** 手工维护的期初余额（对账用，来自银行对账单口径） */
+  openingBalance: number;
+  isDefault: boolean;
+  status: string;
+  contactPerson: string | null;
+  contactPhone: string | null;
+  remark: string | null;
+  createdAt: string;
+}
+
+export interface CreateBankAccountDto {
+  name: string;
+  accountNo: string;
+  bankName: string;
+  branchName?: string;
+  currency?: string;
+  accountCode?: string;
+  openingBalance?: number;
+  isDefault?: boolean;
+  status?: string;
+  contactPerson?: string;
+  contactPhone?: string;
+  remark?: string;
+}
+
+export interface UpdateBankAccountDto {
+  name?: string;
+  accountNo?: string;
+  bankName?: string;
+  branchName?: string;
+  currency?: string;
+  accountCode?: string;
+  openingBalance?: number;
+  isDefault?: boolean;
+  status?: string;
+  contactPerson?: string;
+  contactPhone?: string;
+  remark?: string;
+}
+
+export interface BankStatementItem {
+  id: string;
+  bankAccountId: string;
+  bankAccountName: string | null;
+  transactionDate: string;
+  direction: BankStatementDirection;
+  amount: number;
+  balance: number | null;
+  counterpartyName: string | null;
+  counterpartyAccount: string | null;
+  summary: string | null;
+  transactionNo: string | null;
+  /** 用于去重的业务指纹（交易流水号缺失时按 账户+日期+方向+金额+摘要 生成） */
+  dedupeKey: string;
+  matchStatus: BankStatementMatchStatus;
+  bizType: BankMatchBizType | null;
+  bizId: string | null;
+  bizCode: string | null;
+  matchScore: number | null;
+  remark: string | null;
+  createdAt: string;
+}
+
+/** C-02：导入字段映射（不同银行列名不同，逐字段映射到标准列） */
+export interface BankStatementMapping {
+  transactionDate: string;
+  direction?: string;
+  /** 借贷方向为同一列时该列取值中的收入关键词（逗号分隔），缺省用内置词表 */
+  creditKeywords?: string;
+  debitKeywords?: string;
+  amount: string;
+  balance?: string;
+  counterpartyName?: string;
+  counterpartyAccount?: string;
+  summary?: string;
+  transactionNo?: string;
+  /** 是否包含表头行，默认 true */
+  hasHeader?: boolean;
+  /** 工作表名（xlsx 多 sheet 时指定） */
+  sheetName?: string;
+}
+
+export interface BankStatementImportError {
+  row: number;
+  reason: string;
+}
+
+export interface BankStatementImportResult {
+  bankAccountId: string;
+  totalRows: number;
+  imported: number;
+  duplicated: number;
+  invalid: number;
+  errors: BankStatementImportError[];
+  /** 导入后触发的自动匹配结果 */
+  match: BankStatementMatchStat;
+}
+
+export interface BankStatementMatchStat {
+  bankAccountId: string | null;
+  period: string | null;
+  total: number;
+  matched: number;
+  unmatched: number;
+  ignored: number;
+  /** 匹配率 = matched / (total - ignored)，分母为 0 时为 0 */
+  matchRate: number;
+}
+
+export interface AutoMatchResult {
+  scanned: number;
+  matched: number;
+  details: Array<{
+    statementId: string;
+    bizType: BankMatchBizType;
+    bizId: string;
+    bizCode: string;
+    score: number;
+  }>;
+}
+
+export interface ManualMatchBankStatementDto {
+  bizType: BankMatchBizType;
+  bizId: string;
+  remark?: string;
+}
+
+export interface UnmatchBankStatementDto {
+  remark?: string;
+}
+
+/** C-02：可复用的导入字段映射模板（不同银行格式不同） */
+export interface BankImportMappingItem {
+  id: string;
+  name: string;
+  bankName: string | null;
+  mapping: BankStatementMapping;
+  remark: string | null;
+  createdAt: string;
+}
+
+export interface SaveBankImportMappingDto {
+  name: string;
+  bankName?: string;
+  mapping: BankStatementMapping;
+  remark?: string;
+}
+
+export interface BankStatementListParams {
+  bankAccountId?: string;
+  period?: string;
+  matchStatus?: BankStatementMatchStatus;
+  page?: number;
+  pageSize?: number;
+}
+
+/** C-02/C-03：未达账项（可追溯到具体流水或凭证） */
+export interface BankReconciliationOutstandingItem {
+  /** bank_only=银行已入账企业未入账；book_only=企业已入账银行未入账 */
+  side: 'bank_only' | 'book_only';
+  direction: BankStatementDirection;
+  source: 'bank_statement' | 'voucher';
+  sourceId: string;
+  sourceCode: string | null;
+  tradeDate: string;
+  amount: number;
+  description: string;
+}
+
+/** C-03：恒等式断言项 */
+export interface BankReconciliationCheck {
+  key: string;
+  label: string;
+  left: number;
+  right: number;
+  difference: number;
+  passed: boolean;
+}
+
+export interface BankReconciliationReport {
+  bankAccountId: string;
+  bankAccountName: string;
+  bankAccountNo: string;
+  accountCode: string;
+  period: string;
+  currency: string;
+  /** ① 银行对账单余额 */
+  bankStatementBalance: number;
+  bankStatementBalanceSource: 'statement' | 'manual' | 'none';
+  /** ② 企业已收银行未收（银行侧未达账项，加项） */
+  enterpriseReceivedBankNotReceived: number;
+  /** ③ 企业已付银行未付（银行侧未达账项，减项） */
+  enterprisePaidBankNotPaid: number;
+  /** ④ 银行已收企业未收（企业侧未达账项，加项） */
+  bankReceivedEnterpriseNotReceived: number;
+  /** ⑤ 银行已付企业未付（企业侧未达账项，减项） */
+  bankPaidEnterpriseNotPaid: number;
+  /** 左侧：调节后银行对账单余额 = ① + ② − ③ */
+  adjustedBankBalance: number;
+  /** ⑥ 企业账面余额（会计科目期末余额） */
+  bookBalance: number;
+  /** 右侧：调节后企业账面余额 = ⑥ + ④ − ⑤ */
+  adjustedBookBalance: number;
+  /** 未达账项明细，bank_only/book_only 可追溯到具体流水或凭证 */
+  outstandingItems: BankReconciliationOutstandingItem[];
+  checks: BankReconciliationCheck[];
+  balanced: boolean;
+  /** 未达账项条数 */
+  outstandingCount: number;
+  generatedAt: string;
+}
+
+/** C-07：异步导出任务状态 */
+export type ExportTaskStatus = 'pending' | 'running' | 'succeeded' | 'failed';
+export type ExportFileFormat = 'xlsx' | 'csv';
+
+/** 支持导出的资源类型（服务端注册表，见 export-resources.ts） */
+export type ExportResourceType =
+  | 'bank_statement'
+  | 'bank_statement_unmatched'
+  | 'bank_reconciliation'
+  | 'bank_account';
+
+export interface ExportTaskItem {
+  id: string;
+  code: string;
+  resourceType: ExportResourceType;
+  resourceLabel: string;
+  format: ExportFileFormat;
+  filterParams: Record<string, string | number | boolean | null>;
+  /** 写入文件首行的筛选条件说明（审计要求） */
+  filterSummary: string;
+  status: ExportTaskStatus;
+  fileName: string | null;
+  fileSize: number | null;
+  rowCount: number | null;
+  errorMessage: string | null;
+  requestedBy: string | null;
+  requestedByName: string | null;
+  startedAt: string | null;
+  finishedAt: string | null;
+  createdAt: string;
+  downloadUrl: string | null;
+}
+
+export interface CreateExportTaskDto {
+  resourceType: ExportResourceType;
+  format?: ExportFileFormat;
+  filterParams?: Record<string, string | number | boolean | null>;
+}
+
+export interface ExportTaskListParams {
+  status?: ExportTaskStatus;
+  resourceType?: ExportResourceType;
+  page?: number;
+  pageSize?: number;
+}
+
+/** C-08：统一待办紧急度 */
+export type TaskUrgency = 'overdue' | 'urgent' | 'normal';
+
+/** C-08：统一待办业务类型 */
+export type TaskBizType =
+  | 'quotation_approval'
+  | 'contract_approval'
+  | 'payment_approval'
+  | 'expense_approval'
+  | 'leave_approval'
+  | 'attendance_approval'
+  | 'purchase_approval'
+  | 'asset_change_approval'
+  | 'deliverable_acceptance'
+  | 'ar_overdue'
+  | 'delivery_overdue'
+  | 'budget_overrun'
+  | 'contract_expiry'
+  | 'rent_expiry'
+  | 'reconciliation_difference';
+
+export interface TaskItem {
+  bizType: TaskBizType;
+  bizId: string;
+  bizCode: string | null;
+  title: string;
+  urgency: TaskUrgency;
+  dueAt: string | null;
+  /** 前端跳转地址（点击直达详情） */
+  url: string;
+  /** 归属模块中文名，用于分组展示 */
+  moduleLabel: string;
+  /** 附加说明（金额、客户等） */
+  detail: string | null;
+}
+
+export interface TaskSummary {
+  total: number;
+  overdue: number;
+  urgent: number;
+  normal: number;
+  byType: Array<{ bizType: TaskBizType; label: string; count: number }>;
+}
+
+export interface TaskListParams {
+  bizType?: TaskBizType;
+  urgency?: TaskUrgency;
+  sortBy?: 'urgency' | 'dueAt' | 'bizType';
+  page?: number;
+  pageSize?: number;
+  /** 仅取角标数量时置 false，跳过明细裁剪 */
+  includeItems?: boolean;
+}
+
+/* ========== 批次一 A-11：凭证来源单据关联（voucher.controller 使用） ========== */
+
+/** 凭证来源单据引用（供前端「来源单据」区块跳转） */
+export interface VoucherSourceRef {
+  /** 来源类型，与 fin_voucher.source_type 一致 */
+  sourceType: VoucherSourceType;
+  /** 归一化后的业务类型，供前端选择跳转目标 */
+  bizType: string;
+  /** 业务单据主键；source_ref 只带业务编码时无法解析，此时为 null */
+  bizId: string | null;
+  /** 原始 source_ref 文本（如 `invoice:INV2026100001`） */
+  sourceRef: string | null;
+  /** 业务单据编码（如 INV2026100001、APB2026100001） */
+  bizCode: string | null;
+  /** 可读标题，如「销项发票 INV2026100001」 */
+  title: string;
+  /** 前端跳转路径；无法定位时为 null（前端应展示"未关联到具体单据"） */
+  url: string | null;
+  /** 该来源类型是否需要人工核对（例如手工凭证） */
+  manual: boolean;
+}
+
+/** A-11：凭证行备注编辑入参 */
+export interface UpdateVoucherLineDto {
+  summary?: string;
+}
+
+/* ========== 批次一 A 线补充契约：模板行 / 年结留痕 / 申报历史 / 试算平衡 ========== */
+
+/** 报表模板行（GET /api/finance/reports/templates/:reportCode） */
+export interface ReportTemplateRow {
+  reportCode: string;
+  rowNo: string;
+  rowName: string;
+  formula: string;
+  section: string;
+  indent: number;
+  bold: boolean;
+  sortNo: number;
+}
+
+/** 年结留痕记录（GET /api/finance/year-end/log） */
+export interface YearEndLogItem {
+  id: string;
+  fiscalYear: number;
+  action: string;
+  actorUserId: string | null;
+  reason: string | null;
+  createdAt: string;
+}
+
+/** 增值税申报底稿历史（GET /api/finance/tax-declaration/list） */
+export interface VatDeclarationHistoryItem {
+  period: string;
+  taxEntityId: string | null;
+  taxEntityName: string | null;
+  status: string;
+  outputTax: number;
+  inputTax: number;
+  payableTax: number;
+  closingCredit: number;
+  reconciled: boolean;
+  differenceReason: string | null;
+  generatedBy: string | null;
+  generatedAt: string | null;
+}
+
+/** 试算平衡（GET /api/finance/ledgers/trial-balance） */
+export interface TrialBalanceResult {
+  period: string;
+  totalDebit: number;
+  totalCredit: number;
+  balanced: boolean;
+}
+
+/** 财务报表/账簿查询参数（period 必填，其余可选） */
+export interface ReportQueryArgs {
+  period: string;
+  taxEntityId?: string;
+}
+
+export interface LedgerQueryArgs extends ReportQueryArgs {
+  /** 科目层级上限 1~6 */
+  level?: number;
+}
+
+export interface DetailLedgerQueryArgs {
+  accountCode: string;
+  period: string;
+  page?: number;
+  pageSize?: number;
+  taxEntityId?: string;
+  includeChildren?: boolean;
+}
+
+export interface AuxBalanceQueryArgs {
+  period: string;
+  /** 辅助维度编码，如 project / department */
+  dimension: string;
+  dimensionId?: string;
+  taxEntityId?: string;
+}
+
+export interface CarryForwardArgs {
+  period: string;
+  taxEntityId?: string;
+}
+
+export interface ReverseYearEndArgs {
+  fiscalYear: number;
+  reason: string;
+  approved: boolean;
+  taxEntityId?: string;
+}
+
+/* ========== 批次一 B-02：数据级权限（行级可见范围） ========== */
+
+/** B-02：行级可见范围 */
+export type DataScopeType = 'all' | 'dept' | 'dept_and_child' | 'self' | 'custom';
+
+/** B-02：可配置数据权限的资源类型 */
+export type DataScopeResource =
+  | 'project'
+  | 'customer'
+  | 'finance_ledger'
+  | 'employee'
+  | 'attendance';
+
+/** B-02：单条数据权限配置（GET /api/system/data-scopes） */
+export interface DataScopeConfigItem {
+  roleCode: string;
+  resourceType: DataScopeResource;
+  scope: DataScopeType;
+  /** scope=custom 时生效的显式 id 列表 */
+  customIds: string[];
+  enabled: boolean;
+  remark: string | null;
+}
+
+/** B-02：数据权限配置写入（POST /api/system/data-scopes） */
+export interface UpsertDataScopeDto {
+  roleCode: string;
+  resourceType: DataScopeResource;
+  scope: DataScopeType;
+  customIds?: string[];
+  enabled?: boolean;
+  remark?: string;
+}
+
+/* ========== 批次一 A-12 / 批次二 C-06：打印与套打（后端数据包） ========== */
+
+/** 打印抬头（取自 sys_brand_config，与 settings.service.ts 的 getBrand 同源） */
+export interface PrintHeader {
+  brandName: string;
+  /** 有 Logo 时为 /api/settings/brand/logo，否则 null */
+  logoUrl: string | null;
+  title: string;
+  subtitle: string | null;
+}
+
+/** 打印件上的签章位（会计基础工作规范要求的基本要素） */
+export interface PrintSignatureSlot {
+  /** 槽位标识：prepared / reviewed / posted / chief_accountant 等 */
+  slot: string;
+  /** 中文签章栏名称 */
+  label: string;
+  /** 预填的经办人姓名（未登录/未指定为 null，前端留空手签） */
+  signer: string | null;
+}
+
+/** 报表打印行（去掉下钻明细，便于整页排版） */
+export interface ReportPrintRow {
+  rowNo: string;
+  rowName: string;
+  indent: number;
+  bold: boolean;
+  amount: number;
+  ytdAmount: number;
+  previousAmount: number;
+}
+
+/**
+ * A-12：报表打印数据包（GET /api/finance/reports/:reportCode/print）。
+ *
+ * 纯前端打印（react-to-print + @media print）所需的全部数据一次给全，
+ * 避免前端为了排版再发 N 个请求。
+ */
+export interface ReportPrintPack {
+  reportCode: ReportCode;
+  reportName: string;
+  period: string;
+  taxEntityId: string | null;
+  taxEntityName: string | null;
+  header: PrintHeader;
+  rows: ReportPrintRow[];
+  checks: ReportCheck[];
+  balanced: boolean;
+  /**
+   * 报表合计/净额的中文大写（A-12 验收标准③）。
+   * 口径：资产负债表取「资产总计」，利润表取「净利润」，现金流量表取「现金净增加额」。
+   */
+  totalLabel: string;
+  totalAmount: number;
+  totalInWords: AmountInWords;
+  /** 签章栏（制单/审核/记账/会计主管） */
+  signatures: PrintSignatureSlot[];
+  /** 页脚说明（含打印时间、操作人） */
+  footerNote: string;
+  /** 是否可用浏览器打印为 PDF（恒 true，保留字段便于将来切换服务端渲染） */
+  clientPrint: boolean;
+  generatedAt: string;
+}
+
+/** 金额中文大写（A-12 验收标准③） */
+export interface AmountInWords {
+  /** 原始金额（元，两位小数语义） */
+  amount: number;
+  /** 人民币大写，如「壹仟贰佰叁拾肆元伍角陆分」 */
+  text: string;
+}
+
+
+/* ========== 批次一 B-03 / B-07 / B-08：系统字典、参数、编号规则、数据保留 ========== */
+
+/** 字典项（GET /api/system/dictionary） */
+export interface DictionaryItem {
+  dictType: string;
+  dictKey: string;
+  dictLabel: string;
+  extra: string | null;
+  sortNo: number;
+  enabled: boolean;
+  /** 内置项：后端拒绝删除（409），只能停用 */
+  builtin: boolean;
+  remark: string | null;
+}
+
+/** 字典项新增/更新（POST /api/system/dictionary） */
+export interface UpsertDictionaryDto {
+  dictType: string;
+  dictKey: string;
+  dictLabel: string;
+  extra?: string;
+  sortNo?: number;
+  enabled?: boolean;
+  remark?: string;
+}
+
+/** 前端下拉快照（GET /api/system/dictionary/options）：只含启用项 */
+export interface DictionaryOptionsResult {
+  dictionary: Record<
+    string,
+    Array<{ key: string; label: string; extra: string | null }>
+  >;
+  /** 税率档位数值（正式来源为字典，缺失时后端回落到 shared/tax.ts） */
+  taxRates: number[];
+}
+
+/** 系统参数（GET /api/system/params） */
+export interface SystemParamItem {
+  paramKey: string;
+  paramValue: string;
+  valueType: 'string' | 'number' | 'boolean' | 'json';
+  paramGroup: string;
+  description: string | null;
+  /** false 表示只读参数（财务口径红线），设置页禁止修改 */
+  editable: boolean;
+}
+
+/** 编号规则（GET/POST /api/system/code-rules） */
+export interface CodeRuleItem {
+  bizType: string;
+  bizName: string;
+  prefix: string;
+  datePattern: 'YYYYMM' | 'YYYY' | 'NONE';
+  seqLength: number;
+  resetPolicy: 'never' | 'yearly' | 'monthly';
+  /** 财务类单据强制为 false（审计红线） */
+  allowReuse: boolean;
+  enabled: boolean;
+  remark: string | null;
+}
+
+/** 数据保留策略（GET /api/system/retention-policies） */
+export interface RetentionPolicyItem {
+  dataType: string;
+  displayName: string;
+  retainDays: number;
+  action: 'none' | 'archive' | 'delete';
+  enabled: boolean;
+  lastRunAt: string | null;
+  lastRunCount: number | null;
+  remark: string | null;
+}
+
+/** 保留策略更新（POST /api/system/retention-policies/:dataType） */
+export interface UpdateRetentionDto {
+  retainDays?: number;
+  action?: 'none' | 'archive' | 'delete';
+  enabled?: boolean;
+  remark?: string;
+}
+
+/** 编号规则新增/更新（POST /api/system/code-rules） */
+export interface UpsertCodeRuleDto {
+  bizType: string;
+  bizName?: string;
+  prefix: string;
+  datePattern?: 'YYYYMM' | 'YYYY' | 'NONE';
+  seqLength?: number;
+  resetPolicy?: 'never' | 'yearly' | 'monthly';
+  allowReuse?: boolean;
+  enabled?: boolean;
+  remark?: string;
+}
+
+/* ========== API-1 请求体契约补充（class DTO 的 implements 来源） ========== */
+
+/**
+ * 项目里程碑更新（PATCH /api/projects/milestones/:id）。
+ *
+ * 与 UpdateProjectMilestoneDto 的区别：该接口额外允许把里程碑标记为已达成
+ * （status='reached' + actualDate）。服务层 projects.service.ts 原先就地声明为
+ * `UpdateProjectMilestoneDto & { status?: 'reached'; actualDate?: string }`。
+ */
+export interface ProjectMilestoneCloseDto extends UpdateProjectMilestoneDto {
+  status?: 'reached';
+  /** 实际达成日期（缺省取业务时区当天） */
+  actualDate?: string;
+}
+
+/* ========== 批次一 B 线：前端 API 请求参数契约（把内联类型收敛到 shared） ========== */
+
+/** 里程碑更新（PATCH /api/contracts/milestones/:id） */
+export interface UpdateMilestoneDto {
+  status?: 'reached';
+  actualDate?: string;
+  name?: string;
+  amount?: number;
+}
+
+/** 合同版本登记（POST /api/contracts/:id/changes） */
+export interface CreateContractVersionDto {
+  changeLog: string;
+  newAmount?: number;
+}
+
+/** 身份用户列表查询（GET /api/identity/users） */
+export interface ListIdentityUsersParams {
+  q?: string;
+  status?: string;
+  role?: string;
+}
+
+/** 创建身份用户（POST /api/identity/users） */
+export interface CreateIdentityUserDto {
+  username: string;
+  displayName: string;
+  password?: string;
+  employeeId?: string;
+  roles?: string[];
+}
+
+/** 项目结项/状态流转附带信息（POST /api/projects/:id/status） */
+export interface ProjectStatusCloseDto {
+  closeSummary?: string;
+  satisfaction?: number;
+  retrospective?: string;
+}
+/** 按报价单导入合同明细（POST /api/contracts/:id/items/import-quotation） */
+export interface ImportQuotationItemsDto {
+  quotationId: string;
+}
+
+/** 客户/员工启停（PATCH .../status）：状态值必须显式校验，避免任意字符串落库 */
+export interface SetEntityStatusDto {
+  status: 'active' | 'inactive';
+}
+
+/** 飞书报价表预览（POST /api/crm/quotations/feishu-bitable/preview） */
+export interface FeishuBitablePreviewDto {
+  recordIds?: string[];
+}
+
+/** 飞书报价表导入（POST /api/crm/quotations/feishu-bitable/import） */
+export interface FeishuBitableImportDto {
+  recordIds?: string[];
+  /** 导入前的默认税率（%），缺省由后端按纳税主体解析 */
+  taxRate?: number;
+  customerId?: string;
+}
+
+/** 辅助核算维度创建（POST /api/finance/ledgers/aux-dimensions） */
+export interface CreateAuxDimensionDto {
+  code: string;
+  name: string;
+  sourceType?: string;
+  remark?: string;
+}
+
+/** 辅助核算维度启停（POST /api/finance/ledgers/aux-dimensions/:code/enabled） */
+export interface ToggleAuxDimensionDto {
+  enabled: boolean;
+}
+
+/** 飞书联系人绑定（POST /api/identity/users/:id/feishu/bind-contact） */
+export interface BindFeishuContactDto {
+  openId: string;
+  unionId?: string;
+  name?: string;
+}
+
+/** 员工/客户/供应商启停入参（PATCH .../status） */
+export interface SetEntityStatusDto {
+  status: 'active' | 'inactive';
 }

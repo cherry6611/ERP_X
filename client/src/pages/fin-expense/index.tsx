@@ -1,5 +1,8 @@
-import React, { useState } from 'react';
+import React from 'react';
+import { useSearchParams } from 'react-router-dom';
 import PageShell from '@client/src/components/PageShell';
+import { Button } from '@client/src/components/ui/button';
+import { cn } from '@client/src/lib/utils';
 import BudgetPanel from './components/BudgetPanel';
 import ExpenseApplyPanel from './components/ExpenseApplyPanel';
 import ExpenseClaimPanel from './components/ExpenseClaimPanel';
@@ -10,6 +13,8 @@ const FIN_EXPENSE_TABS = [
   { key: 'claims', label: '报销单' },
 ] as const;
 
+const TAB_SET = new Set(FIN_EXPENSE_TABS.map((t) => t.key));
+
 const FIN_EXPENSE_TAB_CONTENT: Record<string, React.ReactNode> = {
   budgets: <BudgetPanel />,
   applies: <ExpenseApplyPanel />,
@@ -17,7 +22,11 @@ const FIN_EXPENSE_TAB_CONTENT: Record<string, React.ReactNode> = {
 };
 
 const FinExpensePage: React.FC = () => {
-  const [tab, setTab] = useState<string>('budgets');
+  const [params, setParams] = useSearchParams();
+  const raw = params.get('tab') ?? 'budgets';
+  const tab = TAB_SET.has(raw as (typeof FIN_EXPENSE_TABS)[number]['key'])
+    ? raw
+    : 'budgets';
 
   return (
     <PageShell
@@ -26,18 +35,30 @@ const FinExpensePage: React.FC = () => {
     >
       <div className="flex gap-2 flex-wrap" data-ai-section-type="card-list">
         {FIN_EXPENSE_TABS.map((item) => (
-          <button
+          <Button
             key={item.key}
             type="button"
-            onClick={() => setTab(item.key)}
-            className={`rounded-md px-3 py-1.5 text-sm transition-colors ${
+            variant="ghost"
+            size="sm"
+            onClick={() => {
+              setParams(
+                (prev) => {
+                  const next = new URLSearchParams(prev);
+                  if (item.key === 'budgets') next.delete('tab');
+                  else next.set('tab', item.key);
+                  return next;
+                },
+                { replace: true },
+              );
+            }}
+            className={cn(
               tab === item.key
-                ? 'bg-primary/10 text-primary font-medium'
-                : 'text-foreground/80 hover:bg-muted'
-            }`}
+                ? 'bg-primary/10 font-medium text-primary'
+                : 'text-foreground/80',
+            )}
           >
             {item.label}
-          </button>
+          </Button>
         ))}
       </div>
       <div>{FIN_EXPENSE_TAB_CONTENT[tab]}</div>

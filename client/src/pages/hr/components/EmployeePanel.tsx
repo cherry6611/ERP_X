@@ -3,7 +3,7 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { useForm } from 'react-hook-form';
 import { z } from 'zod';
 import { toast } from 'sonner';
-import { Download, Plus, Search, Upload } from 'lucide-react';
+import { Download, Plus, Upload } from 'lucide-react';
 import { Table, TableColumnsType } from 'antd';
 import { CanRole } from '@client/src/platform/auth';
 import DateField from '@client/src/components/erp/DateField';
@@ -49,6 +49,8 @@ import { UserSelect } from '@client/src/components/business-ui/user-select';
 import { UserDisplay } from '@client/src/components/business-ui/user-display';
 import { hrApi, masterDataApi } from '@client/src/api';
 import { useAsyncData } from '@client/src/hooks/useAsyncData';
+import { useListQuery } from '@client/src/hooks/useListQuery';
+import { confirmDanger } from '@client/src/utils/confirmDanger';
 import type {
   CreateEmployeeDto,
   Department,
@@ -70,6 +72,8 @@ const employeeSchema = z.object({
   phone: z.string(),
   platformUserId: z.string(),
   supplierId: z.string(),
+  ssCityCode: z.string(),
+  ssBase: z.string(),
   status: z.string().min(1, '请选择状态'),
 });
 
@@ -85,6 +89,8 @@ const EMPTY_FORM: EmployeeFormInput = {
   phone: '',
   platformUserId: '',
   supplierId: '',
+  ssCityCode: '',
+  ssBase: '',
   status: 'probation',
 };
 
@@ -227,8 +233,7 @@ function parseEmployeeRow(
 }
 
 const EmployeePanel: React.FC = () => {
-  const [keywordInput, setKeywordInput] = useState('');
-  const [keyword, setKeyword] = useState('');
+  const { q, setQ, debouncedQ, debouncing } = useListQuery();
   const [createOpen, setCreateOpen] = useState(false);
   const [editTarget, setEditTarget] = useState<Employee | null>(null);
   const [resignTarget, setResignTarget] = useState<Employee | null>(null);
@@ -239,8 +244,8 @@ const EmployeePanel: React.FC = () => {
   const [importOpen, setImportOpen] = useState(false);
 
   const { data, loading, error, reload } = useAsyncData<Employee[]>(
-    () => hrApi.listEmployees(keyword || undefined),
-    [keyword],
+    () => hrApi.listEmployees(debouncedQ || undefined),
+    [debouncedQ],
   );
   const { data: departments } = useAsyncData<Department[]>(
     () => hrApi.listDepartments(),
@@ -289,6 +294,8 @@ const EmployeePanel: React.FC = () => {
         phone: editTarget.phone ?? '',
         platformUserId: editTarget.platformUserId ?? '',
         supplierId: editTarget.supplierId ?? '',
+        ssCityCode: editTarget.ssCityCode ?? '',
+        ssBase: editTarget.ssBase != null ? String(editTarget.ssBase) : '',
         status: editTarget.status,
       });
     }
@@ -303,6 +310,8 @@ const EmployeePanel: React.FC = () => {
     phone: values.phone || undefined,
     platformUserId: values.platformUserId || undefined,
     supplierId: isVendorEmployment ? values.supplierId || undefined : undefined,
+    ssCityCode: values.ssCityCode || undefined,
+    ssBase: values.ssBase !== '' ? Number(values.ssBase) : undefined,
     status: values.status,
   });
 
@@ -315,6 +324,8 @@ const EmployeePanel: React.FC = () => {
     phone: values.phone || undefined,
     platformUserId: values.platformUserId,
     supplierId: isVendorEmployment ? values.supplierId || null : null,
+    ssCityCode: values.ssCityCode || null,
+    ssBase: values.ssBase !== '' ? Number(values.ssBase) : null,
     status: values.status,
   });
 
@@ -361,6 +372,13 @@ const EmployeePanel: React.FC = () => {
   const toggleActive = async (emp: Employee) => {
     const next: 'active' | 'inactive' =
       emp.status === 'inactive' ? 'active' : 'inactive';
+    if (next === 'inactive') {
+      const ok = await confirmDanger(
+        `确认停用员工 ${emp.name}？停用后不可用于新派工。`,
+        { title: '确认停用' },
+      );
+      if (!ok) return;
+    }
     try {
       await hrApi.setEmployeeStatus(emp.id, next);
       toast.success(
@@ -605,20 +623,14 @@ const EmployeePanel: React.FC = () => {
             id="employee-keyword"
             className="w-56"
             placeholder="姓名/编号/部门"
-            value={keywordInput}
-            onChange={(e: React.ChangeEvent<HTMLInputElement>) => setKeywordInput(e.target.value)}
-            onKeyDown={(e: React.KeyboardEvent<HTMLInputElement>) => {
-              if (e.key === 'Enter') setKeyword(keywordInput.trim());
-            }}
+            value={q}
+            onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+              setQ(e.target.value)
+            }
           />
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => setKeyword(keywordInput.trim())}
-          >
-            <Search className="h-4 w-4" />
-            搜索
-          </Button>
+          {debouncing ? (
+            <span className="text-xs text-muted-foreground">筛选中…</span>
+          ) : null}
         </div>
         <div className="flex items-center gap-2">
           <Button variant="outline" onClick={handleExport}>
@@ -758,6 +770,34 @@ const EmployeePanel: React.FC = () => {
                 />
               </div>
               {isVendorEmployment ? supplierField : null}
+              <div className="flex gap-3">
+                <FormField
+                  control={form.control}
+                  name="ssCityCode"
+                  render={({ field }) => (
+                    <FormItem className="flex-1">
+                      <FormLabel>参保城市代码</FormLabel>
+                      <FormControl>
+                        <Input placeholder="如 shanghai" {...field} />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={form.control}
+                  name="ssBase"
+                  render={({ field }) => (
+                    <FormItem className="flex-1">
+                      <FormLabel>缴费基数</FormLabel>
+                      <FormControl>
+                        <Input placeholder="可选，默认按应发" {...field} />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </div>
               <DialogFooter>
                 <Button type="submit" disabled={operating}>
                   保存
@@ -868,6 +908,34 @@ const EmployeePanel: React.FC = () => {
                 />
               </div>
               {isVendorEmployment ? supplierField : null}
+              <div className="flex gap-3">
+                <FormField
+                  control={form.control}
+                  name="ssCityCode"
+                  render={({ field }) => (
+                    <FormItem className="flex-1">
+                      <FormLabel>参保城市代码</FormLabel>
+                      <FormControl>
+                        <Input placeholder="如 shanghai" {...field} />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={form.control}
+                  name="ssBase"
+                  render={({ field }) => (
+                    <FormItem className="flex-1">
+                      <FormLabel>缴费基数</FormLabel>
+                      <FormControl>
+                        <Input placeholder="可选，默认按应发" {...field} />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </div>
               <DialogFooter>
                 <Button type="submit" disabled={operating}>
                   保存

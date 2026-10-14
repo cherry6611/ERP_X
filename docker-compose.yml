@@ -6,7 +6,8 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?请设置 POSTGRES_PASSWORD}
       POSTGRES_DB: ${POSTGRES_DB:?请设置 POSTGRES_DB}
     ports:
-      - "5432:5432"
+      # 仅本机可达，避免云主机公网暴露 Postgres
+      - "127.0.0.1:5432:5432"
     volumes:
       - erp-pg:/var/lib/postgresql/data
     healthcheck:
@@ -16,6 +17,7 @@ services:
       retries: 20
   app:
     build: .
+    restart: unless-stopped
     depends_on:
       postgres:
         condition: service_healthy
@@ -34,8 +36,18 @@ services:
       FEISHU_APP_ID: ${FEISHU_APP_ID:-}
       FEISHU_APP_SECRET: ${FEISHU_APP_SECRET:-}
       FEISHU_REDIRECT_URI: ${FEISHU_REDIRECT_URI:-}
-      FEISHU_VERIFICATION_TOKEN: ${FEISHU_VERIFICATION_TOKEN:?请设置 FEISHU_VERIFICATION_TOKEN}
+      # 本地首次 up 允许为空；生产务必在 .env 填真实 verification token
+      FEISHU_VERIFICATION_TOKEN: ${FEISHU_VERIFICATION_TOKEN:-}
       FEISHU_ENCRYPT_KEY: ${FEISHU_ENCRYPT_KEY:-}
+      FEISHU_BITABLE_APP_TOKEN: ${FEISHU_BITABLE_APP_TOKEN:-}
+      FEISHU_BITABLE_COST_TABLE: ${FEISHU_BITABLE_COST_TABLE:-}
+      FEISHU_BITABLE_CONTRACT_TABLE: ${FEISHU_BITABLE_CONTRACT_TABLE:-}
+      FEISHU_BITABLE_TIMESHEET_TABLE: ${FEISHU_BITABLE_TIMESHEET_TABLE:-}
+      FEISHU_FALLBACK_RECEIVER: ${FEISHU_FALLBACK_RECEIVER:-}
+      LLM_API_BASE: ${LLM_API_BASE:-}
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      LLM_MODEL: ${LLM_MODEL:-}
+      LOG_DIR: ${LOG_DIR:-/app/logs}
       APP_BASE_URL: ${APP_BASE_URL:-}
       ENABLE_SCHEDULER: ${ENABLE_SCHEDULER:-true}
       # A7：反代后正确识别客户端 IP，避免全局限速误伤
@@ -45,6 +57,7 @@ services:
       - "3000:3000"
     volumes:
       - erp-uploads:/app/data/uploads
+    mem_limit: 1g
     command: sh -c "node scripts/db-migrate.mjs && node dist/server/main.js"
 volumes:
   erp-pg:

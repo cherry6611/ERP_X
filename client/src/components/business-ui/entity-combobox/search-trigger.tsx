@@ -1,5 +1,6 @@
 'use client';
 
+import { useLayoutEffect, useRef, useState } from 'react';
 import { ChevronDown, ChevronUp, CircleX, X } from 'lucide-react';
 
 import { useEntityComboboxContext } from '@client/src/components/business-ui/entity-combobox/context';
@@ -73,28 +74,48 @@ export const SearchTrigger = ({
   } = useEntityComboboxContext();
 
   const selectedArray = Array.isArray(selectedValue) ? selectedValue : [];
+  const measureRef = useRef<HTMLDivElement>(null);
+  const [responsiveCount, setResponsiveCount] = useState<number | null>(null);
 
-  // 计算显示的标签
-  const getDisplayTags = () => {
-    if (!multiple) return [];
-
-    if (typeof maxTagCount === 'number') {
-      return selectedArray.slice(0, maxTagCount);
+  useLayoutEffect(() => {
+    if (maxTagCount !== 'responsive' || !multiple) {
+      setResponsiveCount(null);
+      return;
     }
+    const el = measureRef.current;
+    if (!el) return;
+    const update = () => {
+      const width = el.clientWidth;
+      // 估算：每标签约 88px，预留 +N 与清除按钮
+      const approx = Math.max(1, Math.floor((width - 72) / 88));
+      setResponsiveCount(Math.min(approx, selectedArray.length));
+    };
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [maxTagCount, multiple, selectedArray.length]);
 
-    // TODO: responsive 模式需要根据容器宽度计算
-    return selectedArray;
-  };
+  const effectiveMax =
+    typeof maxTagCount === 'number'
+      ? maxTagCount
+      : maxTagCount === 'responsive'
+        ? (responsiveCount ?? selectedArray.length)
+        : selectedArray.length;
 
-  const displayTags = getDisplayTags();
+  const displayTags =
+    multiple && (typeof maxTagCount === 'number' || maxTagCount === 'responsive')
+      ? selectedArray.slice(0, effectiveMax)
+      : multiple
+        ? selectedArray
+        : [];
   const hiddenCount =
-    multiple && typeof maxTagCount === 'number'
-      ? Math.max(0, selectedArray.length - maxTagCount)
+    multiple && (typeof maxTagCount === 'number' || maxTagCount === 'responsive')
+      ? Math.max(0, selectedArray.length - effectiveMax)
       : 0;
-
   const hiddenTags =
-    multiple && typeof maxTagCount === 'number'
-      ? selectedArray.slice(maxTagCount)
+    multiple && (typeof maxTagCount === 'number' || maxTagCount === 'responsive')
+      ? selectedArray.slice(effectiveMax)
       : [];
 
   const handleTagClose = (value: ItemValue, e: React.MouseEvent) => {
@@ -138,7 +159,7 @@ export const SearchTrigger = ({
       onFocus={disabled ? undefined : onFocus}
       onBlur={disabled ? undefined : onBlur}
     >
-      <div className="flex min-w-0 flex-1 items-center gap-1">
+      <div ref={measureRef} className="flex min-w-0 flex-1 items-center gap-1">
         {!multiple && displayValue ? (
           renderTag ? (
             renderTag(
@@ -162,13 +183,15 @@ export const SearchTrigger = ({
                 >
                   <span>{truncateText(value.name)}</span>
                   {tagClosable && (
-                    <button
+                    <Button
                       type="button"
-                      className="ml-1 rounded-sm opacity-70 ring-offset-background transition-opacity hover:opacity-100"
+                      variant="ghost"
+                      size="icon"
+                      className="ml-1 size-auto rounded-sm p-0 opacity-70 ring-offset-background transition-opacity hover:opacity-100"
                       onClick={(e) => handleTagClose(value, e)}
                     >
                       <X className={tagCloseIconVariants({ size })} />
-                    </button>
+                    </Button>
                   )}
                 </Badge>
               ),
@@ -206,13 +229,15 @@ export const SearchTrigger = ({
                         >
                           <span>{truncateText(value.name)}</span>
                           {tagClosable && (
-                            <button
+                            <Button
                               type="button"
-                              className="ml-1 rounded-sm opacity-70 ring-offset-background transition-opacity hover:opacity-100"
+                              variant="ghost"
+                              size="icon"
+                              className="ml-1 size-auto rounded-sm p-0 opacity-70 ring-offset-background transition-opacity hover:opacity-100"
                               onClick={(e) => handleTagClose(value, e)}
                             >
                               <X className={tagCloseIconVariants({ size })} />
-                            </button>
+                            </Button>
                           )}
                         </Badge>
                       ),

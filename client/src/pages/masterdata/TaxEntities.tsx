@@ -4,6 +4,7 @@ import { toast } from 'sonner';
 import { Table, TableColumnsType } from 'antd';
 import { CanRole } from '@client/src/platform/auth';
 import PageShell from '@client/src/components/PageShell';
+import { DataState } from '@client/src/components/DataState';
 import { Button } from '@client/src/components/ui/button';
 import { Input } from '@client/src/components/ui/input';
 import { Label } from '@client/src/components/ui/label';
@@ -25,6 +26,7 @@ import { masterDataApi } from '@client/src/api';
 import type { TaxEntity } from '@client/src/api/master-data';
 import { useAsyncData } from '@client/src/hooks/useAsyncData';
 import { getApiErrorMessage } from '@client/src/utils/api-error-message';
+import { confirmDanger } from '@client/src/utils/confirmDanger';
 import { ALLOWED_RATES, type TaxpayerType } from '@shared/tax';
 
 const EMPTY = {
@@ -110,6 +112,23 @@ const TaxEntitiesPage: React.FC = () => {
     });
     setFieldErrors({});
     setOpen(true);
+  };
+
+  const toggleStatus = async (row: TaxEntity) => {
+    if (row.status === 'active') {
+      const ok = await confirmDanger(
+        `确认停用纳税主体 ${row.name}？停用后不可用于新开票。`,
+        { title: '确认停用' },
+      );
+      if (!ok) return;
+    }
+    try {
+      await masterDataApi.toggleTaxEntityStatus(row.id);
+      toast.success(row.status === 'active' ? '纳税主体已停用' : '纳税主体已启用');
+      await reload();
+    } catch (err) {
+      toast.error(getApiErrorMessage(err, '状态更新失败'));
+    }
   };
 
   const save = async () => {
@@ -208,14 +227,7 @@ const TaxEntitiesPage: React.FC = () => {
             <Button
               variant="outline"
               size="sm"
-              onClick={() =>
-                masterDataApi
-                  .toggleTaxEntityStatus(row.id)
-                  .then(() => reload())
-                  .catch((err: unknown) =>
-                    toast.error(getApiErrorMessage(err, '状态更新失败'))
-                  )
-              }
+              onClick={() => void toggleStatus(row)}
             >
               {row.status === 'active' ? '停用' : '启用'}
             </Button>
@@ -225,26 +237,30 @@ const TaxEntitiesPage: React.FC = () => {
     },
   ];
 
+  const list = data ?? [];
+
   return (
     <PageShell title="纳税主体" description="维护开票主体。主体由人工创建，系统不预置。">
-      {error ? (
-        <p className="text-sm text-destructive">
-          {typeof error === 'string' ? error : '加载失败'}
-        </p>
-      ) : null}
       <div className="flex justify-end">
         <CanRole roles={['admin']}>
           <Button onClick={openCreate}>新建主体</Button>
         </CanRole>
       </div>
-      <Table
-        rowKey="id"
+      <DataState
         loading={loading}
-        columns={columns}
-        dataSource={data ?? []}
-        pagination={false}
-        locale={{ emptyText: '还没有纳税主体。请先创建后再提交合同审批或开票。' }}
-      />
+        error={error}
+        empty={!loading && !error && list.length === 0}
+        emptyText="还没有纳税主体。请先创建后再提交合同审批或开票。"
+        onRetry={() => void reload()}
+        skeleton="table"
+      >
+        <Table
+          rowKey="id"
+          columns={columns}
+          dataSource={list}
+          pagination={false}
+        />
+      </DataState>
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="max-w-lg">
           <DialogHeader>

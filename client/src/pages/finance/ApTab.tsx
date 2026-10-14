@@ -8,6 +8,7 @@ import { Table, TableColumnsType } from 'antd';
 import { CanRole } from '@client/src/platform/auth';
 import DateField from '@client/src/components/erp/DateField';
 import { DataState } from '@client/src/components/DataState';
+import { SectionTitle } from '@client/src/components/SectionTitle';
 import StatusBadge from '@client/src/components/erp/StatusBadge';
 import { Button } from '@client/src/components/ui/button';
 import {
@@ -498,7 +499,7 @@ const ApTab: React.FC = () => {
         skeleton="table"
       >
         <div className="flex flex-col gap-3">
-          <h3 className="text-base font-semibold">应付账款</h3>
+          <SectionTitle>应付账款</SectionTitle>
           <Table
             columns={apColumns}
             dataSource={aps ?? []}
@@ -512,7 +513,7 @@ const ApTab: React.FC = () => {
           />
         </div>
         <div className="flex flex-col gap-3">
-          <h3 className="text-base font-semibold">付款记录</h3>
+          <SectionTitle>付款记录</SectionTitle>
           <Table
             columns={paymentColumns}
             dataSource={payments ?? []}

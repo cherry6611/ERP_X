@@ -22,6 +22,7 @@ import { generateBizCode } from '@server/common/utils/biz-code';
 import { inputIssueLines } from '@server/common/tax/posting';
 import { TaxResolverService } from '@server/modules/tax/tax-resolver.service';
 import { VoucherHookService } from '@server/modules/voucher/voucher-hook.service';
+import { todayInShanghai } from '@server/common/utils/biz-date';
 import type {
   GenerateVendorSettlementDto,
   GenerateVendorSettlementResult,
@@ -152,29 +153,41 @@ export class VendorSettlementService {
       if (existing.length > 0) {
         throw new ConflictException('该期间结算单已生成，请勿重复生成');
       }
-      const rows = await tx
-        .insert(erpApBill)
-        .values({
-          code,
-          supplierId: dto.supplierId,
-          projectId: dto.projectId ?? null,
-          amount: String(computation.totalAmount),
-          paidAmount: '0',
-          dueDate: dto.dueDate,
-          status: 'pending',
-          source: 'vendor_settlement',
-          sourceRef: computation.sourceRef,
-          remark: `外协结算 ${dto.period}`,
-        })
-        .returning({
-          id: erpApBill.id,
-          code: erpApBill.code,
-          amount: erpApBill.amount,
-        });
-      if (rows.length === 0) {
-        throw new BadRequestException('应付单生成失败');
+      try {
+        const rows = await tx
+          .insert(erpApBill)
+          .values({
+            code,
+            supplierId: dto.supplierId,
+            projectId: dto.projectId ?? null,
+            amount: String(computation.totalAmount),
+            paidAmount: '0',
+            dueDate: dto.dueDate,
+            status: 'pending',
+            source: 'vendor_settlement',
+            sourceRef: computation.sourceRef,
+            remark: `外协结算 ${dto.period}`,
+          })
+          .returning({
+            id: erpApBill.id,
+            code: erpApBill.code,
+            amount: erpApBill.amount,
+          });
+        if (rows.length === 0) {
+          throw new BadRequestException('应付单生成失败');
+        }
+        return rows[0];
+      } catch (error) {
+        // F4X-10：uq_erp_ap_bill_source_ref 并发插入时兜底
+        const pgCode =
+          error && typeof error === 'object' && 'code' in error
+            ? String((error as { code: unknown }).code)
+            : '';
+        if (pgCode === '23505') {
+          throw new ConflictException('该期间结算单已生成，请勿重复生成');
+        }
+        throw error;
       }
-      return rows[0];
     });
 
     // A3：外协结算补进项凭证
@@ -187,7 +200,7 @@ export class VendorSettlementService {
       await this.voucherHookService.generateVoucherDraft({
         sourceType: 'ap',
         sourceRef: `ap:${inserted.code}`,
-        voucherDate: dto.dueDate ?? new Date().toISOString().slice(0, 10),
+        voucherDate: dto.dueDate ?? todayInShanghai(),
         summary: `外协结算 ${dto.period} ${inserted.code}`,
         lines: inputIssueLines(amount, resolved.rate),
       });

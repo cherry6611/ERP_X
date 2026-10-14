@@ -17,9 +17,12 @@ import { ProjectsModule } from './modules/projects/projects.module';
 import { CostsModule } from './modules/costs/costs.module';
 import { RevenuesModule } from './modules/revenues/revenues.module';
 import { FinanceModule } from './modules/finance/finance.module';
+import { FinanceReportsModule } from './modules/finance-reports/finance-reports.module';
 import { BiModule } from './modules/bi/bi.module';
 import { AuditModule } from './modules/audit/audit.module';
 import { HrModule } from './modules/hr/hr.module';
+import { IdentityModule } from './modules/identity/identity.module';
+import { SettingsModule } from './modules/settings/settings.module';
 import { FinBudgetModule } from './modules/fin-budget/fin-budget.module';
 import { FinExpenseModule } from './modules/fin-expense/fin-expense.module';
 import { PurModule } from './modules/pur/pur.module';
@@ -34,6 +37,8 @@ import { FeishuCollabModule } from './modules/feishu-collab/feishu-collab.module
 import { AdminModule } from './modules/admin/admin.module';
 import { AutomationConfigModule } from './modules/admin/automation-config.module';
 import { SemanticModule } from './modules/semantic/semantic.module';
+import { SystemConfigModule } from './modules/system-config/system-config.module';
+import { IntegrationsModule } from './modules/integrations/integrations.module';
 
 @Module({
   imports: [
@@ -53,9 +58,12 @@ import { SemanticModule } from './modules/semantic/semantic.module';
     CostsModule,
     RevenuesModule,
     FinanceModule,
+    FinanceReportsModule,
     BiModule,
     AuditModule,
     HrModule,
+    IdentityModule,
+    SettingsModule,
     FinBudgetModule,
     FinExpenseModule,
     PurModule,
@@ -70,6 +78,8 @@ import { SemanticModule } from './modules/semantic/semantic.module';
     AdminModule,
     AutomationConfigModule,
     SemanticModule,
+    SystemConfigModule,
+    IntegrationsModule,
     // ====== @route-section: business-modules END ======
 
     // ⚠️ @route-order: last

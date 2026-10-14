@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useForm } from 'react-hook-form';
 import { z } from 'zod';
@@ -42,12 +43,12 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from '@/components/ui/popover';
-import { AttachmentField } from '@client/src/components/attachments/AttachmentField';
 import { extractErrorMessage } from '@client/src/components/excel/excel-utils';
 import { contractsApi, financeApi, masterDataApi } from '@client/src/api';
 import { useAsyncData } from '@client/src/hooks/useAsyncData';
-import { formatMoney, formatPercent } from '@client/src/utils/format';
+import { formatMoney } from '@client/src/utils/format';
 import { STATUS_VARIANTS } from '@client/src/utils/biz-labels';
+import { confirmDanger } from '@client/src/utils/confirmDanger';
 import { getApiErrorMessage } from '@client/src/utils/api-error-message';
 import {
   coerceTaxRate,
@@ -138,14 +139,12 @@ const FORM_DEFAULTS: InvoiceFormInput = {
 };
 
 const InvoicesTab: React.FC = () => {
+  const navigate = useNavigate();
   const [createOpen, setCreateOpen] = useState(false);
   const [directionFilter, setDirectionFilter] = useState<DirectionFilter>('all');
   const [linkTarget, setLinkTarget] = useState<InvoiceItem | null>(null);
   const [linkArId, setLinkArId] = useState('');
   const [linking, setLinking] = useState(false);
-  const [detailTarget, setDetailTarget] = useState<InvoiceItem | null>(null);
-  const [voidTarget, setVoidTarget] = useState<InvoiceItem | null>(null);
-  const [voiding, setVoiding] = useState(false);
 
   const { data, loading, error, reload } = useAsyncData<InvoiceItem[]>(
     () =>
@@ -215,18 +214,18 @@ const InvoicesTab: React.FC = () => {
     }
   });
 
-  const handleVoid = async () => {
-    if (!voidTarget) return;
-    setVoiding(true);
+  const handleVoid = async (invoice: InvoiceItem) => {
+    const ok = await confirmDanger(
+      `确认作废发票 ${invoice.code}（${invoice.invoiceNo ?? '系统编号'}）？作废后不可恢复`,
+      { title: '作废发票', confirmLabel: '确认作废' },
+    );
+    if (!ok) return;
     try {
-      await financeApi.voidInvoice(voidTarget.id);
+      await financeApi.voidInvoice(invoice.id);
       toast.success('发票已作废');
-      setVoidTarget(null);
       await reload();
     } catch (err) {
       toast.error(extractErrorMessage(err, '发票作废失败'));
-    } finally {
-      setVoiding(false);
     }
   };
 
@@ -281,34 +280,6 @@ const InvoicesTab: React.FC = () => {
     link.click();
     URL.revokeObjectURL(url);
   };
-
-  const detailRows: { label: string; value: string }[] = detailTarget
-    ? [
-        { label: '申请编号', value: detailTarget.code },
-        { label: '发票号码', value: detailTarget.invoiceNo ?? '-' },
-        { label: '方向', value: DIRECTION_LABELS[detailTarget.direction] ?? detailTarget.direction },
-        {
-          label: '发票类型',
-          value: INVOICE_TYPE_LABELS[detailTarget.invoiceType] ?? detailTarget.invoiceType,
-        },
-        { label: '开票金额（含税）', value: formatMoney(detailTarget.amount) },
-        {
-          label: '价税拆分',
-          value: formatTaxSplitLine(detailTarget.amount, detailTarget.taxRate),
-        },
-        { label: '税率', value: formatPercent(detailTarget.taxRate) },
-        { label: '税额', value: formatMoney(detailTarget.taxAmount) },
-        { label: '客户', value: detailTarget.customerName ?? '-' },
-        { label: '供应商', value: detailTarget.supplierName ?? '-' },
-        { label: '合同', value: detailTarget.contractName ?? '-' },
-        { label: '项目', value: detailTarget.projectName ?? '-' },
-        { label: '关联应收', value: detailTarget.arCode ?? '-' },
-        { label: '状态', value: INVOICE_STATUS_LABELS[detailTarget.status] ?? detailTarget.status },
-        { label: '开票日期', value: detailTarget.invoiceDate ?? '-' },
-        { label: '备注', value: detailTarget.remark ?? '-' },
-        { label: '创建时间', value: detailTarget.createdAt },
-      ]
-    : [];
 
   const openLinkDialog = (record: InvoiceItem) => {
     setLinkArId(record.arId ?? '');
@@ -415,7 +386,11 @@ const InvoicesTab: React.FC = () => {
       fixed: 'right',
       render: (_: unknown, record: InvoiceItem) => (
         <div className="flex items-center gap-1">
-          <Button variant="ghost" size="sm" onClick={() => setDetailTarget(record)}>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => navigate(`/finance/invoices/${record.id}`)}
+          >
             详情
           </Button>
           {record.direction === 'sales' ? (
@@ -431,7 +406,7 @@ const InvoicesTab: React.FC = () => {
                 variant="ghost"
                 size="sm"
                 className="text-destructive"
-                onClick={() => setVoidTarget(record)}
+                onClick={() => void handleVoid(record)}
               >
                 作废
               </Button>
@@ -482,7 +457,7 @@ const InvoicesTab: React.FC = () => {
             导出 CSV
           </Button>
           <CanRole roles={['admin']}>
-            <Button onClick={() => setCreateOpen(true)}>
+            <Button onClick={() => navigate('/finance/invoices/new')}>
               <Plus className="h-4 w-4" />
               发票登记
             </Button>
@@ -513,7 +488,7 @@ const InvoicesTab: React.FC = () => {
           <DialogHeader>
             <DialogTitle>发票登记</DialogTitle>
             <DialogDescription>
-              销项发票需选择合同（客户与项目随合同带出）；进项发票需选择供应商
+              销项发票需选择合同（客户与项目随合同带出）；进项发票需选择供应商。关联应收时请先开票再回款核销，已核销完毕的应收不可再关联开票。
             </DialogDescription>
           </DialogHeader>
           <Form {...form}>
@@ -867,64 +842,6 @@ const InvoicesTab: React.FC = () => {
         </DialogContent>
       </Dialog>
 
-      <Dialog
-        open={detailTarget !== null}
-        onOpenChange={(open: boolean) => {
-          if (!open) setDetailTarget(null);
-        }}
-      >
-        <DialogContent className="max-w-2xl">
-          <DialogHeader>
-            <DialogTitle>发票详情</DialogTitle>
-            <DialogDescription>发票 {detailTarget?.code} 的台账字段与附件</DialogDescription>
-          </DialogHeader>
-          {detailTarget ? (
-            <div className="space-y-4">
-              <div className="grid grid-cols-2 gap-x-6 gap-y-2">
-                {detailRows.map((row: { label: string; value: string }) => (
-                  <div key={row.label} className="flex items-baseline gap-2 text-sm">
-                    <span className="w-28 shrink-0 text-muted-foreground">{row.label}</span>
-                    <span className="min-w-0 break-words">{row.value}</span>
-                  </div>
-                ))}
-              </div>
-              <AttachmentField
-                resourceType="erp_invoice"
-                resourceId={detailTarget.id}
-                usageHint="发票扫描件、电子发票 PDF 等"
-              />
-            </div>
-          ) : null}
-        </DialogContent>
-      </Dialog>
-
-      <Dialog
-        open={voidTarget !== null}
-        onOpenChange={(open: boolean) => {
-          if (!open) setVoidTarget(null);
-        }}
-      >
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle>作废发票</DialogTitle>
-            <DialogDescription>
-              确认作废发票 {voidTarget?.code}（{voidTarget?.invoiceNo ?? '系统编号'}）？作废后不可恢复
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button variant="outline" disabled={voiding} onClick={() => setVoidTarget(null)}>
-              取消
-            </Button>
-            <Button
-              variant="destructive"
-              disabled={voiding}
-              onClick={() => void handleVoid()}
-            >
-              {voiding ? '作废中...' : '确认作废'}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </div>
   );
 };

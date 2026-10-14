@@ -1,0 +1,597 @@
+import {
+  BadRequestException,
+  ConflictException,
+  Inject,
+  Injectable,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
+import {
+  DRIZZLE_DATABASE,
+  type PostgresJsDatabase,
+} from '@server/platform';
+import { and, asc, desc, eq, inArray, ne, sql } from 'drizzle-orm';
+import {
+  finAccount,
+  finPeriodClose,
+  finVoucher,
+  finVoucherLine,
+  finYearEndClose,
+  finYearEndLog,
+  mdTaxEntity,
+} from '@server/database/schema';
+import {
+  ACCOUNT_CURRENT_YEAR_PROFIT,
+} from '@server/common/tax/account-codes';
+import { generateBizCode } from '@server/common/utils/biz-code';
+import { unwrapRows } from '@server/common/utils/rows';
+import { LedgersService } from './ledgers.service';
+import type {
+  PeriodCarryForwardPreview,
+  YearEndCloseResult,
+  YearEndStatusItem,
+} from '@shared/api.interface';
+
+const PERIOD_PATTERN = /^\d{4}-(0[1-9]|1[0-2])$/;
+/** 损益类科目类型（用于结转损益） */
+const PROFIT_LOSS_TYPES = ['income', 'revenue', 'expense', 'cost'];
+
+function round2(value: number): number {
+  return Math.round(value * 100) / 100;
+}
+
+const NULL_ENTITY = '00000000-0000-0000-0000-000000000000';
+
+@Injectable()
+export class YearEndService {
+  private readonly logger = new Logger(YearEndService.name);
+
+  constructor(
+    @Inject(DRIZZLE_DATABASE) private readonly db: PostgresJsDatabase,
+    private readonly ledgers: LedgersService,
+  ) {}
+
+  private assertPeriod(period: string): void {
+    if (!PERIOD_PATTERN.test(period)) {
+      throw new BadRequestException('期间格式必须为 YYYY-MM');
+    }
+  }
+
+  private yearOf(period: string): number {
+    return Number(period.slice(0, 4));
+  }
+
+  /** A-04 ①②：结转损益预览（含前置校验清单） */
+  async previewCarryForward(params: {
+    period: string;
+    taxEntityId?: string;
+  }): Promise<PeriodCarryForwardPreview> {
+    this.assertPeriod(params.period);
+    const fiscalYear = this.yearOf(params.period);
+    const [accounts, closedRows, draftRows, trial] = await Promise.all([
+      this.profitLossBalances(params.period),
+      this.db
+        .select({ id: finYearEndClose.id })
+        .from(finYearEndClose)
+        .where(
+          and(
+            eq(finYearEndClose.fiscalYear, fiscalYear),
+            this.entityCondition(params.taxEntityId)
+          )
+        )
+        .limit(1),
+      this.db
+        .select({ total: sql<number>`count(*)::int` })
+        .from(finVoucher)
+        .where(
+          and(
+            eq(finVoucher.status, 'draft'),
+            sql`${finVoucher.period} like ${`${fiscalYear}-%`}`
+          )
+        ),
+      this.ledgers.trialBalance(params.period),
+    ]);
+
+    // 损益类科目本期发生额结转：收入类贷方余额转出（借收入），费用类借方余额转出（贷费用）
+    const items: PeriodCarryForwardPreview['items'] = [];
+    let totalRevenue = 0;
+    let totalExpense = 0;
+    for (const account of accounts) {
+      const net = round2(account.debitOccur - account.creditOccur);
+      if (net === 0) continue;
+      const isRevenue =
+        account.accountType === 'income' || account.accountType === 'revenue';
+      if (isRevenue) {
+        totalRevenue = round2(totalRevenue + Math.abs(net));
+      } else {
+        totalExpense = round2(totalExpense + Math.abs(net));
+      }
+      items.push({
+        accountCode: account.code,
+        accountName: account.name,
+        accountType: account.accountType,
+        debitOccur: account.debitOccur,
+        creditOccur: account.creditOccur,
+        carryAmount: Math.abs(net),
+        // 收入类有贷方余额 → 结转到本年利润时借记收入；费用类有借方余额 → 贷记费用
+        carryDirection: net > 0 ? 'credit' : 'debit',
+      });
+    }
+    const netProfit = round2(totalRevenue - totalExpense);
+
+    const draftCount = Number(draftRows[0]?.total ?? 0);
+    const checks: PeriodCarryForwardPreview['checks'] = [
+      {
+        code: 'no_draft_voucher',
+        label: '本年度不存在未过账（草稿）凭证',
+        passed: draftCount === 0,
+        message:
+          draftCount === 0
+            ? '通过'
+            : `存在 ${draftCount} 张草稿凭证，请先过账或作废后再结转`,
+      },
+      {
+        code: 'trial_balanced',
+        label: `期间 ${params.period} 试算平衡`,
+        passed: trial.balanced,
+        message: trial.balanced
+          ? '通过'
+          : `借方合计 ${trial.totalDebit}，贷方合计 ${trial.totalCredit}，不相等`,
+      },
+      {
+        code: 'not_closed',
+        label: '本年度尚未年结',
+        passed: closedRows.length === 0,
+        message: closedRows.length === 0 ? '通过' : '本年度已年结，如需重做请先反年结',
+      },
+      {
+        code: 'has_profit_loss',
+        label: '存在待结转的损益类科目',
+        passed: items.length > 0,
+        message: items.length > 0 ? `共 ${items.length} 个科目` : '本年度无损益发生额',
+      },
+    ];
+    const canCarry =
+      closedRows.length === 0 && draftCount === 0 && items.length > 0;
+
+    return {
+      period: params.period,
+      taxEntityId: params.taxEntityId ?? null,
+      items,
+      totalRevenue,
+      totalExpense,
+      netProfit,
+      checks,
+      canCarry,
+      alreadyCarried: closedRows.length > 0,
+    };
+  }
+
+  private entityCondition(taxEntityId?: string) {
+    return taxEntityId
+      ? eq(finYearEndClose.taxEntityId, taxEntityId)
+      : sql`${finYearEndClose.taxEntityId} IS NULL`;
+  }
+
+  /** 本年度损益类科目的借方/贷方发生额（从 1 月累计到 12 月） */
+  private async profitLossBalances(period: string): Promise<
+    Array<{
+      code: string;
+      name: string;
+      accountType: string;
+      debitOccur: number;
+      creditOccur: number;
+    }>
+  > {
+    const year = period.slice(0, 4);
+    const rows = await this.db.execute(sql`
+      SELECT l.account_code AS code,
+             coalesce(max(a.name), '') AS name,
+             coalesce(max(a.account_type), 'expense') AS account_type,
+             coalesce(sum(l.debit), 0) AS debit_occur,
+             coalesce(sum(l.credit), 0) AS credit_occur
+      FROM fin_voucher_line l
+      JOIN fin_voucher v ON v.id = l.voucher_id
+      LEFT JOIN fin_account a ON a.id = l.account_id
+      WHERE v.status <> 'voided'
+        AND v.period LIKE ${`${year}-%`}
+        AND l.account_code IS NOT NULL
+        AND l.account_code NOT LIKE '4103%'
+        AND coalesce(a.account_type, 'expense') = ANY(${sql.raw(
+          `ARRAY[${PROFIT_LOSS_TYPES.map((type) => `'${type}'`).join(',')}]`
+        )}::varchar[])
+      GROUP BY l.account_code
+      HAVING coalesce(sum(l.debit), 0) <> coalesce(sum(l.credit), 0)
+      ORDER BY l.account_code
+    `);
+    const list = unwrapRows<{
+      code: string;
+      name: string;
+      account_type: string;
+      debit_occur: string | number;
+      credit_occur: string | number;
+    }>(rows);
+    return list.map((row) => ({
+      code: row.code,
+      name: row.name,
+      accountType: row.account_type,
+      debitOccur: Number(row.debit_occur ?? 0),
+      creditOccur: Number(row.credit_occur ?? 0),
+    }));
+  }
+
+  /** A-04 ①：执行结转损益（生成结转凭证） */
+  async carryForward(params: {
+    period: string;
+    taxEntityId?: string;
+    userId: string;
+  }): Promise<YearEndCloseResult> {
+    this.assertPeriod(params.period);
+    const fiscalYear = this.yearOf(params.period);
+    const preview = await this.previewCarryForward({
+      period: params.period,
+      taxEntityId: params.taxEntityId,
+    });
+    if (preview.alreadyCarried) {
+      throw new ConflictException(`会计年度 ${fiscalYear} 已完成年结，不可重复结转`);
+    }
+    const failed = preview.checks.filter(
+      (check) => !check.passed && check.code !== 'not_closed' && check.code !== 'has_profit_loss'
+    );
+    if (failed.length > 0) {
+      throw new BadRequestException(
+        `结转前校验未通过：${failed.map((check) => check.message).join('；')}`
+      );
+    }
+    if (preview.items.length === 0) {
+      throw new BadRequestException('本年度无损益发生额，无需结转');
+    }
+    const profitAccount = await this.db
+      .select({ id: finAccount.id, code: finAccount.code, name: finAccount.name })
+      .from(finAccount)
+      .where(eq(finAccount.code, ACCOUNT_CURRENT_YEAR_PROFIT))
+      .limit(1);
+    if (profitAccount.length === 0) {
+      throw new NotFoundException(
+        `科目 ${ACCOUNT_CURRENT_YEAR_PROFIT} 本年利润不存在，请先执行科目表迁移`
+      );
+    }
+
+    const voucherDate = `${params.period}-31`;
+    const safeDate = this.lastDayOfMonth(params.period);
+    const lines: Array<{
+      accountId: string;
+      accountCode: string;
+      summary: string;
+      debit: string;
+      credit: string;
+    }> = [];
+    let profitDelta = 0;
+    for (const item of preview.items) {
+      const accountRow = await this.db
+        .select({ id: finAccount.id })
+        .from(finAccount)
+        .where(eq(finAccount.code, item.accountCode))
+        .limit(1);
+      if (accountRow.length === 0) continue;
+      // carryDirection 表示"结转分录用哪个方向冲平该科目"，也就是原余额的反方向
+      const isRevenue = item.accountType === 'income' || item.accountType === 'revenue';
+      const debit = isRevenue ? item.carryAmount : 0;
+      const credit = isRevenue ? 0 : item.carryAmount;
+      lines.push({
+        accountId: accountRow[0].id,
+        accountCode: item.accountCode,
+        summary: `结转损益 ${item.accountCode} ${item.accountName}`,
+        debit: String(debit),
+        credit: String(credit),
+      });
+      profitDelta += credit - debit;
+    }
+    profitDelta = round2(profitDelta);
+    if (lines.length === 0) {
+      throw new BadRequestException('待结转科目均不存在于科目表，请先补齐科目');
+    }
+    // 本年利润科目余额（贷方为盈利）
+    lines.push({
+      accountId: profitAccount[0].id,
+      accountCode: profitAccount[0].code,
+      summary: `结转本年利润 ${fiscalYear}`,
+      debit: String(profitDelta < 0 ? Math.abs(profitDelta) : 0),
+      credit: String(profitDelta > 0 ? profitDelta : 0),
+    });
+    const totalDebit = round2(
+      lines.reduce((sum, line) => sum + Number(line.debit || 0), 0)
+    );
+    const totalCredit = round2(
+      lines.reduce((sum, line) => sum + Number(line.credit || 0), 0)
+    );
+    if (totalDebit !== totalCredit) {
+      throw new BadRequestException(
+        `结转凭证借贷不平衡：借 ${totalDebit}，贷 ${totalCredit}`
+      );
+    }
+
+    const code = await generateBizCode(
+      this.db,
+      finVoucher,
+      finVoucher.code,
+      'VCH'
+    );
+    const sourceRef = `year-end:${fiscalYear}:${params.taxEntityId ?? 'ALL'}`;
+    let voucherId = '';
+    await this.db.transaction(async (tx) => {
+      const inserted = await tx
+        .insert(finVoucher)
+        .values({
+          code,
+          voucherDate: safeDate,
+          period: params.period,
+          summary: `${fiscalYear} 年度结转损益`,
+          sourceType: 'manual',
+          sourceRef,
+          status: 'posted',
+          remark: `年结自动生成，操作人 ${params.userId}`,
+        })
+        .returning({ id: finVoucher.id });
+      voucherId = inserted[0].id;
+      await tx.insert(finVoucherLine).values(
+        lines.map((line) => ({
+          voucherId,
+          accountId: line.accountId,
+          accountCode: line.accountCode,
+          summary: line.summary,
+          debit: line.debit,
+          credit: line.credit,
+        }))
+      );
+      await tx.insert(finYearEndClose).values({
+        fiscalYear,
+        period: params.period,
+        taxEntityId: params.taxEntityId ?? null,
+        status: 'closed',
+        profitAmount: String(preview.netProfit),
+        carryVoucherId: voucherId,
+        closedBy: params.userId,
+        remark: `自动生成结转凭证 ${code}`,
+      });
+      await tx.insert(finYearEndLog).values({
+        fiscalYear,
+        action: 'close',
+        actorUserId: params.userId,
+        reason: `年结结转损益，净利润 ${preview.netProfit}`,
+        snapshot: JSON.stringify({
+          code,
+          netProfit: preview.netProfit,
+          itemCount: preview.items.length,
+        }),
+      });
+    });
+
+    return {
+      fiscalYear,
+      period: params.period,
+      taxEntityId: params.taxEntityId ?? null,
+      status: 'closed',
+      profitAmount: preview.netProfit,
+      carryVoucherId: voucherId,
+      carryVoucherCode: code,
+      message: `年结完成：生成结转凭证 ${code}，本年净利润 ${preview.netProfit}`,
+    };
+  }
+
+  private lastDayOfMonth(period: string): string {
+    const [yearText, monthText] = period.split('-');
+    const year = Number(yearText);
+    const month = Number(monthText);
+    const lastDay = new Date(Date.UTC(year, month, 0)).getUTCDate();
+    return `${yearText}-${monthText}-${String(lastDay).padStart(2, '0')}`;
+  }
+
+  /** A-04 ④：反年结（需审批留痕；红冲结转凭证） */
+  async reverseYearEnd(params: {
+    fiscalYear: number;
+    taxEntityId?: string;
+    userId: string;
+    reason: string;
+    approved: boolean;
+  }): Promise<YearEndCloseResult> {
+    if (!params.reason || params.reason.trim().length < 4) {
+      throw new BadRequestException('反年结必须填写不少于 4 个字的原因（用于留痕）');
+    }
+    if (!params.approved) {
+      throw new BadRequestException(
+        '反年结需经审批确认；请由审批人确认后携带 approved=true 重试'
+      );
+    }
+    const rows = await this.db
+      .select()
+      .from(finYearEndClose)
+      .where(
+        and(
+          eq(finYearEndClose.fiscalYear, params.fiscalYear),
+          params.taxEntityId
+            ? eq(finYearEndClose.taxEntityId, params.taxEntityId)
+            : sql`${finYearEndClose.taxEntityId} IS NULL`
+        )
+      )
+      .limit(1);
+    if (rows.length === 0) {
+      throw new NotFoundException(`会计年度 ${params.fiscalYear} 未年结`);
+    }
+    const record = rows[0];
+    if (record.status !== 'closed') {
+      throw new BadRequestException(`会计年度 ${params.fiscalYear} 当前状态为 ${record.status}，不可反年结`);
+    }
+    const voucherId = record.carryVoucherId;
+
+    await this.db.transaction(async (tx) => {
+      if (voucherId) {
+        // 作废结转凭证（若已过账则红冲：作废后余额自然回退，因为账务取数排除 voided）
+        await tx
+          .update(finVoucher)
+          .set({
+            status: 'voided',
+            remark: `反年结作废：${params.reason}`,
+            updatedAt: new Date(),
+          })
+          .where(eq(finVoucher.id, voucherId));
+      }
+      await tx
+        .update(finYearEndClose)
+        .set({
+          status: 'open',
+          reopenedAt: new Date(),
+          reopenedBy: params.userId,
+          remark: `反年结：${params.reason}`,
+        })
+        .where(eq(finYearEndClose.id, record.id));
+      await tx.insert(finYearEndLog).values({
+        fiscalYear: params.fiscalYear,
+        action: 'reopen',
+        actorUserId: params.userId,
+        reason: params.reason,
+        snapshot: JSON.stringify({ voidedVoucherId: voucherId }),
+      });
+    });
+
+    this.logger.warn(
+      `反年结 fiscalYear=${params.fiscalYear} by=${params.userId} reason=${params.reason}`
+    );
+    return {
+      fiscalYear: params.fiscalYear,
+      period: record.period,
+      taxEntityId: record.taxEntityId ?? null,
+      status: 'open',
+      profitAmount: Number(record.profitAmount ?? 0),
+      carryVoucherId: voucherId ?? null,
+      carryVoucherCode: null,
+      message: `已反年结：原结转凭证已作废，请重新核对后再次年结`,
+    };
+  }
+
+  /** 年结状态清单 */
+  async listStatus(taxEntityId?: string): Promise<YearEndStatusItem[]> {
+    const rows = await this.db
+      .select({
+        fiscalYear: finYearEndClose.fiscalYear,
+        period: finYearEndClose.period,
+        taxEntityId: finYearEndClose.taxEntityId,
+        status: finYearEndClose.status,
+        profitAmount: finYearEndClose.profitAmount,
+        carryVoucherId: finYearEndClose.carryVoucherId,
+        closedAt: finYearEndClose.closedAt,
+        closedBy: finYearEndClose.closedBy,
+        reopenedAt: finYearEndClose.reopenedAt,
+        reopenedBy: finYearEndClose.reopenedBy,
+      })
+      .from(finYearEndClose)
+      .where(taxEntityId ? eq(finYearEndClose.taxEntityId, taxEntityId) : undefined)
+      .orderBy(desc(finYearEndClose.fiscalYear));
+    const voucherIds = rows
+      .map((row) => row.carryVoucherId)
+      .filter((id): id is string => Boolean(id));
+    const codes = voucherIds.length
+      ? await this.db
+          .select({ id: finVoucher.id, code: finVoucher.code })
+          .from(finVoucher)
+          .where(inArray(finVoucher.id, voucherIds))
+      : [];
+    const codeById = new Map(codes.map((row) => [row.id, row.code]));
+    return rows.map((row) => ({
+      fiscalYear: Number(row.fiscalYear),
+      period: row.period,
+      taxEntityId: row.taxEntityId ?? null,
+      status: (row.status ?? 'closed') as 'closed' | 'open',
+      profitAmount: Number(row.profitAmount ?? 0),
+      carryVoucherId: row.carryVoucherId ?? null,
+      carryVoucherCode: row.carryVoucherId
+        ? (codeById.get(row.carryVoucherId) ?? null)
+        : null,
+      closedAt: row.closedAt ? row.closedAt.toISOString() : null,
+      closedBy: row.closedBy ?? null,
+      reopenedAt: row.reopenedAt ? row.reopenedAt.toISOString() : null,
+      reopenedBy: row.reopenedBy ?? null,
+    }));
+  }
+
+  /** 年结留痕清单（A-04 审计要求） */
+  async listLog(fiscalYear?: number): Promise<
+    Array<{
+      id: string;
+      fiscalYear: number;
+      action: string;
+      actorUserId: string | null;
+      reason: string | null;
+      createdAt: string;
+    }>
+  > {
+    const rows = await this.db
+      .select({
+        id: finYearEndLog.id,
+        fiscalYear: finYearEndLog.fiscalYear,
+        action: finYearEndLog.action,
+        actorUserId: finYearEndLog.actorUserId,
+        reason: finYearEndLog.reason,
+        createdAt: finYearEndLog.createdAt,
+      })
+      .from(finYearEndLog)
+      .where(fiscalYear ? eq(finYearEndLog.fiscalYear, fiscalYear) : undefined)
+      .orderBy(desc(finYearEndLog.createdAt))
+      .limit(200);
+    return rows.map((row) => ({
+      id: row.id,
+      fiscalYear: Number(row.fiscalYear),
+      action: row.action,
+      actorUserId: row.actorUserId ?? null,
+      reason: row.reason ?? null,
+      createdAt: row.createdAt.toISOString(),
+    }));
+  }
+
+  /**
+   * 年结后的期间只读校验：本年度已年结的期间不允许再新增/过账凭证。
+   * 由 VoucherService 与 VoucherHookService 调用。
+   */
+  async assertPeriodWritable(period: string): Promise<void> {
+    if (!PERIOD_PATTERN.test(period)) return;
+    const fiscalYear = Number(period.slice(0, 4));
+    const rows = await this.db
+      .select({ id: finYearEndClose.id })
+      .from(finYearEndClose)
+      .where(
+        and(
+          eq(finYearEndClose.fiscalYear, fiscalYear),
+          eq(finYearEndClose.status, 'closed')
+        )
+      )
+      .limit(1);
+    if (rows.length > 0) {
+      throw new BadRequestException(
+        `会计年度 ${fiscalYear} 已年结，期间 ${period} 只读；如需调整请先反年结`
+      );
+    }
+  }
+
+  /** 纳税主体名称（供前端展示） */
+  async taxEntityNames(): Promise<Array<{ id: string; name: string }>> {
+    const rows = await this.db
+      .select({ id: mdTaxEntity.id, name: mdTaxEntity.name })
+      .from(mdTaxEntity)
+      .orderBy(asc(mdTaxEntity.name));
+    return rows;
+  }
+
+  /** 期间是否已结账（供年结前置校验复用） */
+  async closedPeriods(fiscalYear: number): Promise<string[]> {
+    const rows = await this.db
+      .select({ period: finPeriodClose.period })
+      .from(finPeriodClose)
+      .where(
+        and(
+          sql`${finPeriodClose.period} like ${`${fiscalYear}-%`}`,
+          ne(finPeriodClose.period, '')
+        )
+      );
+    return rows.map((row) => row.period);
+  }
+}

@@ -68,7 +68,17 @@ for (const value of Object.values(schema)) {
   const columns = config.columns.map((column) => `  ${columnSql(column)}`).join(',\n');
   tables.push(`CREATE TABLE IF NOT EXISTS "${config.name}" (\n${columns}\n);`);
   for (const index of config.indexes) {
-    const cols = index.config.columns.map((column) => `"${column.name}"`).join(', ');
+    // drizzle 的索引列类型是 `SQL | IndexedColumn`：表达式索引（如部分唯一索引）
+    // 没有 `name` 字段，跳过即可（这类索引由 SQL 迁移显式创建，见 AGENTS.md 说明）。
+    const cols = index.config.columns
+      .map((column) =>
+        'name' in column && typeof column.name === 'string'
+          ? `"${column.name}"`
+          : null
+      )
+      .filter((name): name is string => name !== null)
+      .join(', ');
+    if (cols === '') continue;
     const unique = index.config.unique ? 'UNIQUE ' : '';
     indexes.push(`CREATE ${unique}INDEX IF NOT EXISTS "${index.config.name}" ON "${config.name}" (${cols});`);
   }

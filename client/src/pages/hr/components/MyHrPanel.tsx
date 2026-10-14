@@ -6,6 +6,7 @@ import HrStatusBadge, {
   LEAVE_TYPE_LABELS,
 } from './HrStatusBadge';
 import { DataState } from '@client/src/components/DataState';
+import { SectionTitle } from '@client/src/components/SectionTitle';
 import { hrApi } from '@client/src/api';
 import { useAsyncData } from '@client/src/hooks/useAsyncData';
 import { formatMoney } from '@client/src/utils/format';
@@ -44,7 +45,7 @@ const MyHrPanel: React.FC = () => {
         </div>
       ) : (
     <div className="flex flex-col gap-6">
-      <h3 className="text-base font-semibold">员工自助中心</h3>
+      <SectionTitle>员工自助中心</SectionTitle>
       <div className="grid grid-cols-2 gap-4">
         <section className="flex flex-col gap-3 rounded-lg border bg-card p-4">
           <h4 className="flex items-center gap-2 text-sm font-semibold">

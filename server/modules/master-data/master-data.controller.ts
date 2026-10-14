@@ -9,21 +9,30 @@ import {
   Post,
   Query,
 } from '@nestjs/common';
-import { CanRole, NeedLogin } from '@server/platform';
+import { CanCapability, NeedLogin } from '@server/platform';
+import { IsIn } from 'class-validator';
 import { MasterDataService } from './master-data.service';
-import type {
+import {
   CreateContactDto,
+  CreateCustomerDto,
   CreateSupplierDto,
+  UpdateCustomerDto,
+  UpdateSupplierDto,
+} from './master-data.dto';
+import type { SetEntityStatusDto as ISetEntityStatusDto } from '@shared/api.interface';
+import type {
   Customer,
   CustomerContact,
   CreditSummary,
   Employee,
   PagedResult,
   Supplier,
-  UpdateCustomerDto,
-  UpdateSupplierDto,
 } from '@shared/api.interface';
-import { CreateCustomerDto } from './master-data.dto';
+
+export class SetEntityStatusBodyDto implements ISetEntityStatusDto {
+  @IsIn(['active', 'inactive'], { message: '状态仅支持 active / inactive' })
+  status!: 'active' | 'inactive';
+}
 
 @NeedLogin()
 @Controller('api/master-data')
@@ -47,13 +56,13 @@ export class MasterDataController {
     return this.masterDataService.listCustomers(keyword, safePage, safePageSize);
   }
 
-  @CanRole(['admin'])
+  @CanCapability('crm_write')
   @Post('customers')
   async createCustomer(@Body() dto: CreateCustomerDto): Promise<Customer> {
     return this.masterDataService.createCustomer(dto);
   }
 
-  @CanRole(['admin'])
+  @CanCapability('crm_write')
   @Patch('customers/:id')
   async updateCustomer(
     @Param('id', ParseUUIDPipe) id: string,
@@ -62,11 +71,11 @@ export class MasterDataController {
     return this.masterDataService.updateCustomer(id, dto);
   }
 
-  @CanRole(['admin'])
+  @CanCapability('crm_write')
   @Patch('customers/:id/status')
   async setCustomerStatus(
     @Param('id', ParseUUIDPipe) id: string,
-    @Body() body: { status: 'active' | 'inactive' }
+    @Body() body: SetEntityStatusBodyDto
   ): Promise<Customer> {
     return this.masterDataService.setCustomerStatus(id, body.status);
   }
@@ -78,7 +87,7 @@ export class MasterDataController {
     return this.masterDataService.listContacts(id);
   }
 
-  @CanRole(['admin'])
+  @CanCapability('crm_write')
   @Post('customers/:id/contacts')
   async createContact(
     @Param('id', ParseUUIDPipe) id: string,
@@ -94,7 +103,7 @@ export class MasterDataController {
     return this.masterDataService.getCredit(id);
   }
 
-  @CanRole(['admin'])
+  @CanCapability('crm_write')
   @Patch('contacts/:id')
   async updateContact(
     @Param('id', ParseUUIDPipe) id: string,
@@ -103,7 +112,7 @@ export class MasterDataController {
     return this.masterDataService.updateContact(id, dto);
   }
 
-  @CanRole(['admin'])
+  @CanCapability('crm_write')
   @Delete('contacts/:id')
   async deleteContact(@Param('id', ParseUUIDPipe) id: string): Promise<void> {
     return this.masterDataService.deleteContact(id);
@@ -114,13 +123,13 @@ export class MasterDataController {
     return this.masterDataService.listSuppliers(keyword);
   }
 
-  @CanRole(['admin'])
+  @CanCapability('crm_write')
   @Post('suppliers')
   async createSupplier(@Body() dto: CreateSupplierDto): Promise<Supplier> {
     return this.masterDataService.createSupplier(dto);
   }
 
-  @CanRole(['admin'])
+  @CanCapability('crm_write')
   @Patch('suppliers/:id')
   async updateSupplier(
     @Param('id', ParseUUIDPipe) id: string,
@@ -129,11 +138,11 @@ export class MasterDataController {
     return this.masterDataService.updateSupplier(id, dto);
   }
 
-  @CanRole(['admin'])
+  @CanCapability('crm_write')
   @Patch('suppliers/:id/status')
   async setSupplierStatus(
     @Param('id', ParseUUIDPipe) id: string,
-    @Body() body: { status: 'active' | 'inactive' }
+    @Body() body: SetEntityStatusBodyDto
   ): Promise<Supplier> {
     return this.masterDataService.setSupplierStatus(id, body.status);
   }
@@ -143,3 +152,5 @@ export class MasterDataController {
     return this.masterDataService.listEmployees();
   }
 }
+
+/** 客户/供应商启停入参（class DTO：状态值白名单，避免任意字符串落库） */

@@ -9,6 +9,7 @@ import { DataState } from '@client/src/components/DataState';
 import { adminApi } from '@client/src/api';
 import { useAsyncData } from '@client/src/hooks/useAsyncData';
 import { getApiErrorMessage } from '@client/src/utils/api-error-message';
+import { confirmDanger } from '@client/src/utils/confirmDanger';
 import type { AutomationConfigItem } from '@shared/api.interface';
 
 const AdminAutomationPage: React.FC = () => {
@@ -19,6 +20,13 @@ const AdminAutomationPage: React.FC = () => {
   );
 
   const doToggle = async (item: AutomationConfigItem, next: boolean) => {
+    if (next === false) {
+      const ok = await confirmDanger(
+        `确认停用任务「${item.taskName}」？停用后到点将不再执行。`,
+        { title: '确认停用' },
+      );
+      if (!ok) return;
+    }
     setOperatingKey(item.taskKey);
     try {
       await adminApi.updateAutomationConfig(item.taskKey, next);

@@ -25,7 +25,7 @@ import PageShell from '@client/src/components/PageShell';
 import { DataState } from '@client/src/components/DataState';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@client/src/components/ui/tabs';
 import StatCard from '@client/src/components/erp/StatCard';
-import { seriesColor } from '@client/src/theme/tokens';
+import { seriesColorMap as seriesColor } from '@client/src/theme/tokens';
 import AlertsPanel from './components/AlertsPanel';
 import ProjectFinancialHealthPanel from './components/ProjectFinancialHealthPanel';
 import { biApi, financeApi, finBudgetApi, hrApi } from '@client/src/api';
@@ -454,37 +454,114 @@ const DashboardPage: React.FC = () => {
           <TabsContent value="overview" className="flex flex-col gap-6">
             <AlertsPanel />
             {coreCards.length > 0 ? (
-              <div data-ai-section-type="card-stat" className="grid grid-cols-12 gap-4">
-                {coreCards.map((card) => (
-                  <div key={card.label} className="col-span-12 md:col-span-6 xl:col-span-3">
-                    <StatCard
-                      label={card.label}
-                      value={card.value}
-                      icon={card.icon}
-                      tone={card.tone}
-                      delta={card.delta}
-                    />
-                  </div>
-                ))}
-              </div>
+              <section aria-labelledby="dash-kpi">
+                <h2 id="dash-kpi" className="mb-3 text-base font-semibold">
+                  核心指标
+                </h2>
+                <div data-ai-section-type="card-stat" className="grid grid-cols-12 gap-4">
+                  {coreCards.map((card) => (
+                    <div key={card.label} className="col-span-12 md:col-span-6 xl:col-span-3">
+                      <StatCard
+                        label={card.label}
+                        value={card.value}
+                        icon={card.icon}
+                        tone={card.tone}
+                        delta={card.delta}
+                      />
+                    </div>
+                  ))}
+                </div>
+              </section>
             ) : null}
             <div className="grid grid-cols-12 gap-4">
-              <div className="col-span-12 rounded-lg border bg-card p-4 xl:col-span-6">
-                <h2 className="mb-3 text-lg font-semibold">收入成本月度趋势</h2>
+              <div className="col-span-12 rounded-xl border bg-card p-5 shadow-card xl:col-span-8">
+                <h2 className="mb-3 text-base font-semibold">收入成本月度趋势</h2>
                 <DataState empty={trendList.length === 0} emptyText="暂无趋势数据">
-                  <ReactECharts option={trendOption} theme="ud" className="h-[300px] w-full" />
+                  <div role="img" aria-label="收入与成本月度趋势图">
+                    <ReactECharts
+                      option={trendOption}
+                      theme="ud"
+                      className="h-[300px] w-full"
+                    />
+                  </div>
                 </DataState>
               </div>
-              <div className="col-span-12 rounded-lg border bg-card p-4 xl:col-span-6">
-                <h2 className="mb-3 text-lg font-semibold">应收账龄分布</h2>
+              <div className="col-span-12 flex flex-col gap-3 rounded-xl border bg-card p-5 shadow-card xl:col-span-4">
+                <h2 className="text-base font-semibold">分域查看</h2>
+                <p className="text-sm text-muted-foreground">
+                  毛利、客户贡献与人力预算已拆到对应 Tab，首屏只保留决策核心。
+                </p>
+                <div className="flex flex-col gap-2">
+                  <a className="text-sm font-medium text-primary hover:underline" href="#finance">
+                    查看财务明细 →
+                  </a>
+                  <p className="text-xs text-muted-foreground">
+                    使用上方「财务 / 人力 / 预算」标签切换
+                  </p>
+                </div>
+              </div>
+            </div>
+          </TabsContent>
+
+          <TabsContent value="finance" className="flex flex-col gap-6">
+            <div className="grid grid-cols-12 gap-4">
+              <div className="col-span-12 rounded-xl border bg-card p-5 shadow-card xl:col-span-6">
+                <h2 className="mb-3 text-base font-semibold">收入成本月度趋势</h2>
+                <DataState empty={trendList.length === 0} emptyText="暂无趋势数据">
+                  <div role="img" aria-label="收入与成本月度趋势图">
+                    <ReactECharts
+                      option={trendOption}
+                      theme="ud"
+                      className="h-[300px] w-full"
+                    />
+                  </div>
+                </DataState>
+              </div>
+              <div className="col-span-12 rounded-xl border bg-card p-5 shadow-card xl:col-span-6">
+                <h2 className="mb-3 text-base font-semibold">应收账龄分布</h2>
                 <DataState empty={agingBuckets.length === 0} emptyText="暂无应收数据">
-                  <ReactECharts option={agingOption} theme="ud" className="h-[300px] w-full" />
+                  <div role="img" aria-label="应收账龄分布图">
+                    <ReactECharts
+                      option={agingOption}
+                      theme="ud"
+                      className="h-[300px] w-full"
+                    />
+                  </div>
+                </DataState>
+              </div>
+              <div className="col-span-12 rounded-xl border bg-card p-5 shadow-card xl:col-span-6">
+                <h2 className="mb-3 text-base font-semibold">纳税主体开票分布</h2>
+                <DataState
+                  empty={(taxDistribution ?? []).length === 0}
+                  emptyText="暂无开票分布数据"
+                >
+                  <div role="img" aria-label="纳税主体开票分布图">
+                    <ReactECharts
+                      theme="ud"
+                      className="h-[300px] w-full"
+                      option={{
+                        tooltip: { trigger: 'item' },
+                        series: [
+                          {
+                            type: 'pie',
+                            radius: ['35%', '65%'],
+                            data: (taxDistribution ?? []).map((row) => ({
+                              name: row.taxEntityName,
+                              value: row.amount,
+                            })),
+                          },
+                        ],
+                      }}
+                    />
+                  </div>
                 </DataState>
               </div>
             </div>
             {statCards.length > 4 ? (
-              <div className="flex flex-col gap-3">
-                <h2 className="text-lg font-semibold">更多指标</h2>
+              <section aria-labelledby="dash-more-kpi">
+                <h2 id="dash-more-kpi" className="mb-3 text-base font-semibold">
+                  更多财务指标
+                </h2>
                 <div className="grid grid-cols-12 gap-4">
                   {statCards.slice(4).map((card) => (
                     <div key={card.label} className="col-span-12 md:col-span-6 xl:col-span-3">
@@ -498,10 +575,10 @@ const DashboardPage: React.FC = () => {
                     </div>
                   ))}
                 </div>
-              </div>
+              </section>
             ) : null}
             <div className="flex flex-col gap-3">
-              <h2 className="text-lg font-semibold">项目毛利排行</h2>
+              <h2 className="text-base font-semibold">项目毛利排行</h2>
               <p className="text-sm text-muted-foreground">点击行展开查看项目成本构成</p>
               <Table
                 columns={marginColumns}
@@ -520,7 +597,7 @@ const DashboardPage: React.FC = () => {
             </div>
             <ProjectFinancialHealthPanel />
             <div className="flex flex-col gap-3">
-              <h2 className="text-lg font-semibold">客户贡献</h2>
+              <h2 className="text-base font-semibold">客户贡献</h2>
               <Table
                 columns={contributionColumns}
                 dataSource={contributions ?? []}
@@ -529,48 +606,6 @@ const DashboardPage: React.FC = () => {
                 pagination={false}
                 locale={{ emptyText: <DataState empty emptyText="暂无客户贡献数据" /> }}
               />
-            </div>
-          </TabsContent>
-
-          <TabsContent value="finance" className="flex flex-col gap-6">
-            <div className="grid grid-cols-12 gap-4">
-              <div className="col-span-12 rounded-lg border bg-card p-4 xl:col-span-6">
-                <h2 className="mb-3 text-lg font-semibold">收入成本月度趋势</h2>
-                <DataState empty={trendList.length === 0} emptyText="暂无趋势数据">
-                  <ReactECharts option={trendOption} theme="ud" className="h-[300px] w-full" />
-                </DataState>
-              </div>
-              <div className="col-span-12 rounded-lg border bg-card p-4 xl:col-span-6">
-                <h2 className="mb-3 text-lg font-semibold">应收账龄分布</h2>
-                <DataState empty={agingBuckets.length === 0} emptyText="暂无应收数据">
-                  <ReactECharts option={agingOption} theme="ud" className="h-[300px] w-full" />
-                </DataState>
-              </div>
-              <div className="col-span-12 rounded-lg border bg-card p-4 xl:col-span-6">
-                <h2 className="mb-3 text-lg font-semibold">纳税主体开票分布</h2>
-                <DataState
-                  empty={(taxDistribution ?? []).length === 0}
-                  emptyText="暂无开票分布数据"
-                >
-                  <ReactECharts
-                    theme="ud"
-                    className="h-[300px] w-full"
-                    option={{
-                      tooltip: { trigger: 'item' },
-                      series: [
-                        {
-                          type: 'pie',
-                          radius: ['35%', '65%'],
-                          data: (taxDistribution ?? []).map((row) => ({
-                            name: row.taxEntityName,
-                            value: row.amount,
-                          })),
-                        },
-                      ],
-                    }}
-                  />
-                </DataState>
-              </div>
             </div>
           </TabsContent>
 
@@ -623,11 +658,13 @@ const DashboardPage: React.FC = () => {
                   <div className="rounded-lg border bg-card p-4">
                     <h2 className="mb-3 text-lg font-semibold">近 12 个月在册人数趋势</h2>
                     <DataState empty={hrTrendList.length === 0} emptyText="暂无人力趋势">
-                      <ReactECharts
-                        option={hrTrendOption}
-                        theme="ud"
-                        className="h-[220px] w-full"
-                      />
+                      <div role="img" aria-label="近12个月在册人数趋势图">
+                        <ReactECharts
+                          option={hrTrendOption}
+                          theme="ud"
+                          className="h-[220px] w-full"
+                        />
+                      </div>
                     </DataState>
                   </div>
                 </>
@@ -643,11 +680,13 @@ const DashboardPage: React.FC = () => {
                   empty={budgetExecutionList.length === 0}
                   emptyText="暂无预算执行数据"
                 >
-                  <ReactECharts
-                    option={budgetExecutionOption}
-                    theme="ud"
-                    className="h-[300px] w-full"
-                  />
+                  <div role="img" aria-label="预算执行率图">
+                    <ReactECharts
+                      option={budgetExecutionOption}
+                      theme="ud"
+                      className="h-[300px] w-full"
+                    />
+                  </div>
                 </DataState>
               </div>
             </div>

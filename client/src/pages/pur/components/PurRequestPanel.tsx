@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useForm } from 'react-hook-form';
 import { z } from 'zod';
@@ -40,7 +41,6 @@ import { hrApi, masterDataApi, projectsApi, purApi } from '@client/src/api';
 import { sendApprovalNotification } from '@client/src/api/notifications';
 import { useAsyncData } from '@client/src/hooks/useAsyncData';
 import { formatMoney } from '@client/src/utils/format';
-import { AttachmentField } from '@client/src/components/attachments/AttachmentField';
 import AttachmentHint from '@client/src/components/attachments/AttachmentHint';
 import type {
   CreatePurRequestDto,
@@ -77,11 +77,11 @@ const EMPTY_FORM = {
 const PAGE_SIZE = 20;
 
 const PurRequestPanel: React.FC = () => {
+  const navigate = useNavigate();
   const [page, setPage] = useState<number>(1);
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [createOpen, setCreateOpen] = useState(false);
-  const [detailTarget, setDetailTarget] = useState<PurRequestItem | null>(null);
-  const [operating, setOperating] = useState(false);
+    const [operating, setOperating] = useState(false);
 
   const { data, loading, error, reload } = useAsyncData(
     () =>
@@ -141,7 +141,7 @@ const PurRequestPanel: React.FC = () => {
       form.reset(EMPTY_FORM);
       setPage(1);
       await reload();
-      setDetailTarget(item);
+      navigate(`/pur/requests/${item.id}`, { state: { item } });
     } catch (err) {
       toast.error(err instanceof Error ? err.message : '创建采购申请失败');
     } finally {
@@ -197,7 +197,7 @@ const PurRequestPanel: React.FC = () => {
           <Button
             variant="ghost"
             size="sm"
-            onClick={() => setDetailTarget(record)}
+            onClick={() => navigate(`/pur/requests/${record.id}`, { state: { item: record } })}
             aria-label={`查看采购申请详情 ${record.code}`}
           >
             详情
@@ -471,75 +471,6 @@ const PurRequestPanel: React.FC = () => {
         </DialogContent>
       </Dialog>
 
-      <Dialog
-        open={detailTarget !== null}
-        onOpenChange={(open: boolean) => {
-          if (!open) setDetailTarget(null);
-        }}
-      >
-        <DialogContent className="max-w-lg">
-          <DialogHeader>
-            <DialogTitle>采购申请详情 {detailTarget?.code ?? ''}</DialogTitle>
-          </DialogHeader>
-          {detailTarget ? (
-            <div className="flex flex-col gap-4">
-              <p className="text-sm">
-                <span className="text-muted-foreground">标题：</span>
-                {detailTarget.title}
-              </p>
-              <div className="grid grid-cols-2 gap-x-6 gap-y-1 text-sm">
-                <p>
-                  <span className="text-muted-foreground">类型：</span>
-                  {PUR_REQUEST_TYPE_LABELS[detailTarget.requestType] ??
-                    detailTarget.requestType}
-                </p>
-                <p>
-                  <span className="text-muted-foreground">部门：</span>
-                  {detailTarget.departmentName ?? '-'}
-                </p>
-                <p>
-                  <span className="text-muted-foreground">项目：</span>
-                  {detailTarget.projectName ?? '-'}
-                </p>
-                <p>
-                  <span className="text-muted-foreground">供应商：</span>
-                  {detailTarget.supplierName ?? '-'}
-                </p>
-                <p>
-                  <span className="text-muted-foreground">预算金额：</span>
-                  {formatMoney(detailTarget.amount)}
-                </p>
-                <p>
-                  <span className="text-muted-foreground">期望日期：</span>
-                  {detailTarget.expectDate ?? '-'}
-                </p>
-                <p className="flex items-center gap-2">
-                  <span className="text-muted-foreground">状态：</span>
-                  <PurStatusBadge
-                    status={detailTarget.status}
-                    labels={PUR_REQUEST_STATUS_LABELS}
-                  />
-                </p>
-              </div>
-              <p className="text-sm">
-                <span className="text-muted-foreground">申请事由：</span>
-                {detailTarget.reason ?? '-'}
-              </p>
-              <p className="text-sm">
-                <span className="text-muted-foreground">备注：</span>
-                {detailTarget.remark ?? '-'}
-              </p>
-              <div className="mt-2 border-t pt-4">
-                <AttachmentField
-                  resourceType="pur_request"
-                  resourceId={detailTarget.id}
-                  usageHint="采购需求文档、报价单等"
-                />
-              </div>
-            </div>
-          ) : null}
-        </DialogContent>
-      </Dialog>
     </div>
   );
 };

@@ -1,6 +1,9 @@
 /** 价税合计口径。税率是百分数，0 表示免税。 */
 export const VAT_RATES = [0, 1, 3, 6, 9, 13] as const;
 
+/** B-08：税率档位字典的 fallback（正式来源为 sys_dict 的 tax_rate 类型） */
+export const TAX_RATE_DICTIONARY = VAT_RATES;
+
 export type VatRate = (typeof VAT_RATES)[number];
 
 export type TaxpayerType = 'general' | 'small';

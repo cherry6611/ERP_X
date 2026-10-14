@@ -13,8 +13,8 @@ const buttonVariants = cva(
     variants: {
       variant: {
         default:
-          // Solid primary button with computed border for depth
-          "bg-primary text-primary-foreground border border-primary-border",
+          // 晟光主按钮：实心晟蓝 + 轻辉光
+          "bg-primary text-primary-foreground border border-primary-border shadow-brand",
         destructive:
           // Destructive action button with matching border
           "bg-destructive text-destructive-foreground border border-destructive-border",

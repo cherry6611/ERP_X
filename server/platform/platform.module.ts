@@ -7,6 +7,7 @@ import { openDatabase, type DatabaseHandle } from './database';
 import { LoginGuard, RolesGuard } from './guards';
 import { JobScheduler } from './scheduler';
 import { SessionMiddleware } from './session.middleware';
+import './database-layers';
 import { SessionStore } from './session-store';
 import { AccountLifecycleService } from './account-lifecycle';
 import { DRIZZLE_DATABASE, PG_CLIENT, RAW_DATABASE } from './tokens';

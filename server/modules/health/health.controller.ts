@@ -6,10 +6,9 @@ import {
 } from '@nestjs/common';
 import { sql } from 'drizzle-orm';
 import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
-import { NeedLogin, Public } from '@server/platform';
+import { Public } from '@server/platform';
 import { DRIZZLE_DATABASE } from '@server/platform/tokens';
 
-@NeedLogin()
 @Public()
 @Controller('api/health')
 export class HealthController {
@@ -23,6 +22,7 @@ export class HealthController {
     db: boolean;
     scheduler: boolean;
     feishuConfigured: boolean;
+    version: string;
   }> {
     // U-26：深度健康 —— DB + 调度开关 + 飞书凭证是否配置（不探活外网）
     const scheduler =
@@ -30,15 +30,17 @@ export class HealthController {
     const feishuConfigured = Boolean(
       process.env.FEISHU_APP_ID && process.env.FEISHU_APP_SECRET
     );
+    const version = process.env.GIT_SHA ?? 'dev';
     try {
       await this.db.execute(sql`select 1`);
-      return { ok: true, db: true, scheduler, feishuConfigured };
+      return { ok: true, db: true, scheduler, feishuConfigured, version };
     } catch {
       throw new ServiceUnavailableException({
         ok: false,
         db: false,
         scheduler,
         feishuConfigured,
+        version,
       });
     }
   }

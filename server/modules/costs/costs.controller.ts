@@ -9,7 +9,7 @@ import {
   Req,
 } from '@nestjs/common';
 import type { Request } from 'express';
-import { CanRole, NeedLogin } from '@server/platform';
+import { CanCapability, NeedLogin } from '@server/platform';
 import { actorFromRequest } from '@server/common/auth/actor';
 import {
   IsDateString,
@@ -21,15 +21,14 @@ import {
   Min,
 } from 'class-validator';
 import { CostsService } from './costs.service';
+import { CreateAllocationDto, CreateLaborRateDto } from './costs.dto';
 import type {
   CostAllocation,
   CostDimension,
   CostDimensionSummary,
   CostItem,
   CostTypeSummary,
-  CreateAllocationDto,
   CreateCostDto,
-  CreateLaborRateDto,
   CreateTimesheetDto,
   LaborRate,
   Timesheet,
@@ -150,13 +149,13 @@ export class CostsController {
     return this.costsService.dimensionSummary(dim, projectId);
   }
 
-  @CanRole(['admin'])
+  @CanCapability('projects_write')
   @Post()
   async createCost(@Body() dto: CreateCostBodyDto): Promise<CostItem> {
     return this.costsService.createCost(dto);
   }
 
-  @CanRole(['admin'])
+  @CanCapability('projects_write')
   @Post(':id/red-flush')
   async redFlush(
     @Param('id', ParseUUIDPipe) id: string
@@ -193,7 +192,7 @@ export class CostsController {
     return this.costsService.listLaborRates();
   }
 
-  @CanRole(['admin'])
+  @CanCapability('projects_write')
   @Post('labor-rates')
   async createLaborRate(
     @Body() dto: CreateLaborRateDto
@@ -201,7 +200,7 @@ export class CostsController {
     return this.costsService.createLaborRate(dto);
   }
 
-  @CanRole(['admin'])
+  @CanCapability('projects_write')
   @Post('allocations')
   async createAllocation(
     @Body() dto: CreateAllocationDto

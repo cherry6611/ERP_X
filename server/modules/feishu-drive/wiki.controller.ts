@@ -1,6 +1,6 @@
 import { Body, Controller, Get, Post, Query } from '@nestjs/common';
 import { IsIn, IsNotEmpty, IsString } from 'class-validator';
-import { CanRole, NeedLogin } from '@server/platform';
+import { CanCapability, NeedLogin } from '@server/platform';
 import { WikiService } from './wiki.service';
 import type { SyncToWikiRequest, SyncToWikiResponse, WikiNodesResponse } from '@shared/api.interface';
 
@@ -31,7 +31,7 @@ export class WikiController {
     return this.wikiService.listNodes(parentNodeToken, pageToken);
   }
 
-  @CanRole(['admin'])
+  @CanCapability('drive_write')
   @Post('sync')
   async syncToWiki(@Body() dto: SyncToWikiDto): Promise<SyncToWikiResponse> {
     return this.wikiService.syncToWiki(dto.fileToken, dto.fileType);

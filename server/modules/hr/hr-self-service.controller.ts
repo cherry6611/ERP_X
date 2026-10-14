@@ -9,7 +9,7 @@ import {
   Req,
 } from '@nestjs/common';
 import type { Request } from 'express';
-import { CanRole, NeedLogin } from '@server/platform';
+import { CanCapability, NeedLogin } from '@server/platform';
 import {
   IsDateString,
   IsIn,
@@ -88,11 +88,11 @@ export class HrSelfServiceController {
     @Body() dto: CreateAttendanceAmendmentDto
   ): Promise<AttendanceAmendment> {
     const actor = actorFromRequest(req);
-    consumeRate(`amendment:${actor.userId}`, 30, 24 * 60 * 60 * 1000);
+    await consumeRate(`amendment:${actor.userId}`, 30, 24 * 60 * 60 * 1000);
     return this.hrSelfService.createAmendment(dto, actor.userId);
   }
 
-  @CanRole(['admin'])
+  @CanCapability('hr_write')
   @Post('attendance-amendments/:id/actions')
   async amendmentAction(
     @Param('id', ParseUUIDPipe) id: string,
@@ -101,7 +101,7 @@ export class HrSelfServiceController {
     return this.hrSelfService.amendmentAction(id, body.action);
   }
 
-  @CanRole(['admin'])
+  @CanCapability('hr_write')
   @Post('leave-balances/init')
   async initLeaveBalances(
     @Body() dto: InitLeaveBalancesDto
@@ -109,7 +109,7 @@ export class HrSelfServiceController {
     return this.hrSelfService.initLeaveBalances(dto.year);
   }
 
-  @CanRole(['admin'])
+  @CanCapability('hr_write')
   @Post('employees/:id/offboard')
   async offboard(
     @Param('id', ParseUUIDPipe) id: string,

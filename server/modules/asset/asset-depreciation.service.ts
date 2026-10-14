@@ -57,8 +57,8 @@ export interface DepreciationListParams {
 interface DepreciationRow {
   id: string;
   assetId: string | null;
-  assetCode: string;
-  assetName: string;
+  assetCode: string | null;
+  assetName: string | null;
   period: string | null;
   amount: string | null;
   costGenerated: boolean | null;
@@ -116,8 +116,8 @@ export class AssetDepreciationService {
       items: rows.map((row: DepreciationRow) => ({
         id: row.id,
         assetId: row.assetId ?? '',
-        assetCode: row.assetCode,
-        assetName: row.assetName,
+        assetCode: row.assetCode ?? '',
+        assetName: row.assetName ?? '',
         period: row.period ?? '',
         amount: Number(row.amount ?? 0),
         costGenerated: row.costGenerated ?? false,
@@ -163,6 +163,9 @@ export class AssetDepreciationService {
 
     let assetCount = 0;
     let totalAmount = 0;
+    /** D-29：有项目归 6401，无项目归 6602 管理费用 */
+    let projectDepreciation = 0;
+    let adminDepreciation = 0;
     for (const asset of assets) {
       if (doneThisPeriod.has(asset.id)) continue;
       const usefulMonths = asset.usefulMonths ?? 36;
@@ -267,35 +270,45 @@ export class AssetDepreciationService {
       }
       assetCount += 1;
       totalAmount = round2(totalAmount + amount);
+      if (asset.projectId) {
+        projectDepreciation = round2(projectDepreciation + amount);
+      } else {
+        adminDepreciation = round2(adminDepreciation + amount);
+      }
     }
 
-    /* A2：sourceRef 带批次，避免同月二次计提被唯一索引静默吞掉 */
-    if (totalAmount > 0) {
-      const batchId = `${Date.now().toString(36)}`;
-      const sourceRef = `depreciation:${period}:${batchId}`;
-      try {
-        await this.voucherHookService.generateVoucherDraft({
-          sourceType: 'depreciation',
-          sourceRef,
-          voucherDate: periodEndDate(period),
-          summary: `折旧计提 ${period}（${assetCount} 项）`,
-          lines: [
-            { accountCode: '6401', debit: totalAmount },
-            { accountCode: '1602', credit: totalAmount },
-          ],
-        });
-      } catch (error) {
-        this.logger.error(
-          `折旧凭证草稿生成失败：${sourceRef}`,
-          error instanceof Error ? error.stack : String(error)
-        );
+    /* A2：sourceRef 带批次；D-29 按是否挂项目拆分费用科目 */
+    const batchId = `${Date.now().toString(36)}`;
+    const postDepreciation = async (
+      expenseAccount: '6401' | '6602',
+      amount: number,
+      label: string,
+    ) => {
+      if (amount <= 0) return;
+      const sourceRef = `depreciation:${period}:${expenseAccount}:${batchId}`;
+      const lines = [
+        { accountCode: expenseAccount, debit: amount },
+        { accountCode: '1602', credit: amount },
+      ];
+      const result = await this.voucherHookService.generateVoucherDraft({
+        sourceType: 'depreciation',
+        sourceRef,
+        voucherDate: periodEndDate(period),
+        summary: `折旧计提 ${period} ${label}`,
+        lines,
+      });
+      if (result === 'failed') {
         await this.voucherHookService.recordCompensation(
           'depreciation',
           sourceRef,
-          error instanceof Error ? error.message : String(error)
+          `折旧凭证生成失败 ${label}`,
+          lines,
+          periodEndDate(period),
         );
       }
-    }
+    };
+    await postDepreciation('6401', projectDepreciation, '项目成本');
+    await postDepreciation('6602', adminDepreciation, '管理费用');
     return { period, assetCount, totalAmount };
   }
 }

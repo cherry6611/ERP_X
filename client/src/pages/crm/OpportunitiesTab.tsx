@@ -1,7 +1,5 @@
-import React, { useState } from 'react';
-import { zodResolver } from '@hookform/resolvers/zod';
-import { useForm } from 'react-hook-form';
-import { z } from 'zod';
+import React from 'react';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
 import { Download, Plus } from 'lucide-react';
 import { Table, TableColumnsType } from 'antd';
@@ -9,26 +7,7 @@ import { CanRole } from '@client/src/platform/auth';
 import { DataState } from '@client/src/components/DataState';
 import FilterBar from '@client/src/components/erp/FilterBar';
 import StatusBadge from '@client/src/components/erp/StatusBadge';
-import DateField from '@client/src/components/erp/DateField';
-import { AttachmentField } from '@client/src/components/attachments/AttachmentField';
-import AttachmentHint from '@client/src/components/attachments/AttachmentHint';
 import { Button } from '@client/src/components/ui/button';
-import {
-  Dialog,
-  DialogContent,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@client/src/components/ui/dialog';
-import {
-  Form,
-  FormControl,
-  FormField,
-  FormItem,
-  FormLabel,
-  FormMessage,
-} from '@client/src/components/ui/form';
-import { Input } from '@client/src/components/ui/input';
 import { Label } from '@client/src/components/ui/label';
 import {
   Select,
@@ -37,8 +16,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@client/src/components/ui/select';
-import { crmApi, masterDataApi } from '@client/src/api';
-import QuotationFormDialog from './QuotationFormDialog';
+import { crmApi } from '@client/src/api';
 import { useAsyncData } from '@client/src/hooks/useAsyncData';
 import { OPP_STAGE_LABELS } from '@client/src/utils/biz-labels';
 import {
@@ -47,36 +25,8 @@ import {
 } from '@client/src/components/excel/excel-utils';
 import { formatMoney, formatPercent } from '@client/src/utils/format';
 import { getApiErrorMessage } from '@client/src/utils/api-error-message';
-import type {
-  CreateOpportunityDto,
-  Customer,
-  Opportunity,
-  OpportunityStage,
-  UpdateOpportunityDto,
-} from '@shared/api.interface';
-
-const oppSchema = z.object({
-  customerId: z.string().min(1, '请选择客户'),
-  title: z.string().min(1, '商机名称不能为空'),
-  amount: z.coerce.number().min(0),
-  winRate: z.coerce.number().min(0).max(100),
-  owner: z.string(),
-  expectedDate: z.string().optional(),
-});
-
-type OppFormData = z.output<typeof oppSchema>;
-type OppFormInput = z.input<typeof oppSchema>;
-
-const advanceSchema = z.object({
-  stage: z.string().min(1, '请选择阶段'),
-  amount: z.coerce.number().min(0),
-  winRate: z.coerce.number().min(0).max(100),
-});
-
-type AdvanceFormData = z.output<typeof advanceSchema>;
-type AdvanceFormInput = z.input<typeof advanceSchema>;
-
-const STAGE_ORDER = Object.keys(OPP_STAGE_LABELS);
+import { confirmDanger } from '@client/src/utils/confirmDanger';
+import type { Opportunity } from '@shared/api.interface';
 
 const OPP_EXPORT_COLUMNS: ExcelSheetColumn<Opportunity>[] = [
   { header: '编号', value: (row: Opportunity) => row.code },
@@ -88,96 +38,42 @@ const OPP_EXPORT_COLUMNS: ExcelSheetColumn<Opportunity>[] = [
   },
   { header: '预计金额', value: (row: Opportunity) => row.amount },
   { header: '赢单率（%）', value: (row: Opportunity) => row.winRate },
+  { header: '报价轮次', value: (row: Opportunity) => row.quotationCount },
+  {
+    header: '最终成交报价',
+    value: (row: Opportunity) => row.wonQuotationCode ?? '',
+  },
   { header: '负责人', value: (row: Opportunity) => row.owner ?? '' },
   { header: '预计成交', value: (row: Opportunity) => row.expectedDate ?? '' },
 ];
 
 const OpportunitiesTab: React.FC = () => {
-  const [stageFilter, setStageFilter] = useState<string>('all');
-  const [createOpen, setCreateOpen] = useState(false);
-  const [advanceTarget, setAdvanceTarget] = useState<Opportunity | null>(null);
-  const [detailTarget, setDetailTarget] = useState<Opportunity | null>(null);
-  const [quoteOpen, setQuoteOpen] = useState(false);
-  const [quotePreset, setQuotePreset] = useState<
-    { customerId?: string; opportunityId?: string; title?: string } | undefined
-  >(undefined);
+  const navigate = useNavigate();
+  const [params, setParams] = useSearchParams();
+  const stageFilter = params.get('stage') ?? 'all';
+  const setStageFilter = (v: string) => {
+    setParams(
+      (prev) => {
+        const next = new URLSearchParams(prev);
+        if (v === 'all') next.delete('stage');
+        else next.set('stage', v);
+        return next;
+      },
+      { replace: true },
+    );
+  };
 
   const { data, loading, error, reload } = useAsyncData<Opportunity[]>(
     () => crmApi.listOpportunities(stageFilter !== 'all' ? stageFilter : undefined),
     [stageFilter],
   );
-  const { data: customers } = useAsyncData<Customer[]>(() => masterDataApi.listCustomers(), []);
-
-  const createForm = useForm<OppFormInput, unknown, OppFormData>({
-    resolver: zodResolver(oppSchema),
-    defaultValues: {
-      customerId: '',
-      title: '',
-      amount: 0,
-      winRate: 30,
-      owner: '',
-    },
-  });
-
-  const advanceForm = useForm<AdvanceFormInput, unknown, AdvanceFormData>({
-    resolver: zodResolver(advanceSchema),
-    defaultValues: { stage: 'following', amount: 0, winRate: 30 },
-  });
-
-  const openCreate = () => {
-    createForm.reset({ customerId: '', title: '', amount: 0, winRate: 30, owner: '' });
-    setCreateOpen(true);
-  };
-
-  const openAdvance = (opp: Opportunity) => {
-    advanceForm.reset({
-      stage: opp.stage,
-      amount: opp.amount,
-      winRate: opp.winRate,
-    });
-    setAdvanceTarget(opp);
-  };
-
-  const openQuotation = (opp: Opportunity) => {
-    setQuotePreset({
-      customerId: opp.customerId,
-      opportunityId: opp.id,
-      title: opp.title,
-    });
-    setQuoteOpen(true);
-  };
-
-  const onCreate = createForm.handleSubmit(async (values) => {
-    const dto: CreateOpportunityDto = { ...values };
-    try {
-      const created = await crmApi.createOpportunity(dto);
-      toast.success('商机已创建');
-      setCreateOpen(false);
-      await reload();
-      setDetailTarget(created);
-    } catch (err) {
-      toast.error(getApiErrorMessage(err, '创建失败'));
-    }
-  });
-
-  const onAdvance = advanceForm.handleSubmit(async (values) => {
-    if (!advanceTarget) return;
-    const dto: UpdateOpportunityDto = {
-      stage: values.stage as OpportunityStage,
-      amount: values.amount,
-      winRate: values.winRate,
-    };
-    try {
-      await crmApi.updateOpportunity(advanceTarget.id, dto);
-      toast.success('商机已更新');
-      setAdvanceTarget(null);
-      await reload();
-    } catch (err) {
-      toast.error(getApiErrorMessage(err, '更新失败'));
-    }
-  });
 
   const convert = async (opp: Opportunity) => {
+    const ok = await confirmDanger(
+      `确认将商机 ${opp.code} 转为合同草稿？`,
+      { title: '确认转合同', confirmLabel: '确认转换' },
+    );
+    if (!ok) return;
     try {
       const contract = await crmApi.convertOpportunity(opp.id);
       toast.success(`已生成合同草稿 ${contract.code}`);
@@ -199,7 +95,19 @@ const OpportunitiesTab: React.FC = () => {
   const columns: TableColumnsType<Opportunity> = [
     { title: '编号', dataIndex: 'code', fixed: 'left', width: 140 },
     { title: '客户', dataIndex: 'customerName', width: 160 },
-    { title: '商机名称', dataIndex: 'title', width: 200 },
+    {
+      title: '商机名称',
+      dataIndex: 'title',
+      width: 220,
+      render: (v: string, record: Opportunity) => (
+        <Link
+          to={`/crm/opportunities/${record.id}`}
+          className="font-medium text-primary underline-offset-2 hover:underline"
+        >
+          {v}
+        </Link>
+      ),
+    },
     {
       title: '阶段',
       dataIndex: 'stage',
@@ -219,30 +127,46 @@ const OpportunitiesTab: React.FC = () => {
       width: 90,
       render: (v: number) => formatPercent(v),
     },
+    {
+      title: '报价轮次',
+      dataIndex: 'quotationCount',
+      width: 90,
+      render: (v: number) => `${v} 轮`,
+    },
+    {
+      title: '最终成交报价',
+      key: 'won',
+      width: 160,
+      render: (_, row) =>
+        row.wonQuotationCode ? (
+          <Link
+            to={`/crm/quotations/${row.wonQuotationId}`}
+            className="text-primary underline-offset-2 hover:underline"
+          >
+            {row.wonQuotationCode}
+          </Link>
+        ) : (
+          '-'
+        ),
+    },
     { title: '负责人', dataIndex: 'owner', width: 100, render: (v) => v ?? '-' },
     { title: '预计成交', dataIndex: 'expectedDate', width: 110, render: (v) => v ?? '-' },
     {
       title: '操作',
       key: 'action',
       fixed: 'right',
-      width: 200,
+      width: 160,
       render: (_, record) => (
         <div className="flex items-center gap-1">
-          <Button variant="ghost" size="sm" onClick={() => setDetailTarget(record)}>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => navigate(`/crm/opportunities/${record.id}`)}
+          >
             详情
           </Button>
           <CanRole roles={['admin']}>
-            <Button variant="ghost" size="sm" onClick={() => openAdvance(record)}>
-              推进
-            </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => openQuotation(record)}
-            >
-              报价
-            </Button>
-            {record.stage === 'won' ? (
+            {record.stage === 'won' && !record.contractId ? (
               <Button variant="ghost" size="sm" onClick={() => void convert(record)}>
                 转合同
               </Button>
@@ -272,7 +196,7 @@ const OpportunitiesTab: React.FC = () => {
             </SelectContent>
           </Select>
         </div>
-        <Button onClick={openCreate}>
+        <Button onClick={() => navigate('/crm/opportunities/new')}>
           <Plus className="h-4 w-4" />
           新建商机
         </Button>
@@ -286,7 +210,7 @@ const OpportunitiesTab: React.FC = () => {
         error={error}
         empty={!loading && !error && (data?.length ?? 0) === 0}
         emptyTitle="暂无商机"
-        emptyText="点击上方「新建商机」按钮创建"
+        emptyText="点击上方「新建商机」进入整页创建"
         onRetry={() => void reload()}
         skeleton="table"
       >
@@ -294,7 +218,7 @@ const OpportunitiesTab: React.FC = () => {
           columns={columns}
           dataSource={data ?? []}
           rowKey="id"
-          scroll={{ x: 1200, y: 500 }}
+          scroll={{ x: 1400, y: 500 }}
           pagination={{
             pageSize: 10,
             showTotal: (t: number) => `共 ${t} 条`,
@@ -302,284 +226,6 @@ const OpportunitiesTab: React.FC = () => {
           locale={{ emptyText: ' ' }}
         />
       </DataState>
-
-      <Dialog open={createOpen} onOpenChange={setCreateOpen}>
-        <DialogContent className="max-w-lg">
-          <DialogHeader>
-            <DialogTitle>新建商机</DialogTitle>
-          </DialogHeader>
-          <Form {...createForm}>
-            <form onSubmit={onCreate} className="space-y-4">
-              <FormField
-                control={createForm.control}
-                name="customerId"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>
-                      客户 <span aria-hidden="true" className="text-destructive">*</span>
-                    </FormLabel>
-                    <Select onValueChange={field.onChange} value={field.value}>
-                      <FormControl>
-                        <SelectTrigger>
-                          <SelectValue placeholder="请选择客户" />
-                        </SelectTrigger>
-                      </FormControl>
-                      <SelectContent>
-                        {(customers ?? []).map((c) => (
-                          <SelectItem key={c.id} value={c.id}>
-                            {c.name}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-              <FormField
-                control={createForm.control}
-                name="title"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>
-                      商机名称 <span aria-hidden="true" className="text-destructive">*</span>
-                    </FormLabel>
-                    <FormControl>
-                      <Input placeholder="如：数据中台建设" {...field} />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-              <div className="flex gap-4">
-                <FormField
-                  control={createForm.control}
-                  name="amount"
-                  render={({ field }) => (
-                    <FormItem className="flex-1">
-                      <FormLabel>预计金额（元）</FormLabel>
-                      <FormControl>
-                        <Input
-                          type="number"
-                          min={0}
-                          value={String(field.value ?? '')}
-                          onChange={field.onChange}
-                          onBlur={field.onBlur}
-                          name={field.name}
-                          ref={field.ref}
-                        />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-                <FormField
-                  control={createForm.control}
-                  name="winRate"
-                  render={({ field }) => (
-                    <FormItem className="flex-1">
-                      <FormLabel>赢单率（%）</FormLabel>
-                      <FormControl>
-                        <Input
-                          type="number"
-                          min={0}
-                          max={100}
-                          value={String(field.value ?? '')}
-                          onChange={field.onChange}
-                          onBlur={field.onBlur}
-                          name={field.name}
-                          ref={field.ref}
-                        />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-              </div>
-              <div className="flex gap-4">
-                <FormField
-                  control={createForm.control}
-                  name="owner"
-                  render={({ field }) => (
-                    <FormItem className="flex-1">
-                      <FormLabel>负责人</FormLabel>
-                      <FormControl>
-                        <Input placeholder="请输入负责人" {...field} />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-                <FormField
-                  control={createForm.control}
-                  name="expectedDate"
-                  render={({ field }) => (
-                    <FormItem className="flex-1">
-                      <FormLabel>预计成交日期</FormLabel>
-                      <DateField value={field.value} onChange={field.onChange} />
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-              </div>
-              <AttachmentHint text="保存后将自动打开详情，可在其中上传方案文档、报价单等附件" />
-              <DialogFooter>
-                <Button type="submit">保存</Button>
-              </DialogFooter>
-            </form>
-          </Form>
-        </DialogContent>
-      </Dialog>
-
-      <Dialog
-        open={detailTarget !== null}
-        onOpenChange={(open) => {
-          if (!open) setDetailTarget(null);
-        }}
-      >
-        <DialogContent className="max-w-lg">
-          <DialogHeader>
-            <DialogTitle>商机详情 - {detailTarget?.code}</DialogTitle>
-          </DialogHeader>
-          {detailTarget ? (
-            <div className="space-y-4">
-              <div className="grid grid-cols-2 gap-x-6 gap-y-2 text-sm">
-                <div>
-                  <span className="text-muted-foreground">客户：</span>
-                  {detailTarget.customerName}
-                </div>
-                <div>
-                  <span className="text-muted-foreground">商机名称：</span>
-                  {detailTarget.title}
-                </div>
-                <div>
-                  <span className="text-muted-foreground">阶段：</span>
-                  <StatusBadge status={detailTarget.stage} labels={OPP_STAGE_LABELS} />
-                </div>
-                <div>
-                  <span className="text-muted-foreground">预计金额：</span>
-                  {formatMoney(detailTarget.amount)}
-                </div>
-                <div>
-                  <span className="text-muted-foreground">赢单率：</span>
-                  {formatPercent(detailTarget.winRate)}
-                </div>
-                <div>
-                  <span className="text-muted-foreground">负责人：</span>
-                  {detailTarget.owner ?? '-'}
-                </div>
-                <div className="col-span-2">
-                  <span className="text-muted-foreground">预计成交：</span>
-                  {detailTarget.expectedDate ?? '-'}
-                </div>
-              </div>
-              <div className="border-t pt-4">
-                <AttachmentField
-                  resourceType="crm_opportunity"
-                  resourceId={detailTarget.id}
-                  usageHint="方案文档、报价单等"
-                />
-              </div>
-            </div>
-          ) : null}
-        </DialogContent>
-      </Dialog>
-
-      <Dialog
-        open={advanceTarget !== null}
-        onOpenChange={(open) => {
-          if (!open) setAdvanceTarget(null);
-        }}
-      >
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle>商机推进 - {advanceTarget?.code}</DialogTitle>
-          </DialogHeader>
-          <Form {...advanceForm}>
-            <form onSubmit={onAdvance} className="space-y-4">
-              <FormField
-                control={advanceForm.control}
-                name="stage"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>阶段</FormLabel>
-                    <Select onValueChange={field.onChange} value={field.value}>
-                      <FormControl>
-                        <SelectTrigger>
-                          <SelectValue placeholder="请选择" />
-                        </SelectTrigger>
-                      </FormControl>
-                      <SelectContent>
-                        {STAGE_ORDER.map((stage) => (
-                          <SelectItem key={stage} value={stage}>
-                            {OPP_STAGE_LABELS[stage]}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-              <div className="flex gap-4">
-                <FormField
-                  control={advanceForm.control}
-                  name="amount"
-                  render={({ field }) => (
-                    <FormItem className="flex-1">
-                      <FormLabel>预计金额（元）</FormLabel>
-                      <FormControl>
-                        <Input
-                          type="number"
-                          min={0}
-                          value={String(field.value ?? '')}
-                          onChange={field.onChange}
-                          onBlur={field.onBlur}
-                          name={field.name}
-                          ref={field.ref}
-                        />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-                <FormField
-                  control={advanceForm.control}
-                  name="winRate"
-                  render={({ field }) => (
-                    <FormItem className="flex-1">
-                      <FormLabel>赢单率（%）</FormLabel>
-                      <FormControl>
-                        <Input
-                          type="number"
-                          min={0}
-                          max={100}
-                          value={String(field.value ?? '')}
-                          onChange={field.onChange}
-                          onBlur={field.onBlur}
-                          name={field.name}
-                          ref={field.ref}
-                        />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-              </div>
-              <DialogFooter>
-                <Button type="submit">保存</Button>
-              </DialogFooter>
-            </form>
-          </Form>
-        </DialogContent>
-      </Dialog>
-
-      <QuotationFormDialog
-        open={quoteOpen}
-        onOpenChange={setQuoteOpen}
-        preset={quotePreset}
-        onSaved={() => setQuoteOpen(false)}
-      />
     </div>
   );
 };

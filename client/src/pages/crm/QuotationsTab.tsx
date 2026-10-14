@@ -2,6 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { toast } from 'sonner';
 import { Download, Plus } from 'lucide-react';
 import { Table, TableColumnsType } from 'antd';
+import { useSearchParams } from 'react-router-dom';
 import { CanRole } from '@client/src/platform/auth';
 import { DataState } from '@client/src/components/DataState';
 import FilterBar from '@client/src/components/erp/FilterBar';
@@ -32,7 +33,19 @@ import QuotationFormDialog from './QuotationFormDialog';
 import QuotationDetailDialog from './QuotationDetailDialog';
 
 const QuotationsTab: React.FC = () => {
-  const [statusFilter, setStatusFilter] = useState<string>('all');
+  const [params, setParams] = useSearchParams();
+  const statusFilter = params.get('status') ?? 'all';
+  const setStatusFilter = (v: string) => {
+    setParams(
+      (prev) => {
+        const next = new URLSearchParams(prev);
+        if (v === 'all') next.delete('status');
+        else next.set('status', v);
+        return next;
+      },
+      { replace: true },
+    );
+  };
   const [formOpen, setFormOpen] = useState(false);
   const [editTarget, setEditTarget] = useState<Quotation | null>(null);
   const [detailTarget, setDetailTarget] = useState<Quotation | null>(null);

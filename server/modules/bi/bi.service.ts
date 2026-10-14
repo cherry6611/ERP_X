@@ -20,6 +20,7 @@ import {
 } from 'drizzle-orm';
 import dayjs from 'dayjs';
 import utc from 'dayjs/plugin/utc';
+import { todayInShanghai } from '@server/common/utils/biz-date';
 import {
   astAsset,
   astChange,
@@ -752,7 +753,7 @@ export class BiService {
     const latestLaborCost: number =
       laborRows.length > 0 ? Number(laborRows[0].total ?? 0) : 0;
 
-    const today: string = now.toISOString().slice(0, 10);
+    const today: string = todayInShanghai();
     const hoursCutoff: string = new Date(Date.parse(today) - 30 * 86400000)
       .toISOString()
       .slice(0, 10);
@@ -859,8 +860,7 @@ export class BiService {
 
   /** 逾期与预警汇总：应收逾期 / 授权到期 / 资产待报废（业务时区 Asia/Shanghai 自然日） */
   async getAlerts(): Promise<AlertsResult> {
-    const nowCn: Date = new Date(Date.now() + 8 * 60 * 60 * 1000);
-    const today: string = nowCn.toISOString().slice(0, 10);
+    const today: string = todayInShanghai();
     const horizon: string = new Date(Date.parse(today) + 30 * 86400000)
       .toISOString()
       .slice(0, 10);

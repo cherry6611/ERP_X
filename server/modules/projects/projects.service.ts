@@ -24,6 +24,7 @@ import {
   type SQL,
 } from 'drizzle-orm';
 import {
+  crmOpportunity,
   crmQuotation,
   erpApBill,
   erpAr,
@@ -46,9 +47,12 @@ import { outputIssueLines } from '@server/common/tax/posting';
 import { splitTax } from '@shared/tax';
 import { VoucherHookService } from '@server/modules/voucher/voucher-hook.service';
 import { TaxResolverService } from '@server/modules/tax/tax-resolver.service';
-import { toProject } from './projects.transform';
+import { ArService } from '@server/modules/finance/ar.service';
+import { toProject, type ProjectQuoteExtra } from './projects.transform';
 import { ProjectAclService } from './project-acl.service';
 import type { RequestActor } from '@server/common/auth/actor';
+import { todayInShanghai } from '@server/common/utils/biz-date';
+import { assertPeriodOpen } from '@server/common/utils/period-guard';
 import type {
   CreateProjectChangeDto,
   CreateProjectDto,
@@ -78,7 +82,8 @@ export class ProjectsService {
     @Inject(DRIZZLE_DATABASE) private readonly db: PostgresJsDatabase,
     private readonly projectAcl: ProjectAclService,
     private readonly voucherHook: VoucherHookService,
-    private readonly taxResolver: TaxResolverService
+    private readonly taxResolver: TaxResolverService,
+    private readonly arService: ArService,
   ) {}
 
 
@@ -114,6 +119,85 @@ export class ProjectsService {
       returnedReason: row.returnedReason,
       remark: row.remark,
       createdAt: row.createdAt.toISOString(),
+    };
+  }
+
+  private async resolveQuoteExtras(
+    wonQuotationIds: Array<string | null | undefined>,
+  ): Promise<Map<string, ProjectQuoteExtra>> {
+    const ids = [
+      ...new Set(wonQuotationIds.filter((id): id is string => Boolean(id))),
+    ];
+    const map = new Map<string, ProjectQuoteExtra>();
+    if (ids.length === 0) return map;
+    const rows = await this.db
+      .select({
+        id: crmQuotation.id,
+        code: crmQuotation.code,
+        title: crmQuotation.title,
+        totalAmount: crmQuotation.totalAmount,
+        opportunityId: crmQuotation.opportunityId,
+        opportunityTitle: crmOpportunity.title,
+      })
+      .from(crmQuotation)
+      .leftJoin(
+        crmOpportunity,
+        eq(crmQuotation.opportunityId, crmOpportunity.id),
+      )
+      .where(inArray(crmQuotation.id, ids));
+    for (const r of rows) {
+      map.set(r.id, {
+        wonQuotationCode: r.code,
+        wonQuotationTitle: r.title,
+        wonQuotationAmount: Number(r.totalAmount ?? 0),
+        opportunityId: r.opportunityId ?? null,
+        opportunityTitle: r.opportunityTitle ?? null,
+      });
+    }
+    return map;
+  }
+
+  /** 校验成交报价并返回可写入的 quotation id（可顺带推断合同） */
+  private async assertWonQuotation(
+    quotationId: string,
+    contractId?: string,
+  ): Promise<{
+    quotationId: string;
+    contractId: string | null;
+    totalAmount: number;
+  }> {
+    const rows = await this.db
+      .select({
+        id: crmQuotation.id,
+        status: crmQuotation.status,
+        contractId: crmQuotation.contractId,
+        opportunityId: crmQuotation.opportunityId,
+        totalAmount: crmQuotation.totalAmount,
+        oppContractId: crmOpportunity.contractId,
+        oppWonId: crmOpportunity.wonQuotationId,
+      })
+      .from(crmQuotation)
+      .leftJoin(
+        crmOpportunity,
+        eq(crmQuotation.opportunityId, crmOpportunity.id),
+      )
+      .where(eq(crmQuotation.id, quotationId))
+      .limit(1);
+    if (rows.length === 0) throw new NotFoundException('报价单不存在');
+    const q = rows[0];
+    if (q.status === 'void') {
+      throw new BadRequestException('已作废的报价单不能关联到项目');
+    }
+    const linkedContract = q.contractId ?? q.oppContractId ?? null;
+    if (contractId && linkedContract && linkedContract !== contractId) {
+      throw new BadRequestException(
+        '所选成交报价单与项目合同不一致，请选择该合同对应商机下的报价',
+      );
+    }
+    return {
+      quotationId: q.id,
+      contractId: linkedContract,
+      totalAmount: Number(q.totalAmount ?? 0),
     };
   }
 
@@ -196,14 +280,24 @@ export class ProjectsService {
       .leftJoin(erpContract, eq(erpProject.contractId, erpContract.id))
       .where(and(...conditions))
       .orderBy(desc(erpProject.createdAt));
-    return rows
-      .filter(
-        (row) =>
-          !keyword ||
-          row.project.name.includes(keyword) ||
-          row.project.code.includes(keyword)
-      )
-      .map((row) => toProject(row.project, row.contractName ?? ''));
+    const filtered = rows.filter(
+      (row) =>
+        !keyword ||
+        row.project.name.includes(keyword) ||
+        row.project.code.includes(keyword),
+    );
+    const extras = await this.resolveQuoteExtras(
+      filtered.map((r) => r.project.wonQuotationId),
+    );
+    return filtered.map((row) =>
+      toProject(
+        row.project,
+        row.contractName ?? '',
+        row.project.wonQuotationId
+          ? extras.get(row.project.wonQuotationId) ?? {}
+          : {},
+      ),
+    );
   }
 
   async getProject(id: string): Promise<ProjectDetail> {
@@ -213,7 +307,16 @@ export class ProjectsService {
       .leftJoin(erpContract, eq(erpProject.contractId, erpContract.id))
       .where(eq(erpProject.id, id));
     if (rows.length === 0) throw new NotFoundException('项目不存在');
-    const base = toProject(rows[0].project, rows[0].contractName ?? '');
+    const extras = await this.resolveQuoteExtras([
+      rows[0].project.wonQuotationId,
+    ]);
+    const base = toProject(
+      rows[0].project,
+      rows[0].contractName ?? '',
+      rows[0].project.wonQuotationId
+        ? extras.get(rows[0].project.wonQuotationId) ?? {}
+        : {},
+    );
     const milestoneRows = await this.db
       .select()
       .from(erpProjectMilestone)
@@ -639,25 +742,18 @@ export class ProjectsService {
     const periodMatch = /^(\d{4})-(\d{2})$/u.exec(period);
     const voucherDate = periodMatch
       ? `${period}-01`
-      : new Date().toISOString().slice(0, 10);
+      : todayInShanghai();
 
+    // D-19：统一走 ArService + sourceRef 幂等，禁止直接 INSERT erp_ar
     if (row.contractId) {
       try {
-        const arCode = await generateBizCode(
-          this.db,
-          erpAr,
-          erpAr.code,
-          'AR'
-        );
-        await this.db.insert(erpAr).values({
-          code: arCode,
+        await assertPeriodOpen(this.db, voucherDate, '项目收入确认生成应收');
+        await this.arService.createAr({
           contractId: row.contractId,
           projectId: row.projectId ?? undefined,
-          customerId: contract?.customerId ?? undefined,
-          amount: String(amount),
-          settledAmount: '0',
-          status: 'open',
+          amount,
           source: 'revenue',
+          sourceRef: `revenue:${row.code}`,
           remark: `项目收入确认 ${row.code}`,
         });
       } catch (error) {
@@ -665,40 +761,25 @@ export class ProjectsService {
           `项目收入确认生成应收失败：${row.code}`,
           error instanceof Error ? error.stack : String(error)
         );
-        try {
-          await this.voucherHook.recordCompensation(
-            'revenue-ar',
-            `revenue-ar:${row.code}`,
-            '项目收入确认生成应收失败'
-          );
-        } catch {
-          /* 补偿登记失败不阻断主流程 */
-        }
       }
     }
 
-    try {
-      await this.voucherHook.generateVoucherDraft({
-        sourceType: 'revenue',
-        sourceRef: `revenue:${row.code}`,
+    const lines = outputIssueLines(amount, rate);
+    const voucherResult = await this.voucherHook.generateVoucherDraft({
+      sourceType: 'revenue',
+      sourceRef: `revenue:${row.code}`,
+      voucherDate,
+      summary: `收入确认 ${row.code}`,
+      lines,
+    });
+    if (voucherResult === 'failed') {
+      await this.voucherHook.recordCompensation(
+        'revenue',
+        `revenue:${row.code}`,
+        '项目收入确认凭证生成失败',
+        lines,
         voucherDate,
-        summary: `收入确认 ${row.code}`,
-        lines: outputIssueLines(amount, rate),
-      });
-    } catch (error) {
-      this.logger.error(
-        `项目收入确认凭证生成失败：${row.code}`,
-        error instanceof Error ? error.stack : String(error)
       );
-      try {
-        await this.voucherHook.recordCompensation(
-          'revenue-voucher',
-          `revenue:${row.code}`,
-          '项目收入确认凭证生成失败'
-        );
-      } catch {
-        /* 补偿登记失败不阻断主流程 */
-      }
     }
 
     // 供日志排查：net/tax 由 splitTax 得出，确认拆分口径与开票一致
@@ -724,6 +805,39 @@ export class ProjectsService {
         `合同 ${contractStatus} 状态不允许立项，须先生效`
       );
     }
+    let wonQuotationId: string | null = null;
+    if (dto.wonQuotationId) {
+      const asserted = await this.assertWonQuotation(
+        dto.wonQuotationId,
+        dto.contractId,
+      );
+      wonQuotationId = asserted.quotationId;
+    } else {
+      // 若合同对应商机已选定最终成交报价，自动带入
+      const opp = await this.db
+        .select({
+          wonQuotationId: crmOpportunity.wonQuotationId,
+        })
+        .from(crmOpportunity)
+        .where(eq(crmOpportunity.contractId, dto.contractId))
+        .limit(1);
+      if (opp[0]?.wonQuotationId) {
+        wonQuotationId = opp[0].wonQuotationId;
+      } else {
+        const fromQuote = await this.db
+          .select({ id: crmQuotation.id })
+          .from(crmQuotation)
+          .where(
+            and(
+              eq(crmQuotation.contractId, dto.contractId),
+              eq(crmQuotation.status, 'converted'),
+            ),
+          )
+          .orderBy(desc(crmQuotation.createdAt))
+          .limit(1);
+        if (fromQuote[0]) wonQuotationId = fromQuote[0].id;
+      }
+    }
     const code = await generateBizCode(
       this.db,
       erpProject,
@@ -736,7 +850,9 @@ export class ProjectsService {
         code,
         name: dto.name,
         contractId: dto.contractId,
+        wonQuotationId,
         pm: dto.pm,
+        pmUserId: dto.pmUserId ?? null,
         deptName: dto.deptName,
         budget: String(dto.budget ?? Number(contracts[0].netAmount ?? 0)),
         estimatedTotalCost: String(dto.estimatedTotalCost ?? 0),
@@ -764,12 +880,24 @@ export class ProjectsService {
       patch.progress = dto.progress;
     }
     if (dto.pm !== undefined) patch.pm = dto.pm;
+    if (dto.pmUserId !== undefined) patch.pmUserId = dto.pmUserId;
     if (dto.budget !== undefined) patch.budget = String(dto.budget);
     if (dto.estimatedTotalCost !== undefined) {
       patch.estimatedTotalCost = String(dto.estimatedTotalCost);
     }
     if (dto.endDate !== undefined) patch.endDate = dto.endDate;
     if (dto.remark !== undefined) patch.remark = dto.remark;
+    if (dto.wonQuotationId !== undefined) {
+      if (dto.wonQuotationId === null) {
+        patch.wonQuotationId = null;
+      } else {
+        const asserted = await this.assertWonQuotation(
+          dto.wonQuotationId,
+          existing[0].contractId ?? undefined,
+        );
+        patch.wonQuotationId = asserted.quotationId;
+      }
+    }
     const rows = await this.db
       .update(erpProject)
       .set(patch)
@@ -780,7 +908,12 @@ export class ProjectsService {
       .select({ name: erpContract.name })
       .from(erpContract)
       .where(eq(erpContract.id, row.contractId ?? ''));
-    return toProject(row, contract[0]?.name ?? '');
+    const extras = await this.resolveQuoteExtras([row.wonQuotationId]);
+    return toProject(
+      row,
+      contract[0]?.name ?? '',
+      row.wonQuotationId ? extras.get(row.wonQuotationId) ?? {} : {},
+    );
   }
 
   async addMilestone(
@@ -823,7 +956,7 @@ export class ProjectsService {
     };
     if (dto.status === 'reached') {
       patch.status = 'reached';
-      patch.actualDate = dto.actualDate ?? new Date().toISOString().slice(0, 10);
+      patch.actualDate = dto.actualDate ?? todayInShanghai();
     } else {
       if (isReached) {
         throw new BadRequestException('已达成里程碑不可编辑预测日期/权重');

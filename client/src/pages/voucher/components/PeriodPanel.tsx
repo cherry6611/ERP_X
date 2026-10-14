@@ -91,7 +91,33 @@ const PeriodPanel: React.FC = () => {
       fixed: 'right',
       width: 260,
       render: (_: unknown, record: PeriodStatus) => {
-        if (record.closed) return <span className="text-sm text-muted-foreground">—</span>;
+        if (record.closed) {
+          return (
+            <CanRole roles={['admin']}>
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={operating}
+                onClick={() => {
+                  void (async () => {
+                    setOperating(true);
+                    try {
+                      await voucherApi.unclosePeriod(record.period);
+                      toast.success(`期间 ${record.period} 已反结账`);
+                      await reload();
+                    } catch (err) {
+                      toast.error(err instanceof Error ? err.message : '反结账失败');
+                    } finally {
+                      setOperating(false);
+                    }
+                  })();
+                }}
+              >
+                反结账
+              </Button>
+            </CanRole>
+          );
+        }
         const reason = getCloseDisabledReason(record);
         return (
           <div className="flex items-center gap-2">

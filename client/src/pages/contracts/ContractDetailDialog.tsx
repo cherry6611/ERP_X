@@ -7,6 +7,7 @@ import { Plus } from 'lucide-react';
 import { Table, TableColumnsType } from 'antd';
 import { CanRole } from '@client/src/platform/auth';
 import { DataState } from '@client/src/components/DataState';
+import { SectionTitle } from '@client/src/components/SectionTitle';
 import StatusBadge from '@client/src/components/erp/StatusBadge';
 import { Badge } from '@client/src/components/ui/badge';
 import { Button } from '@client/src/components/ui/button';
@@ -39,6 +40,7 @@ import { contractsApi, crmApi, masterDataApi } from '@client/src/api';
 import type { ContractItem } from '@client/src/api/contracts';
 import { formatMoney } from '@client/src/utils/format';
 import { getApiErrorMessage } from '@client/src/utils/api-error-message';
+import { confirmDanger } from '@client/src/utils/confirmDanger';
 import { BILLING_MODEL_LABELS, CONTRACT_STATUS_LABELS } from '@client/src/utils/biz-labels';
 import { formatTaxSplitLine } from '@client/src/utils/tax-display';
 import {
@@ -100,15 +102,18 @@ type ChangeFormInput = z.input<typeof changeSchema>;
 
 interface ContractDetailDialogProps {
   contractId: string | null;
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
+  asPage?: boolean;
 }
 
 const ContractDetailDialog: React.FC<ContractDetailDialogProps> = ({
   contractId,
-  open,
+  open = false,
   onOpenChange,
+  asPage = false,
 }) => {
+  const active = asPage || open;
   const [detail, setDetail] = useState<ContractDetail | null>(null);
   const [items, setItems] = useState<ContractItem[]>([]);
   const [loading, setLoading] = useState(false);
@@ -161,14 +166,13 @@ const ContractDetailDialog: React.FC<ContractDetailDialogProps> = ({
   };
 
   useEffect(() => {
-    if (open) void load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, contractId]);
+    if (active) void load();
+  }, [active, contractId]);
 
   useEffect(() => {
-    if (!open) return;
+    if (!active) return;
     void masterDataApi.listTaxEntities().then(setTaxEntities).catch(() => setTaxEntities([]));
-  }, [open]);
+  }, [active]);
 
   const doAction = async (action: ContractStatusAction) => {
     if (!contractId) return;
@@ -316,17 +320,17 @@ const ContractDetailDialog: React.FC<ContractDetailDialogProps> = ({
 
   const actions = detail ? (STATUS_ACTIONS[detail.status] ?? []) : [];
 
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-4xl max-h-[85vh] overflow-y-auto">
-        <DialogHeader>
-          <DialogTitle>
-            合同详情 - {detail?.code ?? ''}{' '}
-            {detail ? (
-              <StatusBadge status={detail.status} labels={CONTRACT_STATUS_LABELS} />
-            ) : null}
-          </DialogTitle>
-        </DialogHeader>
+  const pageTitle = (
+    <>
+      合同详情 - {detail?.code ?? ''}{' '}
+      {detail ? (
+        <StatusBadge status={detail.status} labels={CONTRACT_STATUS_LABELS} />
+      ) : null}
+    </>
+  );
+
+  const content = (
+    <>
         <DataState loading={loading} error={error}>
         {detail ? (
           <div className="flex flex-col gap-6">
@@ -406,7 +410,7 @@ const ContractDetailDialog: React.FC<ContractDetailDialogProps> = ({
 
             <div className="flex flex-col gap-3">
               <div className="flex items-center justify-between">
-                <h3 className="text-base font-semibold">合同明细</h3>
+                <SectionTitle>合同明细</SectionTitle>
                 {detail.status === 'draft' ? (
                   <CanRole roles={['admin']}>
                     <div className="flex gap-2">
@@ -496,14 +500,26 @@ const ContractDetailDialog: React.FC<ContractDetailDialogProps> = ({
                           <Button
                             size="sm"
                             variant="ghost"
-                            onClick={() =>
-                              void contractsApi
-                                .deleteContractItem(detail.id, row.id)
-                                .then(load)
-                                .catch((err: unknown) =>
-                                  toast.error(getApiErrorMessage(err, '删除失败'))
-                                )
-                            }
+                            onClick={() => {
+                              void (async () => {
+                                const ok = await confirmDanger(
+                                  `确认删除明细「${row.itemName}」？此操作不可恢复。`,
+                                  { title: '确认删除' },
+                                );
+                                if (!ok) return;
+                                try {
+                                  await contractsApi.deleteContractItem(
+                                    detail.id,
+                                    row.id,
+                                  );
+                                  await load();
+                                } catch (err: unknown) {
+                                  toast.error(
+                                    getApiErrorMessage(err, '删除失败'),
+                                  );
+                                }
+                              })();
+                            }}
                           >
                             删除
                           </Button>
@@ -517,7 +533,7 @@ const ContractDetailDialog: React.FC<ContractDetailDialogProps> = ({
 
             <div className="flex flex-col gap-3">
               <div className="flex items-center justify-between">
-                <h3 className="text-base font-semibold">合同里程碑</h3>
+                <SectionTitle>合同里程碑</SectionTitle>
                 <CanRole roles={['admin']}>
                   <Button size="sm" variant="outline" onClick={() => setMilestoneOpen(true)}>
                     <Plus className="h-4 w-4" />
@@ -538,10 +554,10 @@ const ContractDetailDialog: React.FC<ContractDetailDialogProps> = ({
             {detail.billingModel === 'framework' ? (
               <div className="flex flex-col gap-3">
                 <div className="flex items-center justify-between">
-                  <h3 className="text-base font-semibold">
+                  <SectionTitle>
                     Call-off 下单（累计 {formatMoney(detail.billable.calloffTotal)} / 上限{' '}
                     {formatMoney(detail.amount)}）
-                  </h3>
+                  </SectionTitle>
                   <CanRole roles={['admin']}>
                     <Button size="sm" variant="outline" onClick={() => setCalloffOpen(true)}>
                       <Plus className="h-4 w-4" />
@@ -561,7 +577,7 @@ const ContractDetailDialog: React.FC<ContractDetailDialogProps> = ({
             ) : null}
 
             <div className="flex flex-col gap-3">
-              <h3 className="text-base font-semibold">变更版本留痕</h3>
+              <SectionTitle>变更版本留痕</SectionTitle>
               <Table
                 columns={versionColumns}
                 dataSource={detail.versions}
@@ -911,6 +927,20 @@ const ContractDetailDialog: React.FC<ContractDetailDialogProps> = ({
             </DialogFooter>
           </DialogContent>
         </Dialog>
+    </>
+  );
+
+  if (asPage) {
+    return <div className="space-y-4">{content}</div>;
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-4xl max-h-[85vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle>{pageTitle}</DialogTitle>
+        </DialogHeader>
+        {content}
       </DialogContent>
     </Dialog>
   );

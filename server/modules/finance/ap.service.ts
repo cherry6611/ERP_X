@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   Inject,
   Injectable,
   Logger,
@@ -9,7 +10,7 @@ import {
   DRIZZLE_DATABASE,
   type PostgresJsDatabase,
 } from '@server/platform';
-import { and, desc, eq, inArray, sql, sum } from 'drizzle-orm';
+import { and, desc, eq, inArray, sql, sum, type SQL } from 'drizzle-orm';
 import {
   erpApBill,
   erpApWriteoff,
@@ -18,9 +19,13 @@ import {
   mdSupplier,
 } from '@server/database/schema';
 import { generateBizCode } from '@server/common/utils/biz-code';
-import { inputIssueLines } from '@server/common/tax/posting';
+import { DataScopeService } from '@server/common/auth/data-scope.service';
+import type { RequestActor } from '@server/common/auth/actor';
+import { inputIssueLines, paymentLines, paymentVoidLines } from '@server/common/tax/posting';
 import { TaxResolverService } from '@server/modules/tax/tax-resolver.service';
 import { VoucherHookService } from '@server/modules/voucher/voucher-hook.service';
+import { todayInShanghai } from '@server/common/utils/biz-date';
+import { assertPeriodOpen } from '@server/common/utils/period-guard';
 import type {
   ApItem,
   ApStatus,
@@ -38,13 +43,49 @@ export class ApService {
   constructor(
     @Inject(DRIZZLE_DATABASE) private readonly db: PostgresJsDatabase,
     private readonly voucherHookService: VoucherHookService,
-    private readonly taxResolver: TaxResolverService
+    private readonly taxResolver: TaxResolverService,
+    private readonly dataScope: DataScopeService
   ) {}
 
-  async listAps(supplierId?: string, status?: string): Promise<ApItem[]> {
-    const conditions = [];
+  /**
+   * B-02：应付列表的行级可见范围（SQL 层过滤）。
+   *
+   * `finance_ledger` 资源在应付上的语义映射：
+   *   - `custom`            → 被授权的**纳税主体**：`md_supplier.tax_entity_id IN (custom_ids)`
+   *   - `self`              → 项目负责人：`erp_project.pm_user_id = 当前用户`
+   *   - `dept/dept_and_child` → `erp_project.dept_name IN (本部门及下级)`
+   * 口径说明（**需业务确认**）：erp_ap_bill 自身既无 tax_entity_id 也无 owner 字段，
+   * 故分别以供应商主体与项目负责人代位；无项目/无供应商的应付单在收窄范围下会被排除。
+   */
+  private async scopeCondition(actor?: RequestActor): Promise<SQL | undefined> {
+    if (!actor) return undefined;
+    const resolved = await this.dataScope.resolveScope(
+      actor.roles ?? [],
+      'finance_ledger'
+    );
+    if (resolved.from !== 'config') return undefined;
+    return this.dataScope.conditionFor(
+      'finance_ledger',
+      actor,
+      {
+        primary: mdSupplier.taxEntityId,
+        self: erpProject.pmUserId,
+        dept: erpProject.deptName,
+      },
+      { departmentValueKind: 'name', resolved }
+    );
+  }
+
+  async listAps(
+    supplierId?: string,
+    status?: string,
+    actor?: RequestActor
+  ): Promise<ApItem[]> {
+    const conditions: SQL[] = [];
     if (supplierId) conditions.push(eq(erpApBill.supplierId, supplierId));
     if (status) conditions.push(eq(erpApBill.status, status));
+    const scopeWhere: SQL | undefined = await this.scopeCondition(actor);
+    if (scopeWhere) conditions.push(scopeWhere);
     const rows = await this.db
       .select({
         ap: erpApBill,
@@ -78,6 +119,11 @@ export class ApService {
     if (dto.amount <= 0) {
       throw new BadRequestException('应付金额必须大于 0');
     }
+    await assertPeriodOpen(
+      this.db,
+      dto.dueDate ?? todayInShanghai(),
+      '登记应付',
+    );
     const supplier = await this.db
       .select({ id: mdSupplier.id, name: mdSupplier.name })
       .from(mdSupplier)
@@ -112,7 +158,7 @@ export class ApService {
     await this.voucherHookService.generateVoucherDraft({
       sourceType: 'ap',
       sourceRef: `ap:${row.code}`,
-      voucherDate: new Date().toISOString().slice(0, 10),
+      voucherDate: todayInShanghai(),
       summary: `应付登记 ${row.code}`,
       lines: inputIssueLines(Number(row.amount ?? 0), resolved.rate),
     });
@@ -308,18 +354,15 @@ export class ApService {
       return updated[0];
     });
 
-    /* 付款审批通过 → 生成凭证草稿：借 应付账款(2202) / 贷 银行存款(1001) */
+    /* 付款审批通过 → 生成凭证草稿：借 应付账款(2202) / 贷 银行存款(1002/100201) */
     if (action === 'approve') {
       const payAmount = Number(row.amount ?? 0);
       const voucherStatus = await this.voucherHookService.generateVoucherDraft({
         sourceType: 'payment',
         sourceRef: `payment:${row.code}`,
-        voucherDate: row.payDate ?? new Date().toISOString().slice(0, 10),
+        voucherDate: row.payDate ?? todayInShanghai(),
         summary: `付款审批 ${row.code}`,
-        lines: [
-          { accountCode: '2202', debit: payAmount },
-          { accountCode: '1001', credit: payAmount },
-        ],
+        lines: paymentLines(payAmount),
       });
       if (voucherStatus !== 'created') {
         this.logger.error(
@@ -393,12 +436,9 @@ export class ApService {
       await this.voucherHookService.generateVoucherDraft({
         sourceType: 'payment',
         sourceRef: `payment-void:${row.code}`,
-        voucherDate: new Date().toISOString().slice(0, 10),
+        voucherDate: todayInShanghai(),
         summary: `付款作废 ${row.code}`,
-        lines: [
-          { accountCode: '1001', debit: payAmount },
-          { accountCode: '2202', credit: payAmount },
-        ],
+        lines: paymentVoidLines(payAmount),
       });
     }
     const ap = await this.db
@@ -426,7 +466,7 @@ export class ApService {
     };
   }
 
-  /** 付款核销：将已批准的付款核销到应付（支持部分核销）。事务内锁行校验，防并发超核销 */
+  /** 付款核销：事务内 FOR UPDATE 锁行（不可 SKIP LOCKED，需等待持锁方完成） */
   async apWriteoff(dto: ApWriteoffDto): Promise<ApItem> {
     if (dto.amount <= 0) {
       throw new BadRequestException('核销金额必须大于 0');
@@ -452,42 +492,72 @@ export class ApService {
       if (payment.apId !== dto.apId) {
         throw new BadRequestException('付款与应付不匹配，不可核销');
       }
-      const apRemaining = Number(ap.amount) - Number(ap.paidAmount ?? 0);
-      if (dto.amount > apRemaining) {
-        throw new BadRequestException(`核销金额超过应付未付余额 ${apRemaining}`);
+      // F4X-4：条件更新 paid_amount / used_amount，防并发超额
+      const apUpdated = await tx
+        .update(erpApBill)
+        .set({
+          paidAmount: sql`coalesce(${erpApBill.paidAmount}, 0) + ${dto.amount}`,
+          updatedAt: new Date(),
+        })
+        .where(
+          and(
+            eq(erpApBill.id, dto.apId),
+            sql`coalesce(${erpApBill.paidAmount}, 0) + ${dto.amount} <= ${erpApBill.amount}`,
+          ),
+        )
+        .returning({
+          paidAmount: erpApBill.paidAmount,
+          amount: erpApBill.amount,
+          status: erpApBill.status,
+        });
+      if (apUpdated.length === 0) {
+        throw new BadRequestException(
+          '应付可用余额不足（可能已被并发核销）',
+        );
       }
-      const usedRows = await tx
-        .select({ total: sum(erpApWriteoff.amount) })
-        .from(erpApWriteoff)
-        .where(eq(erpApWriteoff.paymentId, dto.paymentId));
-      const payRemaining =
-        Number(payment.amount) - Number(usedRows[0]?.total ?? 0);
-      if (dto.amount > payRemaining) {
-        throw new BadRequestException(`核销金额超过付款未核销余额 ${payRemaining}`);
+      const payUpdated = await tx
+        .update(erpPayment)
+        .set({
+          usedAmount: sql`${erpPayment.usedAmount} + ${dto.amount}`,
+          updatedAt: new Date(),
+        })
+        .where(
+          and(
+            eq(erpPayment.id, dto.paymentId),
+            sql`${erpPayment.usedAmount} + ${dto.amount} <= ${erpPayment.amount}`,
+          ),
+        )
+        .returning({
+          usedAmount: erpPayment.usedAmount,
+          amount: erpPayment.amount,
+        });
+      if (payUpdated.length === 0) {
+        throw new BadRequestException(
+          '付款可用余额不足（可能已被并发核销）',
+        );
       }
       await tx.insert(erpApWriteoff).values({
         apId: dto.apId,
         paymentId: dto.paymentId,
         amount: String(dto.amount),
-        writeoffDate: new Date().toISOString().slice(0, 10),
+        writeoffDate: todayInShanghai(),
       });
-      const newPaid = Number(ap.paidAmount ?? 0) + dto.amount;
+      const newPaid = Number(apUpdated[0].paidAmount ?? 0);
       const apStatus =
-        newPaid >= Number(ap.amount)
+        newPaid >= Number(apUpdated[0].amount)
           ? 'paid'
           : newPaid > 0
             ? 'partial'
-            : (ap.status ?? 'pending');
+            : (apUpdated[0].status ?? 'pending');
       await tx
         .update(erpApBill)
         .set({
-          paidAmount: String(newPaid),
           status: apStatus,
           updatedAt: new Date(),
         })
         .where(eq(erpApBill.id, dto.apId));
-      const newUsed = Number(usedRows[0]?.total ?? 0) + dto.amount;
-      if (newUsed >= Number(payment.amount)) {
+      const newUsed = Number(payUpdated[0].usedAmount ?? 0);
+      if (newUsed >= Number(payUpdated[0].amount)) {
         await tx
           .update(erpPayment)
           .set({ status: 'paid', updatedAt: new Date() })
@@ -504,6 +574,126 @@ export class ApService {
       .leftJoin(mdSupplier, eq(erpApBill.supplierId, mdSupplier.id))
       .leftJoin(erpProject, eq(erpApBill.projectId, erpProject.id))
       .where(eq(erpApBill.id, dto.apId));
+    const row = updated[0];
+    return {
+      id: row.ap.id,
+      code: row.ap.code,
+      supplierId: row.ap.supplierId ?? '',
+      supplierName: row.supplierName ?? '',
+      projectId: row.ap.projectId,
+      projectName: row.projectName,
+      amount: Number(row.ap.amount ?? 0),
+      paidAmount: Number(row.ap.paidAmount ?? 0),
+      dueDate: row.ap.dueDate,
+      status: (row.ap.status ?? 'pending') as ApStatus,
+      source: row.ap.source ?? 'manual',
+      sourceRef: row.ap.sourceRef,
+      remark: row.ap.remark,
+      createdAt: row.ap.createdAt.toISOString(),
+    };
+  }
+
+  /** 应付核销冲回 */
+  async reverseWriteoff(writeoffId: string, remark?: string): Promise<ApItem> {
+    let apId = '';
+    await this.db.transaction(async (tx) => {
+      const rows = await tx
+        .select()
+        .from(erpApWriteoff)
+        .where(eq(erpApWriteoff.id, writeoffId))
+        .for('update');
+      if (rows.length === 0) throw new NotFoundException('核销记录不存在');
+      const src = rows[0];
+      if (src.reversalOf) {
+        throw new BadRequestException('红字核销行不可再次冲回');
+      }
+      const already = await tx
+        .select({ id: erpApWriteoff.id })
+        .from(erpApWriteoff)
+        .where(eq(erpApWriteoff.reversalOf, writeoffId))
+        .limit(1);
+      if (already.length > 0) {
+        throw new BadRequestException('该核销已冲回，请勿重复操作');
+      }
+      const amount = Number(src.amount ?? 0);
+      if (amount <= 0) throw new BadRequestException('核销金额无效');
+      apId = src.apId ?? '';
+      const apRows = await tx
+        .select()
+        .from(erpApBill)
+        .where(eq(erpApBill.id, apId))
+        .for('update');
+      if (apRows.length === 0) throw new NotFoundException('应付记录不存在');
+      const payRows = await tx
+        .select()
+        .from(erpPayment)
+        .where(eq(erpPayment.id, src.paymentId ?? ''))
+        .for('update');
+      if (payRows.length === 0) throw new NotFoundException('付款记录不存在');
+      try {
+        await tx.insert(erpApWriteoff).values({
+          apId,
+          paymentId: src.paymentId,
+          amount: String(-amount),
+          writeoffDate: todayInShanghai(),
+          reversalOf: writeoffId,
+          remark: remark ?? '核销冲回',
+        });
+      } catch (error) {
+        const code =
+          error && typeof error === 'object' && 'code' in error
+            ? String((error as { code: unknown }).code)
+            : '';
+        if (code === '23505') {
+          throw new ConflictException('该核销已被冲回，请勿重复操作');
+        }
+        throw error;
+      }
+      const newPaid = Math.max(0, Number(apRows[0].paidAmount ?? 0) - amount);
+      const apStatus =
+        newPaid <= 0.001
+          ? 'pending'
+          : newPaid >= Number(apRows[0].amount)
+            ? 'paid'
+            : 'partial';
+      await tx
+        .update(erpPayment)
+        .set({
+          usedAmount: sql`greatest(0, ${erpPayment.usedAmount} - ${amount})`,
+          updatedAt: new Date(),
+        })
+        .where(eq(erpPayment.id, src.paymentId ?? ''));
+      await tx
+        .update(erpApBill)
+        .set({
+          paidAmount: String(newPaid),
+          status: apStatus,
+          updatedAt: new Date(),
+        })
+        .where(eq(erpApBill.id, apId));
+      const usedRows = await tx
+        .select({ total: sum(erpApWriteoff.amount) })
+        .from(erpApWriteoff)
+        .where(eq(erpApWriteoff.paymentId, src.paymentId ?? ''));
+      const newUsed = Number(usedRows[0]?.total ?? 0);
+      await tx
+        .update(erpPayment)
+        .set({
+          status: newUsed >= Number(payRows[0].amount) - 0.001 ? 'paid' : 'approved',
+          updatedAt: new Date(),
+        })
+        .where(eq(erpPayment.id, src.paymentId ?? ''));
+    });
+    const updated = await this.db
+      .select({
+        ap: erpApBill,
+        supplierName: mdSupplier.name,
+        projectName: erpProject.name,
+      })
+      .from(erpApBill)
+      .leftJoin(mdSupplier, eq(erpApBill.supplierId, mdSupplier.id))
+      .leftJoin(erpProject, eq(erpApBill.projectId, erpProject.id))
+      .where(eq(erpApBill.id, apId));
     const row = updated[0];
     return {
       id: row.ap.id,

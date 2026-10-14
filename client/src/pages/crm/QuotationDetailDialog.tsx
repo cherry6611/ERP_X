@@ -16,6 +16,7 @@ import { useAsyncData } from '@client/src/hooks/useAsyncData';
 import { QUOTATION_STATUS_LABELS } from '@client/src/utils/biz-labels';
 import { formatMoney, formatPercent } from '@client/src/utils/format';
 import { getApiErrorMessage } from '@client/src/utils/api-error-message';
+import { confirmDanger } from '@client/src/utils/confirmDanger';
 import type { Opportunity, Quotation, QuotationItem } from '@shared/api.interface';
 
 interface QuotationDetailDialogProps {
@@ -46,6 +47,13 @@ const QuotationDetailDialog: React.FC<QuotationDetailDialogProps> = ({
 
   const runAction = async (action: QuotationAction) => {
     if (!quotation) return;
+    if (action === 'void') {
+      const ok = await confirmDanger(
+        `确认作废报价单 ${quotation.code}？此操作不可恢复。`,
+        { title: '确认作废' },
+      );
+      if (!ok) return;
+    }
     try {
       if (action === 'convert') {
         const contract = await crmApi.convertQuotation(quotation.id);

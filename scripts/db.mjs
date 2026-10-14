@@ -2,7 +2,8 @@
  * 本地 PostgreSQL 实例管理（start / stop / restart / status / init）
  *
  * 背景：本机 5432 端口已被另一个 PostgreSQL 占用，本项目改用
- *   数据目录 <repo>/.pgdata，端口 5433，超级用户 erp / ******，库名 shengseerp。
+ *   数据目录 <repo>/.pgdata，端口 5433，超级用户 erp，库名 shengseerp。
+ *   init 密码读取环境变量 POSTGRES_PASSWORD（或 PGPASSWORD），勿把口令写进脚本。
  * 由于未注册为 Windows 服务，重启电脑后需要手动拉起 —— 本脚本就是为此准备的。
  *
  * 用法：
@@ -87,8 +88,16 @@ switch (cmd) {
     }
     mkdirSync(PGDATA, { recursive: true });
     // Windows 下 initdb 的 --pwfile 从 stdin 读取不稳定，改为落临时文件
+    // M14：密码从环境变量读取，禁止把口令写死在仓库脚本中
+    const initPassword = process.env.POSTGRES_PASSWORD || process.env.PGPASSWORD;
+    if (!initPassword) {
+      console.error(
+        '[db] 请设置环境变量 POSTGRES_PASSWORD（或 PGPASSWORD）后再执行 init',
+      );
+      process.exit(1);
+    }
     const pwFile = join(PGDATA, '..', '.pgpw.tmp');
-    writeFileSync(pwFile, '******\n');
+    writeFileSync(pwFile, `${initPassword}\n`);
     const r = spawnSync(
       `"${initDb}" -D "${PGDATA}" -U erp --auth=scram-sha-256 --pwfile "${pwFile}" -E UTF8`,
       { stdio: 'inherit', shell: true }

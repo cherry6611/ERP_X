@@ -6,6 +6,7 @@ import {
   DialogTitle,
 } from '@client/src/components/ui/dialog';
 import { AttachmentField } from '@client/src/components/attachments/AttachmentField';
+import { SectionTitle } from '@client/src/components/SectionTitle';
 import { formatMoney, formatNumber } from '@client/src/utils/format';
 import RentStatusBadge from './RentStatusBadge';
 import type {
@@ -72,7 +73,7 @@ const RentContractDetailDialog: React.FC<RentContractDetailDialogProps> = ({
             <DetailRow label="备注">{contract.remark ?? '-'}</DetailRow>
           </div>
           <div>
-            <h3 className="text-base font-semibold mb-2">附件</h3>
+            <SectionTitle className="mb-2">附件</SectionTitle>
             <AttachmentField
               resourceType="admin_rent_contract"
               resourceId={contract.id}

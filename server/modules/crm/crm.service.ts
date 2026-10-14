@@ -8,10 +8,11 @@ import {
   DRIZZLE_DATABASE,
   type PostgresJsDatabase,
 } from '@server/platform';
-import { desc, eq } from 'drizzle-orm';
+import { asc, count, desc, eq, inArray } from 'drizzle-orm';
 import {
   crmLead,
   crmOpportunity,
+  crmQuotation,
   erpContract,
   mdCustomer,
 } from '@server/database/schema';
@@ -20,13 +21,15 @@ import { TaxResolverService } from '@server/modules/tax/tax-resolver.service';
 import { splitTax } from '@shared/tax';
 import type {
   Contract,
-  CreateContractDto,
   CreateLeadDto,
   CreateOpportunityDto,
   Lead,
   LeadStatus,
   Opportunity,
+  OpportunityDetail,
+  OpportunityQuotationSummary,
   OpportunityStage,
+  QuotationStatus,
   UpdateLeadDto,
   UpdateOpportunityDto,
 } from '@shared/api.interface';
@@ -159,6 +162,90 @@ export class CrmService {
     };
   }
 
+  private async enrichOpportunities(
+    opps: Array<typeof crmOpportunity.$inferSelect>,
+    customerNames: Map<string, string>,
+  ): Promise<Opportunity[]> {
+    if (opps.length === 0) return [];
+    const ids = opps.map((o) => o.id);
+    const wonIds = opps
+      .map((o) => o.wonQuotationId)
+      .filter((id): id is string => Boolean(id));
+
+    const quoteCountRows = await this.db
+      .select({
+        opportunityId: crmQuotation.opportunityId,
+        cnt: count(),
+      })
+      .from(crmQuotation)
+      .where(inArray(crmQuotation.opportunityId, ids))
+      .groupBy(crmQuotation.opportunityId);
+    const countMap = new Map(
+      quoteCountRows.map((r) => [r.opportunityId ?? '', Number(r.cnt)]),
+    );
+
+    const wonMap = new Map<string, { code: string; title: string }>();
+    if (wonIds.length > 0) {
+      const wonRows = await this.db
+        .select({
+          id: crmQuotation.id,
+          code: crmQuotation.code,
+          title: crmQuotation.title,
+        })
+        .from(crmQuotation)
+        .where(inArray(crmQuotation.id, wonIds));
+      for (const w of wonRows) {
+        wonMap.set(w.id, { code: w.code, title: w.title });
+      }
+    }
+
+    return opps.map((row) => {
+      const won = row.wonQuotationId
+        ? wonMap.get(row.wonQuotationId)
+        : undefined;
+      return {
+        id: row.id,
+        code: row.code,
+        customerId: row.customerId ?? '',
+        customerName: customerNames.get(row.customerId ?? '') ?? '',
+        title: row.title,
+        stage: (row.stage ?? 'new') as OpportunityStage,
+        amount: Number(row.amount ?? 0),
+        winRate: row.winRate ?? 0,
+        owner: row.owner,
+        expectedDate: row.expectedDate,
+        remark: row.remark,
+        wonQuotationId: row.wonQuotationId ?? null,
+        wonQuotationCode: won?.code ?? null,
+        wonQuotationTitle: won?.title ?? null,
+        contractId: row.contractId ?? null,
+        quotationCount: countMap.get(row.id) ?? 0,
+        createdAt: row.createdAt.toISOString(),
+      };
+    });
+  }
+
+  private async toOpportunity(
+    row: typeof crmOpportunity.$inferSelect,
+    customerName?: string,
+  ): Promise<Opportunity> {
+    const name =
+      customerName ??
+      (
+        await this.db
+          .select({ name: mdCustomer.name })
+          .from(mdCustomer)
+          .where(eq(mdCustomer.id, row.customerId ?? ''))
+          .limit(1)
+      )[0]?.name ??
+      '';
+    const [enriched] = await this.enrichOpportunities(
+      [row],
+      new Map([[row.customerId ?? '', name]]),
+    );
+    return enriched;
+  }
+
   async listOpportunities(stage?: string): Promise<Opportunity[]> {
     const rows = await this.db
       .select({
@@ -169,20 +256,56 @@ export class CrmService {
       .leftJoin(mdCustomer, eq(crmOpportunity.customerId, mdCustomer.id))
       .where(stage ? eq(crmOpportunity.stage, stage) : undefined)
       .orderBy(desc(crmOpportunity.createdAt));
-    return rows.map((row) => ({
-      id: row.opp.id,
-      code: row.opp.code,
-      customerId: row.opp.customerId ?? '',
-      customerName: row.customerName ?? '',
-      title: row.opp.title,
-      stage: (row.opp.stage ?? 'new') as OpportunityStage,
-      amount: Number(row.opp.amount ?? 0),
-      winRate: row.opp.winRate ?? 0,
-      owner: row.opp.owner,
-      expectedDate: row.opp.expectedDate,
-      remark: row.opp.remark,
-      createdAt: row.opp.createdAt.toISOString(),
-    }));
+    const names = new Map(
+      rows.map((r) => [r.opp.customerId ?? '', r.customerName ?? '']),
+    );
+    return this.enrichOpportunities(
+      rows.map((r) => r.opp),
+      names,
+    );
+  }
+
+  async getOpportunity(id: string): Promise<OpportunityDetail> {
+    const rows = await this.db
+      .select({
+        opp: crmOpportunity,
+        customerName: mdCustomer.name,
+      })
+      .from(crmOpportunity)
+      .leftJoin(mdCustomer, eq(crmOpportunity.customerId, mdCustomer.id))
+      .where(eq(crmOpportunity.id, id))
+      .limit(1);
+    if (rows.length === 0) throw new NotFoundException('商机不存在');
+    const base = await this.toOpportunity(rows[0].opp, rows[0].customerName ?? '');
+    const quoteRows = await this.db
+      .select()
+      .from(crmQuotation)
+      .where(eq(crmQuotation.opportunityId, id))
+      .orderBy(asc(crmQuotation.roundNo), asc(crmQuotation.createdAt));
+    const quotations: OpportunityQuotationSummary[] = quoteRows.map((q) => {
+      const totalAmount = Number(q.totalAmount ?? 0);
+      const estimatedCost = Number(q.estimatedCost ?? 0);
+      const marginPct =
+        totalAmount > 0
+          ? Math.round(((totalAmount - estimatedCost) / totalAmount) * 10000) / 100
+          : 0;
+      return {
+        id: q.id,
+        code: q.code,
+        roundNo: q.roundNo ?? null,
+        title: q.title,
+        quoteDate: q.quoteDate,
+        validUntil: q.validUntil,
+        status: (q.status ?? 'draft') as QuotationStatus,
+        totalAmount,
+        estimatedCost,
+        marginPct,
+        remark: q.remark,
+        isWon: base.wonQuotationId === q.id,
+        createdAt: q.createdAt.toISOString(),
+      };
+    });
+    return { ...base, quotations };
   }
 
   async createOpportunity(dto: CreateOpportunityDto): Promise<Opportunity> {
@@ -211,21 +334,7 @@ export class CrmService {
         remark: dto.remark,
       })
       .returning();
-    const row = rows[0];
-    return {
-      id: row.id,
-      code: row.code,
-      customerId: row.customerId ?? '',
-      customerName: customer[0].name,
-      title: row.title,
-      stage: (row.stage ?? 'new') as OpportunityStage,
-      amount: Number(row.amount ?? 0),
-      winRate: row.winRate ?? 0,
-      owner: row.owner,
-      expectedDate: row.expectedDate,
-      remark: row.remark,
-      createdAt: row.createdAt.toISOString(),
-    };
+    return this.toOpportunity(rows[0], customer[0].name);
   }
 
   async updateOpportunity(
@@ -246,6 +355,22 @@ export class CrmService {
         );
       }
     }
+
+    if (dto.wonQuotationId !== undefined && dto.wonQuotationId !== null) {
+      const quotes = await this.db
+        .select()
+        .from(crmQuotation)
+        .where(eq(crmQuotation.id, dto.wonQuotationId))
+        .limit(1);
+      if (quotes.length === 0) throw new NotFoundException('报价单不存在');
+      if (quotes[0].opportunityId !== id) {
+        throw new BadRequestException('只能选定本商机下的报价单为最终成交');
+      }
+      if (quotes[0].status === 'void') {
+        throw new BadRequestException('已作废的报价单不能设为最终成交');
+      }
+    }
+
     const patch: Record<string, unknown> = { updatedAt: new Date() };
     if (dto.stage !== undefined) {
       patch.stage = dto.stage;
@@ -255,30 +380,27 @@ export class CrmService {
     if (dto.amount !== undefined) patch.amount = String(dto.amount);
     if (dto.winRate !== undefined) patch.winRate = dto.winRate;
     if (dto.remark !== undefined) patch.remark = dto.remark;
+    if (dto.owner !== undefined) patch.owner = dto.owner;
+    if (dto.expectedDate !== undefined) patch.expectedDate = dto.expectedDate || null;
+    if (dto.wonQuotationId !== undefined) {
+      patch.wonQuotationId = dto.wonQuotationId;
+      if (dto.wonQuotationId) {
+        const won = await this.db
+          .select({ totalAmount: crmQuotation.totalAmount })
+          .from(crmQuotation)
+          .where(eq(crmQuotation.id, dto.wonQuotationId))
+          .limit(1);
+        if (won[0] && dto.amount === undefined) {
+          patch.amount = String(won[0].totalAmount ?? 0);
+        }
+      }
+    }
     const rows = await this.db
       .update(crmOpportunity)
       .set(patch)
       .where(eq(crmOpportunity.id, id))
       .returning();
-    const row = rows[0];
-    const customer = await this.db
-      .select({ name: mdCustomer.name })
-      .from(mdCustomer)
-      .where(eq(mdCustomer.id, row.customerId ?? ''));
-    return {
-      id: row.id,
-      code: row.code,
-      customerId: row.customerId ?? '',
-      customerName: customer[0]?.name ?? '',
-      title: row.title,
-      stage: (row.stage ?? 'new') as OpportunityStage,
-      amount: Number(row.amount ?? 0),
-      winRate: row.winRate ?? 0,
-      owner: row.owner,
-      expectedDate: row.expectedDate,
-      remark: row.remark,
-      createdAt: row.createdAt.toISOString(),
-    };
+    return this.toOpportunity(rows[0]);
   }
 
   /** 线索转为商机。必须已经关联客户。 */
@@ -325,27 +447,10 @@ export class CrmService {
         .where(eq(crmLead.id, id));
       return inserted[0];
     });
-    const customer = await this.db
-      .select({ name: mdCustomer.name })
-      .from(mdCustomer)
-      .where(eq(mdCustomer.id, created.customerId ?? ''));
-    return {
-      id: created.id,
-      code: created.code,
-      customerId: created.customerId ?? '',
-      customerName: customer[0]?.name ?? '',
-      title: created.title,
-      stage: 'new',
-      amount: Number(created.amount ?? 0),
-      winRate: created.winRate ?? 0,
-      owner: created.owner,
-      expectedDate: created.expectedDate,
-      remark: created.remark,
-      createdAt: created.createdAt.toISOString(),
-    };
+    return this.toOpportunity(created);
   }
 
-  /** 已赢单商机生成合同草稿。同一商机只保留一份合同。 */
+  /** 已赢单商机生成合同草稿。同一商机只保留一份合同。优先使用最终成交报价金额。 */
   async convertToContract(opportunityId: string): Promise<Contract> {
     const existing = await this.db
       .select()
@@ -362,12 +467,20 @@ export class CrmService {
     if (!opp.customerId) {
       throw new BadRequestException('商机未关联客户，不能转合同');
     }
+    let amount = Number(opp.amount ?? 0);
+    if (opp.wonQuotationId) {
+      const won = await this.db
+        .select({ totalAmount: crmQuotation.totalAmount })
+        .from(crmQuotation)
+        .where(eq(crmQuotation.id, opp.wonQuotationId))
+        .limit(1);
+      if (won[0]) amount = Number(won[0].totalAmount ?? amount);
+    }
     const resolved = await this.taxResolver.resolve({
       explicit: opp.taxRate != null ? Number(opp.taxRate) : null,
       customerId: opp.customerId,
       side: 'output',
     });
-    const amount = Number(opp.amount ?? 0);
     const split = splitTax(amount, resolved.rate);
     const code = await generateBizCode(
       this.db,

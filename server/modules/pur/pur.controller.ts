@@ -9,7 +9,7 @@ import {
   Post,
   Query,
 } from '@nestjs/common';
-import { CanRole, NeedLogin } from '@server/platform';
+import { CanCapability, NeedLogin } from '@server/platform';
 import {
   IsDateString,
   IsIn,
@@ -169,7 +169,7 @@ export class PurController {
     return this.purService.createRequest(dto);
   }
 
-  @CanRole(['admin'])
+  @CanCapability('pur_asset')
   @Post('requests/:id/actions/:action')
   async requestAction(
     @Param('id', ParseUUIDPipe) id: string,
@@ -196,13 +196,13 @@ export class PurController {
     });
   }
 
-  @CanRole(['admin'])
+  @CanCapability('pur_asset')
   @Post('orders')
   async createOrder(@Body() dto: CreatePurOrderDto): Promise<PurOrderItem> {
     return this.purService.createOrder(dto);
   }
 
-  @CanRole(['admin'])
+  @CanCapability('pur_asset')
   @Patch('orders/:id')
   async updateOrder(
     @Param('id', ParseUUIDPipe) id: string,
@@ -211,7 +211,7 @@ export class PurController {
     return this.purService.updateOrder(id, dto);
   }
 
-  @CanRole(['admin'])
+  @CanCapability('pur_asset')
   @Post('orders/:id/accept')
   async acceptOrder(
     @Param('id', ParseUUIDPipe) id: string,
@@ -220,7 +220,7 @@ export class PurController {
     return this.purService.acceptOrder(id, dto);
   }
 
-  @CanRole(['admin'])
+  @CanCapability('pur_asset')
   @Post('orders/:id/actions/cancel')
   async cancelOrder(
     @Param('id', ParseUUIDPipe) id: string

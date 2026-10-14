@@ -1,9 +1,15 @@
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
+import {
+  hasCapability as rbacHasCapability,
+  type Capability,
+} from '@shared/rbac';
+import { withBasePath } from '@client/src/utils/base-path';
 
 export interface AuthUser {
   userId: string;
   userName: string;
   roles: string[];
+  capabilities?: string[];
   email?: string | null;
 }
 
@@ -12,6 +18,7 @@ interface AuthState {
   loading: boolean;
   refresh: () => Promise<void>;
   logout: () => Promise<void>;
+  hasCapability: (capability: Capability | string) => boolean;
 }
 
 const AuthContext = createContext<AuthState>({
@@ -19,6 +26,7 @@ const AuthContext = createContext<AuthState>({
   loading: true,
   refresh: async () => undefined,
   logout: async () => undefined,
+  hasCapability: () => false,
 });
 
 export function AuthProvider({ children }: { children: ReactNode }) {
@@ -44,10 +52,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       user,
       loading,
       refresh,
+      hasCapability: (capability: Capability | string) => {
+        if (!user) return false;
+        if (user.capabilities?.includes(capability)) return true;
+        return rbacHasCapability(user.roles, capability as Capability);
+      },
       logout: async () => {
         await fetch('/api/auth/logout', { method: 'POST', credentials: 'include' });
         setUser(null);
-        window.location.assign('/login');
+        window.location.assign(withBasePath('/login'));
       },
     }),
     [user, loading],
@@ -77,6 +90,22 @@ export function CanRole({
   if (loading) return null;
   const owned = user?.roles ?? [];
   if (roles.some((role) => owned.includes(role))) return children;
+  return fallback;
+}
+
+/** 按能力码显隐（与 shared/rbac Capability 对齐） */
+export function CanCapability({
+  children,
+  capability,
+  fallback = null,
+}: {
+  children: ReactNode;
+  capability: Capability | string;
+  fallback?: ReactNode;
+}) {
+  const { loading, hasCapability } = useAuth();
+  if (loading) return null;
+  if (hasCapability(capability)) return children;
   return fallback;
 }
 

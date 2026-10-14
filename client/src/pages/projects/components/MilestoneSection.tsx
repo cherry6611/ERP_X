@@ -8,6 +8,7 @@ import { Plus } from 'lucide-react';
 import { Table, TableColumnsType } from 'antd';
 import { CanRole } from '@client/src/platform/auth';
 import { DataState } from '@client/src/components/DataState';
+import { SectionTitle } from '@client/src/components/SectionTitle';
 import StatusBadge from '@client/src/components/erp/StatusBadge';
 import { Badge } from '@client/src/components/ui/badge';
 import { Button } from '@client/src/components/ui/button';
@@ -218,7 +219,7 @@ const MilestoneSection: React.FC<MilestoneSectionProps> = ({ projectId, onChange
   return (
     <div className="flex flex-col gap-3">
       <div className="flex items-center justify-between">
-        <h3 className="text-base font-semibold">项目里程碑</h3>
+        <SectionTitle>项目里程碑</SectionTitle>
         <CanRole roles={['admin']}>
           <Button size="sm" variant="outline" onClick={() => setAddOpen(true)}>
             <Plus className="h-4 w-4" />

@@ -11,6 +11,7 @@ import {
 import { asc, eq } from 'drizzle-orm';
 import { erpDeliverable, erpProject } from '@server/database/schema';
 import { generateBizCode } from '@server/common/utils/biz-code';
+import { todayInShanghai } from '@server/common/utils/biz-date';
 import type {
   AcceptDeliverableDto,
   CreateDeliverableDto,
@@ -27,7 +28,7 @@ const DELIVERABLE_TYPES = [
   'other',
 ] as const;
 
-const todayStr = (): string => new Date().toISOString().slice(0, 10);
+const todayStr = (): string => todayInShanghai();
 
 @Injectable()
 export class DeliverableService {
