@@ -4937,3 +4937,44 @@ export interface ReturnRegisterResult {
     completedAmount: number;
   };
 }
+
+/* ========== 批次三 D-09 / NFR-S8：审计日志防篡改校验链 ========== */
+
+/** 链校验结果 */
+export interface AuditChainVerification {
+  checkedAt: string;
+  /** 在线表中参与链的日志总行数 */
+  totalOnlineRows: number;
+  /** 本次实际检查的行数（受 limit 限制） */
+  checkedRows: number;
+  /** 起点/终点的链序号；空表为 null */
+  firstSeq: number | null;
+  lastSeq: number | null;
+  /** 链尾校验和（可外发作为锚点） */
+  lastHash: string | null;
+  /** true = 未发现篡改 */
+  intact: boolean;
+  /** 异常明细（最多 50 条） */
+  broken: Array<{
+    id: string;
+    chainSeq: number;
+    reason: string;
+    expected: string;
+    actual: string;
+  }>;
+}
+
+/** 链锚点：应定期外发到独立系统，用于证明"日志未被整体重写" */
+export interface AuditChainAnchor {
+  lastSeq: number | null;
+  lastHash: string | null;
+  totalRows: number;
+  checkedAt: string;
+}
+
+/** 只追加约束自检结果 */
+export interface AuditImmutabilityProbe {
+  updateBlocked: boolean;
+  deleteBlocked: boolean;
+  message: string;
+}

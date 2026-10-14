@@ -11,9 +11,9 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@client/src/components/ui/select';
-import { CanRole } from '@client/src/platform/auth';
-import { auditApi } from '@client/src/api';
 import { useAsyncData } from '@client/src/hooks/useAsyncData';
+import * as auditApi from '@client/src/api/audit';
+import AuditChainPanel from './components/AuditChainPanel';
 import type { AuditLog } from '@shared/api.interface';
 
 const OBJECT_TYPE_LABELS: Record<string, string> = {
@@ -93,75 +93,74 @@ const AuditPage: React.FC = () => {
 
   return (
     <PageShell title="审计日志" description="全局写操作审计记录（只追加，不可篡改）">
-      <CanRole roles={['admin']}>
-        <div className="flex flex-wrap items-end gap-4">
-          <div className="flex flex-col gap-1.5">
-            <Label htmlFor="audit-object-type">模块</Label>
-            <Select value={objectType} onValueChange={setObjectType}>
-              <SelectTrigger id="audit-object-type" className="w-36">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">全部模块</SelectItem>
-                {Object.entries(OBJECT_TYPE_LABELS).map(([value, label]) => (
-                  <SelectItem key={value} value={value}>
-                    {label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-          <div className="flex flex-col gap-1.5">
-            <Label htmlFor="audit-action">操作类型</Label>
-            <Select value={action} onValueChange={setAction}>
-              <SelectTrigger id="audit-action" className="w-36">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">全部操作</SelectItem>
-                {Object.entries(ACTION_LABELS).map(([value, label]) => (
-                  <SelectItem key={value} value={value}>
-                    {label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-          <div className="flex flex-col gap-1.5">
-            <Label htmlFor="audit-limit">条数</Label>
-            <Select value={String(limit)} onValueChange={(v) => setLimit(Number(v))}>
-              <SelectTrigger id="audit-limit" className="w-28">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="50">50 条</SelectItem>
-                <SelectItem value="100">100 条</SelectItem>
-                <SelectItem value="200">200 条</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
+      <AuditChainPanel />
+      <div className="flex flex-wrap items-end gap-4">
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor="audit-object-type">模块</Label>
+          <Select value={objectType} onValueChange={setObjectType}>
+            <SelectTrigger id="audit-object-type" className="w-36">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">全部模块</SelectItem>
+              {Object.entries(OBJECT_TYPE_LABELS).map(([value, label]) => (
+                <SelectItem key={value} value={value}>
+                  {label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </div>
-        {error ? (
-          <p className="text-sm text-destructive">
-            {error}
-            <Button variant="ghost" size="sm" className="ml-2" onClick={() => void reload()}>
-              重试
-            </Button>
-          </p>
-        ) : null}
-        <Table
-          columns={columns}
-          dataSource={data ?? []}
-          loading={loading}
-          rowKey="id"
-          scroll={{ x: 1100, y: 500 }}
-          pagination={{
-            pageSize: 10,
-            showTotal: (t: number) => `共 ${t} 条`,
-          }}
-          locale={{ emptyText: '暂无审计日志，系统写操作将自动记录' }}
-        />
-      </CanRole>
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor="audit-action">操作类型</Label>
+          <Select value={action} onValueChange={setAction}>
+            <SelectTrigger id="audit-action" className="w-36">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">全部操作</SelectItem>
+              {Object.entries(ACTION_LABELS).map(([value, label]) => (
+                <SelectItem key={value} value={value}>
+                  {label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor="audit-limit">条数</Label>
+          <Select value={String(limit)} onValueChange={(v) => setLimit(Number(v))}>
+            <SelectTrigger id="audit-limit" className="w-28">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="50">50 条</SelectItem>
+              <SelectItem value="100">100 条</SelectItem>
+              <SelectItem value="200">200 条</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+      </div>
+      {error ? (
+        <p className="text-sm text-destructive">
+          {error}
+          <Button variant="ghost" size="sm" className="ml-2" onClick={() => void reload()}>
+            重试
+          </Button>
+        </p>
+      ) : null}
+      <Table
+        columns={columns}
+        dataSource={data ?? []}
+        loading={loading}
+        rowKey="id"
+        scroll={{ x: 1100, y: 500 }}
+        pagination={{
+          pageSize: 10,
+          showTotal: (t: number) => `共 ${t} 条`,
+        }}
+        locale={{ emptyText: '暂无审计日志，系统写操作将自动记录' }}
+      />
     </PageShell>
   );
 };

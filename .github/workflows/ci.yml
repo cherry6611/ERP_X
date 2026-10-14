@@ -36,6 +36,19 @@ jobs:
         run: npm run test:cov
       - run: npm run build
       - run: npm audit --audit-level=high
+      # D-09 / NFR-S8：审计日志只追加约束 + 校验和链。
+      # 需要真实 PostgreSQL（触发器/异常码/SET LOCAL 语义与 pglite 不完全一致，
+      # 迁移 dryrun 只证明"迁移能执行"，不能证明"约束真的生效"）。
+      # 未配置 DATABASE_URL 时跳过并明确提示，不静默通过。
+      - name: audit immutability (real PostgreSQL)
+        run: |
+          if [ -z "$DATABASE_URL" ]; then
+            echo "::warning::未配置 DATABASE_URL，跳过审计只追加约束的真实库验证（D-09/NFR-S8）"
+            exit 0
+          fi
+          npm run check:audit-immutability
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
       # U-25：构建产物冒烟（无 DB 时仅校验 dist 存在；有 DATABASE_URL 可扩）
       - name: smoke dist
         run: |

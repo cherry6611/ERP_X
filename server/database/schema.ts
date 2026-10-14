@@ -1479,6 +1479,19 @@ export const compAuditLog = pgTable("comp_audit_log", {
   statusBefore: varchar("status_before", { length: 30 }),
   statusAfter: varchar("status_after", { length: 30 }),
   detail: text("detail"),
+  /**
+   * D-09 / NFR-S8：链式校验和（由 `trg_comp_audit_log_chain` 触发器自动填写）。
+   *
+   * `chainSeq` 是链序号（显式顺序，避免 `_created_at` 毫秒并列导致排序不稳定）；
+   * `chainHash = md5(prevHash|seq|actor|action|objectType|objectId|objectCode|创建时间|detail)`。
+   * 任何一行被改动都会让其后的链全部失配 —— 篡改可被检测。
+   *
+   * ⚠️ 这三列**不得由应用代码写入**：触发器会在 INSERT 时覆盖它们。
+   * 表上另有 `trg_comp_audit_log_immutable` 拒绝所有 UPDATE。
+   */
+  chainSeq: bigint("chain_seq", { mode: 'number' }),
+  prevHash: varchar("prev_hash", { length: 64 }),
+  chainHash: varchar("chain_hash", { length: 64 }),
   // System field: Creation time (auto-filled, do not modify)
   createdAt: customTimestamptz("_created_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
   // System field: Creator (auto-filled, do not modify)

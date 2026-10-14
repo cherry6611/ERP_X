@@ -62,6 +62,14 @@ export class RetentionService {
    * 先复制进 comp_audit_log_archive，再按 id 删除在线行。
    * 使用单条 `WITH moved AS (DELETE ... RETURNING) INSERT ...` 保证原子性，
    * 避免"复制成功但删除失败"导致重复计数。
+   *
+   * ⚠️ D-09 / NFR-S8：`comp_audit_log` 上有只追加触发器，DELETE 会被拒绝，
+   * **除非**会话内显式设置 `app.retention_purge = 'on'`。这是刻意的设计 ——
+   * 归档是"移出在线表"而非"销毁"（行已复制到 `comp_audit_log_archive`），
+   * 但必须让"谁在什么时候清理了审计日志"成为一次有意为之的显式操作，
+   * 而不是被某段业务代码顺手删掉。
+   *
+   * `SET LOCAL` 只在当前事务内生效，因此不会泄漏到后续语句。
    */
   async archiveAuditLogs(
     retainDays: number,
@@ -71,21 +79,28 @@ export class RetentionService {
       throw new BadRequestException('retainDays 必须 ≥ 1');
     }
     const result = await this.db.execute(sql`
-      WITH moved AS (
+      WITH purge_marker AS (
+        SELECT set_config('app.retention_purge', 'on', true) AS flag
+      ),
+      moved AS (
         DELETE FROM comp_audit_log
         WHERE _created_at < CURRENT_TIMESTAMP - (${retainDays} * interval '1 day')
+          AND (SELECT flag FROM purge_marker) = 'on'
           AND id IN (
             SELECT id FROM comp_audit_log
             WHERE _created_at < CURRENT_TIMESTAMP - (${retainDays} * interval '1 day')
             ORDER BY _created_at
             LIMIT ${batchSize}
           )
-        RETURNING id, object_type, object_id, action, actor, detail, _created_at
+        RETURNING id, object_type, object_id, action, actor, detail, _created_at,
+                  chain_hash, chain_seq
       )
       INSERT INTO comp_audit_log_archive (
-        source_id, object_type, object_id, action, actor_user_id, detail, occurred_at
+        source_id, object_type, object_id, action, actor_user_id, detail, occurred_at,
+        source_chain_hash, source_chain_seq
       )
-      SELECT id, object_type, object_id, action, actor, detail, _created_at
+      SELECT id, object_type, object_id, action, actor, detail, _created_at,
+             chain_hash, chain_seq
       FROM moved
       RETURNING id
     `);

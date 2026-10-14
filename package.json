@@ -158,7 +158,8 @@
     "type:check": "concurrently -n \"server,client,scripts\" -c \"blue,green,yellow\" \"npm run type:check:server\" \"npm run type:check:client\" \"npm run type:check:scripts\"",
     "type:check:client": "tsc --noEmit --project tsconfig.app.json",
     "type:check:server": "tsc --noEmit --project tsconfig.node.json",
-    "type:check:scripts": "tsc --noEmit --project tsconfig.scripts.json"
+    "type:check:scripts": "tsc --noEmit --project tsconfig.scripts.json",
+    "check:audit-immutability": "node ./scripts/check-audit-immutability.mjs"
   },
   "version": "2.4.0"
 }

@@ -1,0 +1,77 @@
+feat(D-09): 审计日志防篡改（只追加约束 + 校验和链）—— NFR-S8
+
+## 问题
+
+NFR-S8 要求「审计日志不可篡改（追加写 + 校验和 + 归档）」，而 `comp_audit_log`
+当时**可以被任意 UPDATE**（表上没有任何只追加约束），也没有校验和 ——
+因此"日志被改过"这件事本身无法被发现，等保测评会直接列为不符合项。
+
+## 实现
+
+`2026-10-15-upgrade-d09-audit-immutability.sql`：
+
+1. **链式校验和**：新增 `chain_seq` / `prev_hash` / `chain_hash` 三列，
+   `chain_hash = md5(prev_hash|seq|actor|action|object_type|object_id|object_code|创建时间|detail)`，
+   历史 303 行按插入顺序回填。
+   `trg_comp_audit_log_chain` 在 INSERT 时自动串链，并用
+   `pg_advisory_xact_lock(hashtext('comp_audit_log_chain'))` 串行化
+   「读上一行 hash → 写入」——**不加锁会让并发插入读到同一个 prev_hash，
+   链分叉且校验必然失败**，这是该设计最容易漏掉的一点。
+2. **只追加约束**：`trg_comp_audit_log_immutable` 拒绝所有 UPDATE
+   （可读中文 + `ERRCODE = restrict_violation`）。
+3. **DELETE 的唯一例外**：归档清理。`retention.service.ts` 的语义是
+   「先复制进 `comp_audit_log_archive` 再删在线行」= 移出在线表而非销毁；
+   直接封死 DELETE 会让归档功能失效。因此允许 DELETE **仅当**会话内显式设置
+   `app.retention_purge = 'on'`（`SET LOCAL`，不泄漏到事务外）。
+   留例外的代价是"清理动作本身必须显式"，这恰好符合内控：谁在什么时候清理了
+   审计日志，是一次有意为之的操作，而不是某段业务代码顺手删掉。
+4. 归档表同步记录 `source_chain_hash` / `source_chain_seq`，便于事后比对。
+
+配套：
+- `AuditChainService`：在线校验（逐行重算 + 链关系 + 链根是否在归档表中）、
+  锚点导出、只追加自检；3 条新接口
+- 前端「审计日志」页新增校验面板（校验链 / 只追加自检 / 导出锚点）
+- `scripts/check-audit-immutability.mjs` + `npm run check:audit-immutability`：
+  **真实 PostgreSQL** 上的 10 项行为自检；CI 在配置 `DATABASE_URL` 时执行，
+  未配置时打 `::warning::` 跳过（不静默通过）
+- `docs/D09-compliance-hardening.md`：已落地范围、验证方式、**以及仍未做的部分**
+
+## 顺手修掉的问题
+
+`client/src/pages/audit/AuditPage.tsx` 仍在 `import { CanRole } from '@client/src/platform/auth'`
+并用作权限包裹 —— `CanRole` 在 B-01 迁移中已被移除，这处是**漏改的残留**。
+已改为与全仓一致的写法（页面本身由路由守卫 + 后端 `@CanCapability('audit')` 保护）。
+
+## 验证（实测退出码）
+
+- `npm run type:check`（server + client + scripts）→ 0
+- `npm run lint` → 0
+- `npm run check:rbac` → 通过（44 控制器）／`check:contract` → 通过
+- `npm run migrate:dryrun` → **30 条全 PASS**
+- `npm run db:migrate` → 已应用到开发库
+- `npx jest` → **48 suites / 425 passed**
+- `npm run check:audit-immutability`（真实 PostgreSQL）→ **10/10 通过**：
+  历史行链自洽、插入自动串链、UPDATE 被拒、DELETE 被拒、
+  归档例外可用、`SET LOCAL` 不泄漏、归档表带来源校验和
+- `npm run build:prod` → 0；生产构建启动成功，3 条新路由已注册、
+  未登录正确返回 401
+
+## 一个值得记录的验证陷阱
+
+自检脚本第一版第 ⑨ 项误报"`SET LOCAL` 泄漏"。真实原因是第 ⑧ 项已把探针行删掉，
+第 ⑨ 项的 `DELETE ... WHERE actor='d09-probe'` 影响 **0 行**，而触发器是
+`FOR EACH ROW` —— **0 行即不触发**，"没有报错"被误读为"允许删除"。
+教训：验证"约束会拒绝"时必须**先确认待操作的行确实存在**，
+否则断言的是一个永远为真的空操作。已修正并在脚本注释中记录。
+
+## 仍未做（如实记录，不夸大覆盖度）
+
+- **链式校验只能检测、不能阻止**拥有写权限者篡改（改完内容再重算其后 hash 即可
+  骗过在线校验）。要不可抵赖必须把锚点**定期外发**到独立系统 ——
+  锚点导出接口已提供，外发通道与定时任务**未实现**
+- **NFR-S6 外部渗透测试**：未做，且不是本仓库能完成的（需第三方在真实环境执行）
+- **NFR-S7 密钥托管（KMS）**：未做。现状仍是 `.env` + compose `environment` 明文，
+  属基础设施改造
+- **NFR-S1 全站 HTTPS / 禁用 TLS < 1.2**：未做，属反向代理/入口层配置
+- **NFR-S2 关键操作二次确认 + 理由必填**：部分完成（`confirmDanger` +
+  反年结/C-13 等已强制理由），但需求书要求的**逐项确认清单**未产出
