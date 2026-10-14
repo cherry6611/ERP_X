@@ -12,6 +12,8 @@ describe('cron map', () => {
       'feishu_contact_full',
       'feishu_contact_incremental',
       'feishu_daily_sync',
+      // C-04 / D-02：票据到期提醒（每日 09:00）
+      'note_due_reminder_daily',
       'project_drive_sync_daily',
       // B-07：数据保留与归档（每日 03:30）
       'retention_daily',
@@ -39,5 +41,6 @@ describe('cron map', () => {
     expect(CRON_BY_TRIGGER.year_end_reminder_daily).toBe('0 9 * * *');
     // D-12 预警必须在工作时间开始前跑完，否则业务方上午看不到提醒
     expect(CRON_BY_TRIGGER.bi_alert_daily).toBe('30 8 * * *');
+    expect(CRON_BY_TRIGGER.note_due_reminder_daily).toBe('0 9 * * *');
   });
 });

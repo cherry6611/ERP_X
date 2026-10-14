@@ -39,6 +39,8 @@ import { AutomationConfigModule } from './modules/admin/automation-config.module
 import { SemanticModule } from './modules/semantic/semantic.module';
 import { SystemConfigModule } from './modules/system-config/system-config.module';
 import { IntegrationsModule } from './modules/integrations/integrations.module';
+// C-04 / D-02：应收应付票据（独立模块：自带状态机、备查簿与到期预警）
+import { NoteModule } from './modules/notes/note.module';
 
 @Module({
   imports: [
@@ -80,6 +82,7 @@ import { IntegrationsModule } from './modules/integrations/integrations.module';
     SemanticModule,
     SystemConfigModule,
     IntegrationsModule,
+    NoteModule,
     // ====== @route-section: business-modules END ======
 
     // ⚠️ @route-order: last

@@ -4423,3 +4423,365 @@ export interface RevokeGrantResult {
   grant: GrantItem;
   logId: string;
 }
+
+/* ========== C-06：单据打印与套打（前端打印包契约） ========== */
+
+/**
+ * C-06 可打印单据种类。
+ * 说明：报表（A-12）走 `GET /api/finance/reports/:reportCode/print` 的服务端数据包，
+ * 本联合只覆盖**纯前端组包**的单据类型。
+ */
+export type PrintDocumentKind =
+  | 'contract'
+  | 'quotation'
+  | 'invoice'
+  | 'payment'
+  | 'receipt'
+  | 'expense_claim'
+  | 'pur_order'
+  | 'pur_acceptance'
+  | 'payslip'
+  | 'deliverable_acceptance'
+  /** C-11 客户/供应商对账单 */
+  | 'statement';
+
+/** 打印元信息行（左上角键值区） */
+export interface PrintMetaField {
+  label: string;
+  value: string;
+}
+
+/** 打印明细列 */
+export interface PrintColumn {
+  key: string;
+  label: string;
+  /** 列宽（mm），仅作排版提示 */
+  widthMm?: number;
+  align?: 'left' | 'center' | 'right';
+}
+
+/** 打印明细行：`cells` 的键必须落在 `columns[].key` 内 */
+export interface PrintRowData {
+  cells: Record<string, string>;
+}
+
+/** 打印合计行 */
+export interface PrintTotal {
+  label: string;
+  amount: number;
+  /** 是否在合计下方追加人民币大写行 */
+  inWords?: boolean;
+  emphasize?: boolean;
+}
+
+/**
+ * C-06：前端打印数据包。
+ *
+ * 形状刻意与 A-12 `ReportPrintPack` 对齐（header / signatures / footerNote），
+ * 便于后续把报表打印与单据打印收敛到同一套组件。
+ */
+export interface PrintPack {
+  kind: PrintDocumentKind;
+  /** 单据编号，套打定位与页眉副标题都用到 */
+  code: string;
+  header: PrintHeader;
+  /** 元信息行（客户/日期/状态等），由各单据自定义 */
+  meta: PrintMetaField[];
+  /** 明细表标题，为空则渲染元信息后直接出合计（无明细单据，如工资条/付款单） */
+  tableTitle: string | null;
+  columns: PrintColumn[];
+  rows: PrintRowData[];
+  /** 附加键值区（明细表之后），如工资条的应发/应扣构成 */
+  extraFields: PrintMetaField[];
+  totals: PrintTotal[];
+  /** 条款/说明段落 */
+  clauses: string[];
+  signatures: PrintSignatureSlot[];
+  footerNote: string;
+  /** 数据来源说明（例如"数据来自合同模块，打印后请核对"），套打模式下隐藏 */
+  sourceNote: string | null;
+}
+
+/** C-06：套打偏移量（单位 mm，正数表示向右/向下偏移内容） */
+export interface PrintOffset {
+  topMm: number;
+  leftMm: number;
+  /** 套打模式：隐藏 Logo/水印/二维码等非必要装饰 */
+  overlay: boolean;
+}
+
+/** C-06：单个单据类型的打印设置（持久化到 localStorage） */
+export interface PrintPreference {
+  kind: PrintDocumentKind;
+  offset: PrintOffset;
+}
+
+/* ========== 批次二 C-04 / 批次三 D-02：应收应付票据（银行/商业承兑汇票） ========== */
+
+/** 票据类型：bank=银行承兑，commercial=商业承兑 */
+export type NoteType = 'bank' | 'commercial';
+
+/** 票据状态机 */
+export type NoteStatus =
+  | 'received'
+  | 'held'
+  | 'endorsed'
+  | 'discounted'
+  | 'settled'
+  | 'dishonored';
+
+/** 流转动作 */
+export type NoteAction = 'hold' | 'endorse' | 'discount' | 'settle' | 'dishonor';
+
+export interface NoteItem {
+  id: string;
+  code: string;
+  noteNo: string;
+  noteType: NoteType;
+  drawer: string | null;
+  payee: string | null;
+  amount: number;
+  issueDate: string | null;
+  dueDate: string;
+  status: NoteStatus;
+  arId: string | null;
+  apId: string | null;
+  supplierId: string | null;
+  supplierName: string | null;
+  customerId: string | null;
+  customerName: string | null;
+  projectId: string | null;
+  projectName: string | null;
+  /** 贴现息（贴现时才算，其余为 null） */
+  discountInterest: number | null;
+  discountRate: number | null;
+  /** 到期收款/贴现入账金额 */
+  settledAmount: number | null;
+  settledDate: string | null;
+  endorsementCounterparty: string | null;
+  remark: string | null;
+  createdAt: string;
+  /** 距到期天数（负数=已逾期）；由服务端按业务时区计算，不在前端算 */
+  daysToDue: number;
+}
+
+export interface CreateNoteDto {
+  noteNo: string;
+  noteType: NoteType;
+  amount: number;
+  dueDate: string;
+  drawer?: string;
+  payee?: string;
+  issueDate?: string;
+  arId?: string;
+  apId?: string;
+  supplierId?: string;
+  customerId?: string;
+  projectId?: string;
+  remark?: string;
+}
+
+/** 票据流转入参：按动作需要不同字段 */
+export interface NoteActionDto {
+  action: NoteAction;
+  /** 背书受让方（endorse 必填） */
+  counterparty?: string;
+  /** 贴现率（%，discount 必填） */
+  discountRate?: number;
+  /** 贴现日（discount 必填，缺省用今天） */
+  discountDate?: string;
+  /** 实际收/付金额（settle 可覆盖票面，例如扣手续费） */
+  settledAmount?: number;
+  /** 结算日期（settle 缺省用今天） */
+  settledDate?: string;
+  remark?: string;
+}
+
+/** 贴现试算（提交前预览息费与到账额） */
+export interface NoteDiscountPreview {
+  amount: number;
+  rate: number;
+  days: number;
+  interest: number;
+  netProceeds: number;
+  /** 分录预览：让财务在提交前确认科目正确 */
+  lines: Array<{ accountCode: string; debit: number; credit: number }>;
+}
+
+export interface NoteLogItem {
+  id: string;
+  noteId: string;
+  action: string;
+  fromStatus: string | null;
+  toStatus: string;
+  amount: number | null;
+  counterparty: string | null;
+  voucherRef: string | null;
+  operator: string | null;
+  remark: string | null;
+  createdAt: string;
+}
+
+export interface NoteListParams {
+  page?: number;
+  pageSize?: number;
+  status?: string;
+  noteType?: string;
+  /** 只看到期日在 [from, to] 的票据 */
+  dueFrom?: string;
+  dueTo?: string;
+  projectId?: string;
+}
+
+/** D-02 票据备查簿 */
+export interface NoteRegisterResult {
+  byStatus: Array<{
+    status: NoteStatus;
+    label: string;
+    count: number;
+    amount: number;
+  }>;
+  byType: Array<{
+    noteType: NoteType;
+    label: string;
+    count: number;
+    amount: number;
+  }>;
+  totalAmount: number;
+  /** 未结清金额（排除已结清与已拒付） */
+  outstandingAmount: number;
+}
+
+/** D-02 到期预警（逾期 / 15 天内） */
+export interface NoteDueAlert {
+  code: string;
+  noteNo: string;
+  amount: number;
+  dueDate: string;
+  /** 负数=已逾期 */
+  daysLeft: number;
+  level: 'overdue' | 'urgent' | 'upcoming';
+}
+
+/* ========== C-11 客户/供应商对账单（statement of account） ==========
+ *
+ * 与既有的 `reconciliation/*`（内部三方勾稽：发票↔应收/应付、回款↔核销）
+ * **不是同一件事**：这里产出的是**给对手方确认用的对账单**，
+ * 按期列出期初余额、本期逐笔发生、运行余额与期末余额。
+ */
+
+/** 对账方向：customer=客户对账单（我方开给客户）；supplier=供应商对账单（供应商开给我方） */
+export type StatementDirection = 'customer' | 'supplier';
+
+/** 对账单上的单据类型 */
+export type StatementDocType = 'ar' | 'ap' | 'receipt' | 'payment' | 'invoice';
+
+/** 单据核对状态：已核销/部分核销/未核销/作废/备查（备查行不参与余额） */
+export type StatementReconStatus =
+  | 'reconciled'
+  | 'partial'
+  | 'open'
+  | 'voided'
+  | 'informational';
+
+/** 对账单查询参数 */
+export interface StatementQueryDto {
+  /** 客户对账单传 customerId；供应商对账单传 supplierId */
+  counterpartyId: string;
+  /** 期间 YYYY-MM */
+  period: string;
+  direction: StatementDirection;
+}
+
+/**
+ * 对账单打印所需的组织抬头。
+ * 无组织表时字段为 null，打印件退化为只显示对账单标题（不编造主体信息）。
+ */
+export interface StatementOrgProfile {
+  companyName: string | null;
+  /** 统一社会信用代码 */
+  uscc: string | null;
+  address: string | null;
+  phone: string | null;
+  bankName: string | null;
+  bankAccount: string | null;
+}
+
+/** 对手方抬头 */
+export interface StatementCounterparty {
+  id: string;
+  code: string;
+  name: string;
+  /** 统一社会信用代码（客户取 uscc；供应商档案无该列时为 null） */
+  uscc: string | null;
+  contactName: string | null;
+  contactPhone: string | null;
+}
+
+/** 对账单上的一行 */
+export interface StatementLineItem {
+  date: string;
+  docType: StatementDocType;
+  docCode: string;
+  /** 本方向下的增加额（客户=应收增加；供应商=应付增加） */
+  debit: number;
+  /** 本方向下的减少额（客户=回款/冲减；供应商=付款/冲减） */
+  credit: number;
+  /** 服务端滚动算出的余额；备查行为 null */
+  runningBalance: number | null;
+  affectsBalance: boolean;
+  status: StatementReconStatus;
+  relatedDocCode: string | null;
+  remark: string | null;
+}
+
+/** 期间范围（左闭右开：start 含、end 不含） */
+export interface StatementPeriodRange {
+  start: string;
+  end: string;
+  monthEnd: string;
+}
+
+/** 本期核对进度（按参与余额的单据行计数） */
+export interface StatementReconSummary {
+  reconciled: number;
+  partial: number;
+  open: number;
+  voidedExcluded: number;
+}
+
+/** 对账单主结果 */
+export interface StatementResult {
+  direction: StatementDirection;
+  period: string;
+  periodRange: StatementPeriodRange;
+  counterpartyId: string;
+  counterparty: StatementCounterparty;
+  org: StatementOrgProfile;
+  /** 期初余额 = 期间开始日之前的发生额净额 */
+  openingBalance: number;
+  /** 本期借方合计 */
+  periodDebit: number;
+  /** 本期贷方合计 */
+  periodCredit: number;
+  /** 期末余额 = 期初 + 本期借 − 本期贷 */
+  closingBalance: number;
+  /** 期末余额中文大写（打印用，复用 rmb-upper） */
+  closingBalanceInWords: string;
+  lines: StatementLineItem[];
+  /** 期初构成明细（用于核对期初口径） */
+  openingLines: StatementLineItem[];
+  /** 本期被整单剔除的作废单据（仅提示，不参与任何金额） */
+  excludedLines: StatementLineItem[];
+  reconSummary: StatementReconSummary;
+  generatedAt: string;
+}
+
+/** 对账单可选对手方（按是否发生过业务过滤，便于前端下拉） */
+export interface StatementCounterpartyOption {
+  id: string;
+  code: string;
+  name: string;
+  /** 该对手方最近一次业务单据日期；无单据时为 null */
+  lastDocDate: string | null;
+}

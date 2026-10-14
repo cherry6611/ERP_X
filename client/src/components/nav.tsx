@@ -77,6 +77,8 @@ export const NAV_GROUPS: { title: string; items: NavItem[] }[] = [
     items: [
       { label: '收入确认', path: '/revenue', icon: TrendingUp, capability: 'finance' },
       { label: '应收应付', path: '/finance', icon: Wallet, capability: 'finance' },
+      // C-04 / D-02：票据（银行/商业承兑汇票）全生命周期与备查簿
+      { label: '票据管理', path: '/notes', icon: Receipt, capability: 'finance' },
       { label: '预算费控', path: '/fin-expense', icon: PiggyBank, capability: 'finance' },
       { label: '总账凭证', path: '/voucher', icon: BookOpen, capability: 'finance' },
       { label: '财务报表', path: '/finance/reports', icon: FileSpreadsheet, capability: 'finance' },

@@ -18,4 +18,6 @@ export const CRON_BY_TRIGGER: Record<string, string> = {
   year_end_reminder_daily: '0 9 * * *',
   /** D-12：BI 指标预警扫描（每日 08:30，按用户订阅的阈值判定并推送） */
   bi_alert_daily: '30 8 * * *',
+  /** C-04 / D-02：票据到期提醒（每日 09:00，逾期与 15 天内到期） */
+  note_due_reminder_daily: '0 9 * * *',
 };

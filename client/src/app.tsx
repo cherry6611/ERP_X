@@ -25,6 +25,8 @@ function RouteErrorBoundary({ children }: { children: React.ReactNode }) {
 const NotFound = lazy(() => import('./pages/NotFound/NotFound'));
 const DashboardPage = lazy(() => import('./pages/dashboard/DashboardPage'));
 const MetricsPage = lazy(() => import('./pages/dashboard/MetricsPage'));
+// C-04 / D-02：应收应付票据（登记/持有/背书/贴现/到期收款/拒付 + 备查簿与到期预警）
+const NotesPage = lazy(() => import('./pages/notes'));
 const CustomersPage = lazy(() => import('./pages/customers/CustomersPage'));
 const CrmPage = lazy(() => import('./pages/crm/CrmPage'));
 const OpportunityDetailPage = lazy(
@@ -125,6 +127,8 @@ const RoutesComponent = () => {
           <Route index element={<DashboardPage />} />
           {/* D-12：指标中心（口径说明 / 上期对比 / 下钻 / 预警订阅） */}
           <Route path="bi/metrics" element={<MetricsPage />} />
+          {/* C-04 / D-02：应收应付票据 */}
+          <Route path="notes" element={<NotesPage />} />
           <Route path="customers" element={<CustomersPage />} />
           <Route path="crm" element={<CrmPage />} />
           <Route path="crm/leads/new" element={<LeadCreatePage />} />
