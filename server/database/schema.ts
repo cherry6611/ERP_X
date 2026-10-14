@@ -1014,7 +1014,33 @@ export const finAccount = pgTable("fin_account", {
   check("chk_fin_account_level", sql`${table.level} >= 1 AND ${table.level} <= 6`),
 ]);
 
-/** A-03：月度科目余额快照（避免报表全量重算） */
+/**
+ * A-03 月度科目余额快照（**当前未实现读写** —— 见下方实测结论）。
+ *
+ * 需求书 NFR-P2 的原始设计是「索引 + 月度余额快照表」满足
+ * 「报表接口 P95 < 3s（10 万凭证行）」。所需索引已全部就位
+ * （`idx_fin_voucher_line_account_voucher`、`idx_fin_voucher_period_status`），
+ * 但快照表一直没用上。
+ *
+ * **实测结论（2026-10-15，真实 PostgreSQL，10 万凭证行）**：脚本
+ * `scripts/bench-report-query-pg.mjs`（隔离 schema 造数 + ANALYZE + 20 次采样）
+ * 测得科目余额表 **P50 166ms / P95 292ms**、本期发生额 P95 45ms，
+ * 且 `EXPLAIN` 确认 `Bitmap Index Scan on idx_fin_voucher_period_status`
+ * —— 索引确实生效。**3s 预算约 10 倍余量**。
+ *
+ * ⚠️ 早期只用 pglite 测得"约 100ms、30 倍余量"并假设 pglite 是保守下界，
+ * **真实库复测后不成立**（该查询的期初部分要聚合全部历史，pglite 在此模式反而更快）。
+ * 性能结论必须在目标引擎上复测。
+ *
+ * 因此**暂不实现物化**：物化要引入写入路径与失效逻辑，代价是
+ * "报表可能显示过期数据" —— 这是财务系统最不能接受的一类缺陷。
+ * 在实时聚合已远超指标的情况下加快照，是用一类新缺陷换一个不存在的问题。
+ *
+ * **重新评估的触发条件**（任一满足即应实现）：
+ * - 生产环境实测报表 P95 超过 3s（用上述脚本在真实库复测）；
+ * - 凭证行数超过约 500 万（按实测线性外推将逼近秒级）；
+ * - 报表新增跨多期间、多主体的重查询模式。
+ */
 export const finAccountBalanceSnapshot = pgTable("fin_account_balance_snapshot", {
   id: uuid("id").primaryKey().defaultRandom(),
   period: varchar("period", { length: 7 }).notNull(),

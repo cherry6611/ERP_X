@@ -61,8 +61,11 @@ const KNOWN_UNUSED_TABLES: UnusedTableEntry[] = [
     table: 'fin_account_balance_snapshot',
     kind: 'gap',
     reason:
-      'A-01 科目余额快照表，已建但**未实现写入与读取** —— 当前报表每次实时聚合 ' +
-      'fin_voucher_line。数据量大时报表会变慢，属性能优化待办（非功能缺失）',
+      'A-03 科目余额快照表，已建但未实现读写 —— 当前报表每次实时聚合 ' +
+      'fin_voucher_line。**实测（真实 PostgreSQL，10 万凭证行）P95 292ms，' +
+      'NFR-P2 的 3s 预算约 10 倍余量，故暂不实现物化**' +
+      '（物化会引入"报表显示过期数据"的风险）。' +
+      '复测脚本 scripts/bench-report-query-pg.mjs；重新评估条件见 schema.ts 该表注释',
   },
   {
     table: 'pur_return_item',
