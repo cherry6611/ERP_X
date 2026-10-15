@@ -34,6 +34,8 @@ import {
 } from '@server/database/schema';
 import { generateBizCode } from '@server/common/utils/biz-code';
 import { unwrapRows } from '@server/common/utils/rows';
+import { resolveVoucherTaxEntityId } from '@server/common/tax/tax-entity-resolver';
+import { assertFiscalYearOpen, assertPeriodOpen as assertPeriodOpenGuard } from '@server/common/utils/period-guard';
 import type {
   AccountItem,
   CreateAccountDto,
@@ -158,33 +160,18 @@ export class VoucherService {
    * 第 3 条刻意加了"恰有一个"的条件：多主体下用默认主体顶替会让该主体报表虚增
    * —— **一个看起来正确的错误数字，比一个明显的缺口更危险**。
    * 推导不出的保持 `null`，由视图 `v_fin_voucher_unassigned_entity` 暴露。
+   *
+   * 具体解析逻辑收敛在 `resolveVoucherTaxEntityId`（自动/钩子凭证走同一口径，
+   * 避免两处规则漂移）。
    */
   private async resolveTaxEntityId(
     dto: CreateVoucherDto
   ): Promise<string | null> {
-    const explicit = dto.taxEntityId?.trim();
-    if (explicit) return explicit;
-
-    // ② sourceRef 命中合同
-    const ref = dto.sourceRef?.trim();
-    if (ref) {
-      const rows = await this.db.execute(sql`
-        SELECT tax_entity_id FROM erp_contract
-        WHERE (code = ${ref} OR id::text = ${ref})
-          AND tax_entity_id IS NOT NULL
-        LIMIT 1
-      `);
-      const found = unwrapRows<{ tax_entity_id: string | null }>(rows)[0];
-      if (found?.tax_entity_id) return found.tax_entity_id;
-    }
-
-    // ③ 唯一默认主体兜底
-    const defaults = await this.db.execute(sql`
-      SELECT id FROM md_tax_entity
-      WHERE is_default = 1 AND status = 'active'
-    `);
-    const candidates = unwrapRows<{ id: string }>(defaults);
-    return candidates.length === 1 ? candidates[0].id : null;
+    return resolveVoucherTaxEntityId(this.db, {
+      explicit: dto.taxEntityId,
+      sourceRef: dto.sourceRef,
+      sourceType: dto.sourceType,
+    });
   }
 
   /* ========== 科目 ========== */
@@ -383,15 +370,13 @@ export class VoucherService {
 
   /* ========== 凭证 ========== */
 
+  /**
+   * 期间写入闸门。**唯一实现**在 `common/utils/period-guard.ts`：
+   * 原先凭证模块与业务模块各写了一份，规则一旦分叉就会出现「凭证侧拦住了、业务侧没拦住」
+   * 的静默不一致（P2-2 的补记缺口正是这么漏进来的）。这里只做委托。
+   */
   private async assertPeriodOpen(period: string, action: string): Promise<void> {
-    const closedRows = await this.db
-      .select({ period: finPeriodClose.period })
-      .from(finPeriodClose)
-      .where(eq(finPeriodClose.period, period))
-      .limit(1);
-    if (closedRows.length > 0) {
-      throw new BadRequestException(`期间 ${period} 已结账，禁止${action}`);
-    }
+    await assertPeriodOpenGuard(this.db, period, action);
   }
 
   private async getVoucherLines(
@@ -636,6 +621,8 @@ export class VoucherService {
       );
     }
     await this.assertPeriodOpen(dto.period, '新增凭证');
+    // P0-3：会计年度已年结则本年度期间只读
+    await assertFiscalYearOpen(this.db, dto.period);
 
     const accountIds = Array.from(
       new Set(dto.lines.map((line) => line.accountId))
@@ -788,6 +775,8 @@ export class VoucherService {
     const period = voucher.period ?? '';
 
     await this.assertPeriodOpen(period, action === 'post' ? '过账' : '作废凭证');
+    // P0-3：会计年度已年结则本年度期间只读（与月结闸门并列）
+    await assertFiscalYearOpen(this.db, period);
 
     if (action === 'post') {
       if (current !== 'draft') {
@@ -816,15 +805,34 @@ export class VoucherService {
       }
     }
 
+    // P2-1：把「期望的当前状态」写进 UPDATE 的 WHERE，消除 TOCTOU。
+    // 原实现先读 status 判定、再无条件 UPDATE ... WHERE id，并发下
+    // 「作废」与「过账」交错可把已作废凭证恢复为 posted。
     const updated = await this.db
       .update(finVoucher)
       .set({
         status: action === 'post' ? 'posted' : 'voided',
         updatedAt: new Date(),
       })
-      .where(eq(finVoucher.id, id))
+      .where(
+        action === 'post'
+          ? and(eq(finVoucher.id, id), eq(finVoucher.status, 'draft'))
+          : and(
+              eq(finVoucher.id, id),
+              inArray(finVoucher.status, ['draft', 'posted'])
+            )
+      )
       .returning({ id: finVoucher.id });
-    if (updated.length === 0) throw new NotFoundException('凭证不存在');
+    if (updated.length === 0) {
+      // 状态在读取与写入之间被并发修改（或凭证已被删除）
+      const still = await this.db
+        .select({ id: finVoucher.id })
+        .from(finVoucher)
+        .where(eq(finVoucher.id, id))
+        .limit(1);
+      if (still.length === 0) throw new NotFoundException('凭证不存在');
+      throw new ConflictException('凭证状态已被并发变更，请刷新后重试');
+    }
     return this.getVoucherById(id);
   }
 

@@ -973,6 +973,32 @@ export const finVoucher = pgTable("fin_voucher", {
     .where(sql`${table.sourceType} IS NOT NULL AND ${table.sourceRef} IS NOT NULL`),
 ]);
 
+/**
+ * P2-11：业务场景 → 会计科目（显式映射）。
+ *
+ * 为什么需要它：工资计提这类分录原先**写死科目**（`hr-pay.service.ts` 固定 6401
+ * 主营业务成本），业务想把人工成本按场景归集到别的科目时只能改代码。
+ * 把"场景"变成配置项后，未配置时回落调用方给的默认科目，因此**存量行为不变**。
+ */
+export const finAccountMapping = pgTable("fin_account_mapping", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  /** 业务场景键，如 payroll_accrual（工资计提） */
+  scene: varchar("scene", { length: 50 }).notNull().unique(),
+  /** 目标科目编码；允许配汇总科目，由 AccountResolverService 下钻到末级 */
+  accountCode: varchar("account_code", { length: 20 }).notNull(),
+  remark: text("remark"),
+  // System field: Creation time (auto-filled, do not modify)
+  createdAt: customTimestamptz("_created_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
+  // System field: Creator (auto-filled, do not modify)
+  createdBy: userProfile("_created_by").default(sql`CASE
+    WHEN (current_setting('app.user_id'::text, true) = ''::text) THEN NULL`),
+  // System field: Update time (auto-filled, do not modify)
+  updatedAt: customTimestamptz("_updated_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
+  // System field: Updater (auto-filled, do not modify)
+  updatedBy: userProfile("_updated_by").default(sql`CASE
+    WHEN (current_setting('app.user_id'::text, true) = ''::text) THEN NULL`),
+});
+
 export const finAccount = pgTable("fin_account", {
   id: uuid("id").primaryKey().defaultRandom(),
   code: varchar("code", { length: 20 }).notNull().unique(),
@@ -985,6 +1011,14 @@ export const finAccount = pgTable("fin_account", {
   level: integer("level").notNull().default(1),
   /** A-10：是否末级科目（1 可做账，0 仅汇总） */
   isLeaf: integer("is_leaf").notNull().default(1),
+  /**
+   * P2-6：汇总科目的**指定下钻末级科目**，为空时沿用"字典序第一个启用末级后代"。
+   *
+   * 为什么需要它：分录模板写的是准则一级编码（如 6602 管理费用），下钻结果完全由
+   * 科目编码顺序决定。一旦科目表新增/重命名子科目，入账科目会静默漂移，
+   * 而凭证明细看不出“换过科目”。把它变成可配置项后，下钻结果是业务显式选定的。
+   */
+  defaultLeafCode: varchar("default_leaf_code", { length: 20 }),
   /** A-10：余额方向 debit | credit */
   direction: varchar("direction", { length: 10 }).notNull().default('debit'),
   /** A-05：必填辅助核算维度集合，JSON 数组字符串 */
@@ -1579,6 +1613,18 @@ export const erpInvoice = pgTable("erp_invoice", {
   supplierId: uuid("supplier_id"),
   /** C-05：红字发票与来源单据的关联键（如 `sales-return:SRT2026100001`） */
   sourceRef: varchar("source_ref", { length: 100 }),
+  /** C-01：发票查验状态（unverified/verifying/verified/failed），默认未查验 */
+  verifyStatus: varchar("verify_status", { length: 20 }).notNull().default("unverified"),
+  /** C-01：最近一次查验完成时间 */
+  verifyTime: customTimestamptz("verify_time"),
+  /** C-01：查验失败原因（verified 时为空） */
+  verifyError: text("verify_error"),
+  /** C-01：勾选认证状态（uncertified/certified/deducted），默认未认证 */
+  certificationStatus: varchar("certification_status", { length: 20 }).notNull().default("uncertified"),
+  /** C-01：勾选所属税款所属期 YYYY-MM */
+  certificationPeriod: varchar("certification_period", { length: 7 }),
+  /** C-01：最近一次勾选完成时间 */
+  certifiedAt: customTimestamptz("certified_at"),
   // System field: Creation time (auto-filled, do not modify)
   createdAt: customTimestamptz("_created_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
   // System field: Creator (auto-filled, do not modify)
@@ -1840,6 +1886,14 @@ export const salesReturn = pgTable("sales_return", {
   taxAmount: numeric("tax_amount").notNull().default('0'),
   redInvoiceId: uuid("red_invoice_id"),
   revenueAdjustId: uuid("revenue_adjust_id"),
+  /**
+   * 退货商品处置方式：restock=回库（借 1403 原材料）/ scrap=报废（借 6602 管理费用）。
+   * 退回商品是否还能再售必须逐单由业务判定，系统不替业务假设——
+   * "一律回库"会把已报废的退货错记成库存，"一律报废"会把可再售的退货错计费用。
+   */
+  disposalType: varchar("disposal_type", { length: 20 }).notNull().default('restock'),
+  /** 自动按含税收入占比分摊算出的成本冲回金额（0 = 项目无成本数据，未生成成本行） */
+  costAmount: numeric("cost_amount").notNull().default('0'),
   status: varchar("status", { length: 20 }).notNull().default('draft'),
   reason: varchar("reason", { length: 500 }),
   remark: text("remark"),
@@ -2535,6 +2589,13 @@ export const mdTaxEntity = pgTable("md_tax_entity", {
   taxpayerType: varchar("taxpayer_type", { length: 20 }).notNull(),
   defaultOutputRate: numeric("default_output_rate").notNull(),
   defaultInputRate: numeric("default_input_rate").notNull(),
+  /**
+   * 城建税率（百分数：市区 7 / 县镇 5 / 其他 1）。
+   *
+   * 附加税费按主体分档，该档位取决于主体所在地，**代码无法推断**，必须逐主体录入。
+   * NULL 表示未配置 —— 计算时视为要件缺失，**拒绝出数**，不得按 0 静默计提。
+   */
+  urbanMaintRate: numeric("urban_maint_rate", { precision: 5, scale: 2 }),
   invoiceTitle: varchar("invoice_title", { length: 200 }),
   invoiceAddress: varchar("invoice_address", { length: 300 }),
   invoicePhone: varchar("invoice_phone", { length: 40 }),

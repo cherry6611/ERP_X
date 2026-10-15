@@ -3,11 +3,14 @@ import {
   DRIZZLE_DATABASE,
   type PostgresJsDatabase,
 } from '@server/platform';
-import { and, eq, sql } from 'drizzle-orm';
+import { and, eq, ne, sql } from 'drizzle-orm';
 import { finPeriodClose, finVoucher, finVoucherLine } from '@server/database/schema';
 import { generateBizCode } from '@server/common/utils/biz-code';
+import { unwrapRows } from '@server/common/utils/rows';
 import { todayInShanghai } from '@server/common/utils/biz-date';
-import { AccountResolverService } from './account-resolver.service';
+import { assertFiscalYearOpen } from '@server/common/utils/period-guard';
+import { resolveVoucherTaxEntityId } from '@server/common/tax/tax-entity-resolver';
+import { AccountResolverService, type ResolvedAccount } from './account-resolver.service';
 
 export interface VoucherHookLine {
   accountCode: string;
@@ -22,6 +25,12 @@ export interface VoucherDraftParams {
   voucherDate: string;
   summary: string;
   lines: VoucherHookLine[];
+  /**
+   * P0-2：凭证归属的纳税主体。自动凭证调用点**应尽量显式传入**
+   * （业务单据上的合同/主体）；缺省时由 `resolveVoucherTaxEntityId` 兜底
+   * （sourceRef 命中合同 → 唯一默认主体 → null）。
+   */
+  taxEntityId?: string | null;
 }
 
 export type VoucherDraftResult = 'created' | 'failed';
@@ -38,6 +47,19 @@ export class VoucherHookService {
     @Inject(DRIZZLE_DATABASE) private readonly db: PostgresJsDatabase,
     private readonly accountResolver: AccountResolverService,
   ) {}
+
+  /**
+   * P2-11：按业务场景取做账科目（未配置时回落 `defaultCode`）。
+   *
+   * 透传自 `AccountResolverService`，让调用方不必为了一个科目查询多注入一个依赖
+   * （本服务已经在各处被注入，是现成的通道）。
+   */
+  async resolveSceneAccount(
+    scene: string,
+    defaultCode: string
+  ): Promise<ResolvedAccount | null> {
+    return this.accountResolver.resolveSceneAccount(scene, defaultCode);
+  }
 
   async generateVoucherDraft(
     params: VoucherDraftParams
@@ -71,6 +93,8 @@ export class VoucherHookService {
         await this.markFailed(params, `期间 ${period} 已结账`);
         return 'failed';
       }
+      // P0-3：会计年度已年结则该年度期间只读（月结与年结是两套闸门，必须都接线）
+      await assertFiscalYearOpen(this.db, period);
 
       let totalDebit = 0;
       let totalCredit = 0;
@@ -92,11 +116,21 @@ export class VoucherHookService {
         .where(
           and(
             eq(finVoucher.sourceType, params.sourceType),
-            eq(finVoucher.sourceRef, params.sourceRef)
+            eq(finVoucher.sourceRef, params.sourceRef),
+            // P2-7：幂等键需含状态。已作废（voided）的旧凭证不能代表「本业务已出凭证」，
+            // 否则同一单据再次触发时会被误判为 created →「有业务无凭证」。
+            ne(finVoucher.status, 'voided'),
           )
         )
         .limit(1);
       if (existing.length > 0) return 'created';
+
+      // P0-2：解析纳税主体（读 erp_contract / md_tax_entity，必须在写事务外）
+      const taxEntityId = await resolveVoucherTaxEntityId(this.db, {
+        explicit: params.taxEntityId,
+        sourceRef: params.sourceRef,
+        sourceType: params.sourceType,
+      });
 
       const code = await generateBizCode(
         this.db,
@@ -115,6 +149,8 @@ export class VoucherHookService {
             sourceType: params.sourceType,
             sourceRef: params.sourceRef,
             status: 'draft',
+            // P0-2：落纳税主体，否则该凭证不计入任何主体的账簿/报表
+            taxEntityId,
           })
           .returning({ id: finVoucher.id });
         await tx.insert(finVoucherLine).values(
@@ -176,65 +212,84 @@ export class VoucherHookService {
   /**
    * B1：消费失败队列。跳过空 lines（无法重放的补偿记录标 dead）。
    * 最多重试 8 次。
+   *
+   * P0-4：**不能在持有行锁的事务里重放**。原实现在 `db.transaction` 内
+   * `SELECT ... FOR UPDATE SKIP LOCKED` 后直接调用 `generateVoucherDraft`，
+   * 而后者走的是另一条连接（`this.db`）去 UPDATE/INSERT 同一批行
+   * （`clearFailure` / `markFailed`）→ 内层等外层释放行锁、外层 `await` 内层，
+   * 真实 Postgres 下自死锁（`lock_timeout=0` 即永久等待）；pglite（单连接）下
+   * 则表现为嵌套事务冲突。现在拆成两步：短事务内「认领」并立即提交，
+   * 事务外再做重放。
    */
   async retryPendingJobs(limit = 20): Promise<{ retried: number; dead: number }> {
-    // L4：必须在事务内使用 FOR UPDATE SKIP LOCKED，否则锁在语句结束即释放
-    return this.db.transaction(async (tx) => {
+    type JobRow = {
+      id: string;
+      source_type: string;
+      source_ref: string;
+      payload: string | null;
+      attempts: number;
+    };
+    // 第一步：短事务认领。FOR UPDATE SKIP LOCKED 仍需在事务内才有意义；
+    // 顺带把陈旧的 'processing'（上次进程异常退出遗留）重新纳入。
+    const claimed = await this.db.transaction(async (tx) => {
       const rows = await tx.execute(sql`
         SELECT id, source_type, source_ref, payload, attempts
         FROM comp_voucher_job
-        WHERE status = 'failed'
-          AND (next_retry_at IS NULL OR next_retry_at <= CURRENT_TIMESTAMP)
-          AND attempts < 8
+        WHERE (
+                (
+                  status = 'failed'
+                  AND (next_retry_at IS NULL OR next_retry_at <= CURRENT_TIMESTAMP)
+                )
+                OR (
+                  status = 'processing'
+                  AND updated_at < CURRENT_TIMESTAMP - interval '10 minutes'
+                )
+              )
+              AND attempts < 8
         ORDER BY next_retry_at NULLS FIRST
         LIMIT ${limit}
         FOR UPDATE SKIP LOCKED
       `);
-      const list = Array.isArray(rows)
-        ? (rows as unknown as {
-            id: string;
-            source_type: string;
-            source_ref: string;
-            payload: string | null;
-            attempts: number;
-          }[])
-        : (((rows as { rows?: {
-            id: string;
-            source_type: string;
-            source_ref: string;
-            payload: string | null;
-            attempts: number;
-          }[] }).rows) ?? []);
-
-      let retried = 0;
-      let dead = 0;
+      const list = unwrapRows<JobRow>(rows);
+      if (list.length === 0) return list;
       for (const job of list) {
-        let params: VoucherDraftParams | null = null;
-        try {
-          params = job.payload
-            ? (JSON.parse(job.payload) as VoucherDraftParams)
-            : null;
-        } catch {
-          params = null;
-        }
-        if (!params?.lines?.length) {
-          await tx.execute(sql`
-            UPDATE comp_voucher_job
-            SET status = 'dead',
-                last_error = coalesce(last_error, '') || ' [无有效分录，无法重试]',
-                updated_at = CURRENT_TIMESTAMP
-            WHERE id = ${job.id}
-          `);
-          dead += 1;
-          continue;
-        }
-        const result = await this.generateVoucherDraft(params);
-        if (result === 'created') {
-          retried += 1;
-        }
+        await tx.execute(sql`
+          UPDATE comp_voucher_job
+          SET status = 'processing', updated_at = CURRENT_TIMESTAMP
+          WHERE id = ${job.id}
+        `);
       }
-      return { retried, dead };
+      return list;
     });
+
+    let retried = 0;
+    let dead = 0;
+    for (const job of claimed) {
+      let params: VoucherDraftParams | null = null;
+      try {
+        params = job.payload
+          ? (JSON.parse(job.payload) as VoucherDraftParams)
+          : null;
+      } catch {
+        params = null;
+      }
+      if (!params?.lines?.length) {
+        await this.db.execute(sql`
+          UPDATE comp_voucher_job
+          SET status = 'dead',
+              last_error = coalesce(last_error, '') || ' [无有效分录，无法重试]',
+              updated_at = CURRENT_TIMESTAMP
+          WHERE id = ${job.id}
+        `);
+        dead += 1;
+        continue;
+      }
+      const result = await this.generateVoucherDraft(params);
+      if (result === 'created') {
+        retried += 1;
+      }
+    }
+    return { retried, dead };
   }
 
   /** 将失败记入重试队列。表不存在时只打日志。 */
