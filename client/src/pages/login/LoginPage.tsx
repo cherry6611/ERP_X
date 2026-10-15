@@ -1,13 +1,24 @@
 import { FormEvent, useEffect, useState } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useSearchParams } from 'react-router-dom';
 import { Eye, EyeOff, Layers, Loader2 } from 'lucide-react';
 import { Button } from '@client/src/components/ui/button';
 import { Input } from '@client/src/components/ui/input';
 import { Label } from '@client/src/components/ui/label';
 import { settingsApi } from '@client/src/api';
+import { withBasePath } from '@client/src/utils/base-path';
+
+/**
+ * P1-4：登录成功后的整页跳转目标。
+ *
+ * 只接受站内绝对路径（以 `/` 开头且不以 `//` 开头），防开放重定向。
+ * 注意 `useSearchParams` 已做过一次 URL 解码，这里不再二次解码。
+ */
+function resolveRedirectTarget(raw: string | null): string {
+  if (!raw) return '/';
+  return raw.startsWith('/') && !raw.startsWith('//') ? raw : '/';
+}
 
 export default function LoginPage() {
-  const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const bindInvite = searchParams.get('bind_invite');
   const feishuOk = searchParams.get('feishu_ok');
@@ -36,11 +47,26 @@ export default function LoginPage() {
     }
   }, [bindInvite]);
 
+  /**
+   * P1-4：登录成功后的跳转。
+   *
+   * 必须用整页跳转（window.location.assign）而不是 SPA 的 navigate('/')：
+   * 路由守卫 `RequireCapability` 依赖 `useAuth()` 在本页首次挂载时缓存的
+   * `/auth/me` 结果；该结果是登录前的【匿名】快照。若只用 SPA 跳转，
+   * 守卫会仍看到“未登录”并把用户弹回 `/login?redirect=%2F`，
+   * 表现为“登录成功但页面不动”。整页加载会重建应用并重新拉取会话。
+   */
+  const goAfterLogin = () => {
+    window.location.assign(withBasePath(resolveRedirectTarget(searchParams.get('redirect'))));
+  };
+
   useEffect(() => {
     if (!feishuOk) return;
-    const t = window.setTimeout(() => navigate('/'), 800);
+    const t = window.setTimeout(() => {
+      window.location.assign(withBasePath('/'));
+    }, 800);
     return () => window.clearTimeout(t);
-  }, [feishuOk, navigate]);
+  }, [feishuOk]);
 
   const onSubmit = async (event: FormEvent) => {
     event.preventDefault();
@@ -63,7 +89,7 @@ export default function LoginPage() {
         );
         return;
       }
-      navigate('/');
+      goAfterLogin();
     } catch {
       setError('登录失败，请检查网络后重试');
     } finally {

@@ -19,6 +19,23 @@ axiosForBackend.interceptors.response.use(
     if (status === 401 && !atLogin) {
       window.location.assign(loginPath);
     }
+    /*
+     * P1-3：把后端的真实错误信息写回 error.message。
+     *
+     * 后端全局异常过滤器返回 { error: { code, message } }，但 axios 默认把
+     * message 覆写成英文的 “Request failed with status code 400”，导致页面
+     * 用 `err.message` 的 toast 只能显示英文，用户看不到后端的中文原因。
+     * 在这里统一回填后，`getApiErrorMessage(err, ...)` 与历史遗留的
+     * `err instanceof Error ? err.message : ...` 两种写法都能透出后端 message。
+     */
+    const backendMessage = error?.response?.data?.error?.message;
+    if (
+      error instanceof Error &&
+      typeof backendMessage === 'string' &&
+      backendMessage.length > 0
+    ) {
+      error.message = backendMessage;
+    }
     return Promise.reject(error);
   },
 );

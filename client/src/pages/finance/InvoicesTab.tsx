@@ -229,6 +229,51 @@ const InvoicesTab: React.FC = () => {
     }
   };
 
+  /* ===================== C-01 发票查验与勾选认证 ===================== */
+
+  const handleVerify = async (invoice: InvoiceItem) => {
+    try {
+      const res = await financeApi.verifyInvoice(invoice.id);
+      const label = VERIFY_STATUS_LABELS[res.verifyStatus] ?? res.verifyStatus;
+      if (res.source === 'none') {
+        /*
+         * P1-5：none 模式下接口 201 成功但状态仍为「未查验」。
+         * 只说「未查验」，用户会以为功能坏了；这里必须把原因和下一步说清楚。
+         */
+        toast.info(
+          '当前未配置查验服务商（none 模式），发票保持未查验状态；请在设置中配置 INVOICE_VERIFY_PROVIDER',
+        );
+      } else if (res.verifyStatus === 'verified') {
+        toast.success(`查验通过：${label}`);
+      } else if (res.verifyStatus === 'failed') {
+        // 查验失败仅标记，不阻断；把失败原因透出给用户便于处理
+        toast.warning(`查验未通过：${res.message}`);
+      } else {
+        toast.info(res.message || label);
+      }
+      await reload();
+    } catch (err) {
+      toast.error(extractErrorMessage(err, '发票查验失败'));
+    }
+  };
+
+  const handleCertify = async (invoice: InvoiceItem) => {
+    const input = window.prompt('请输入勾选所属税款所属期（YYYY-MM，如 2026-03）', '');
+    if (input === null) return;
+    const period = input.trim();
+    if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(period)) {
+      toast.error('税款所属期格式必须为 YYYY-MM');
+      return;
+    }
+    try {
+      await financeApi.certifyInvoice(invoice.id, period);
+      toast.success('勾选认证已记录');
+      await reload();
+    } catch (err) {
+      toast.error(extractErrorMessage(err, '勾选认证失败'));
+    }
+  };
+
   const handleExportCsv = () => {
     if (invoices.length === 0) {
       toast.error('当前列表为空，无可导出数据');
@@ -300,6 +345,38 @@ const InvoicesTab: React.FC = () => {
     } finally {
       setLinking(false);
     }
+  };
+
+  /* C-01：查验 / 认证状态展示映射 */
+  type BadgeVariant =
+    | 'warning'
+    | 'success'
+    | 'secondary'
+    | 'destructive'
+    | 'info'
+    | 'default'
+    | 'outline';
+  const VERIFY_STATUS_LABELS: Record<string, string> = {
+    unverified: '未查验',
+    verifying: '查验中',
+    verified: '已通过',
+    failed: '查验失败',
+  };
+  const VERIFY_STATUS_VARIANTS: Record<string, BadgeVariant> = {
+    unverified: 'secondary',
+    verifying: 'warning',
+    verified: 'success',
+    failed: 'destructive',
+  };
+  const CERT_STATUS_LABELS: Record<string, string> = {
+    uncertified: '未认证',
+    certified: '已认证',
+    deducted: '已抵扣',
+  };
+  const CERT_STATUS_VARIANTS: Record<string, BadgeVariant> = {
+    uncertified: 'secondary',
+    certified: 'info',
+    deducted: 'success',
   };
 
   const columns: TableColumnsType<InvoiceItem> = [
@@ -380,6 +457,38 @@ const InvoicesTab: React.FC = () => {
       ),
     },
     {
+      title: '查验状态',
+      dataIndex: 'verifyStatus',
+      width: 100,
+      render: (v: string, record: InvoiceItem) => (
+        <div className="flex flex-col gap-0.5">
+          <Badge variant={VERIFY_STATUS_VARIANTS[v] ?? 'secondary'}>
+            {VERIFY_STATUS_LABELS[v] ?? v}
+          </Badge>
+          {record.verifyError ? (
+            <span className="text-[11px] text-destructive leading-tight">{record.verifyError}</span>
+          ) : null}
+        </div>
+      ),
+    },
+    {
+      title: '认证状态',
+      dataIndex: 'certificationStatus',
+      width: 110,
+      render: (v: string, record: InvoiceItem) => (
+        <div className="flex flex-col gap-0.5">
+          <Badge variant={CERT_STATUS_VARIANTS[v] ?? 'secondary'}>
+            {CERT_STATUS_LABELS[v] ?? v}
+          </Badge>
+          {record.certificationPeriod ? (
+            <span className="text-[11px] text-muted-foreground leading-tight">
+              {record.certificationPeriod}
+            </span>
+          ) : null}
+        </div>
+      ),
+    },
+    {
       title: '操作',
       key: 'actions',
       width: 220,
@@ -409,6 +518,20 @@ const InvoicesTab: React.FC = () => {
                 onClick={() => void handleVoid(record)}
               >
                 作废
+              </Button>
+            </CanCapabilityWrite>
+          ) : null}
+          {record.status === 'issued' ? (
+            <CanCapabilityWrite capability="finance_write">
+              <Button variant="ghost" size="sm" onClick={() => void handleVerify(record)}>
+                查验
+              </Button>
+            </CanCapabilityWrite>
+          ) : null}
+          {record.status === 'issued' ? (
+            <CanCapabilityWrite capability="finance_write">
+              <Button variant="ghost" size="sm" onClick={() => void handleCertify(record)}>
+                认证
               </Button>
             </CanCapabilityWrite>
           ) : null}

@@ -10,6 +10,7 @@ import { Badge } from '@client/src/components/ui/badge';
 import { Button } from '@client/src/components/ui/button';
 import { Input } from '@client/src/components/ui/input';
 import { Label } from '@client/src/components/ui/label';
+import { Switch } from '@client/src/components/ui/switch';
 import {
   Pagination,
   PaginationContent,
@@ -137,13 +138,16 @@ const LedgersPage: React.FC = () => {
   const [page, setPage] = useState<number>(1);
   const [includeChildren, setIncludeChildren] = useState(false);
   const [dimension, setDimension] = useState<string>('');
+  // P0-2：默认只取已过账凭证；打开后按「含草稿预览」口径取数
+  const [includeDraft, setIncludeDraft] = useState(false);
 
   const args = useMemo(
     () => ({
       period,
       taxEntityId: taxEntityId === ALL_ENTITIES ? undefined : taxEntityId,
+      includeDraft,
     }),
-    [period, taxEntityId],
+    [period, taxEntityId, includeDraft],
   );
 
   const entities = useAsyncData<TaxEntity[]>(() => masterDataApi.listTaxEntities(), []);
@@ -177,9 +181,10 @@ const LedgersPage: React.FC = () => {
             pageSize: PAGE_SIZE,
             taxEntityId: args.taxEntityId,
             includeChildren,
+            includeDraft,
           })
         : Promise.resolve(null),
-    [accountCode, period, page, includeChildren, args, tab],
+    [accountCode, period, page, includeChildren, includeDraft, args, tab],
   );
   const aux = useAsyncData<AuxBalanceSheet | null>(
     () =>
@@ -818,7 +823,7 @@ const LedgersPage: React.FC = () => {
   return (
     <PageShell
       title="会计账簿"
-      description="科目余额表、总账、明细账与辅助余额表；总账 → 明细账 → 凭证三级下钻"
+      description={`科目余额表、总账、明细账与辅助余额表；总账 → 明细账 → 凭证三级下钻（取数来源：${includeDraft ? '已过账 + 草稿预览' : '已过账凭证'}）`}
     >
       <FilterBar>
         <div className="flex items-center gap-2">
@@ -851,6 +856,23 @@ const LedgersPage: React.FC = () => {
               ))}
             </SelectContent>
           </Select>
+        </div>
+
+        <div className="flex items-center gap-2">
+          <Switch
+            id="ledgers-include-draft"
+            checked={includeDraft}
+            onCheckedChange={(next) => {
+              setIncludeDraft(next);
+              setPage(1);
+            }}
+          />
+          <Label
+            htmlFor="ledgers-include-draft"
+            className="text-xs text-muted-foreground"
+          >
+            含草稿预览
+          </Label>
         </div>
 
         {tab === 'balance' ? (
@@ -964,6 +986,15 @@ const LedgersPage: React.FC = () => {
       {dimensions.error ? (
         <p className="text-sm text-destructive">
           辅助维度加载失败：{dimensions.error}（辅助余额表不可用）
+        </p>
+      ) : null}
+
+      {includeDraft ? (
+        <p
+          role="status"
+          className="rounded-lg border border-amber-500/40 bg-amber-500/5 px-4 py-2 text-sm text-amber-700 dark:text-amber-400"
+        >
+          当前为「含草稿预览」口径：已包含未过账草稿凭证，不得作为正式账簿对外报送。
         </p>
       ) : null}
 

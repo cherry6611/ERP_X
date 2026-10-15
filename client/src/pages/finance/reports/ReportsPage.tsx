@@ -1,4 +1,5 @@
-import React, { useMemo, useState } from 'react';import { toast } from 'sonner';
+import React, { useMemo, useState } from 'react';
+import { toast } from 'sonner';
 import {
   AlertTriangle,
   CheckCircle2,
@@ -14,6 +15,7 @@ import { SectionTitle } from '@client/src/components/SectionTitle';
 import { Badge } from '@client/src/components/ui/badge';
 import { Button } from '@client/src/components/ui/button';
 import { Label } from '@client/src/components/ui/label';
+import { Switch } from '@client/src/components/ui/switch';
 import {
   Select,
   SelectContent,
@@ -308,13 +310,16 @@ const ReportsPage: React.FC = () => {
   const [period, setPeriod] = useState<string>(currentPeriod());
   const [taxEntityId, setTaxEntityId] = useState<string>(ALL_ENTITIES);
   const [tab, setTab] = useState<ReportCode>('balance_sheet');
+  // P0-2：默认只取已过账凭证；打开开关后按「含草稿预览」口径取数
+  const [includeDraft, setIncludeDraft] = useState(false);
 
   const args: ReportQueryArgs = useMemo(
     () => ({
       period,
       taxEntityId: taxEntityId === ALL_ENTITIES ? undefined : taxEntityId,
+      includeDraft,
     }),
-    [period, taxEntityId],
+    [period, taxEntityId, includeDraft],
   );
 
   const entities = useAsyncData<TaxEntity[]>(() => masterDataApi.listTaxEntities(), []);
@@ -391,7 +396,7 @@ const ReportsPage: React.FC = () => {
   return (
     <PageShell
       title="财务报表"
-      description="资产负债表、利润表、现金流量表（取数来源：已过账凭证 + 报表模板公式）"
+      description={`资产负债表、利润表、现金流量表（取数来源：${includeDraft ? '已过账 + 草稿预览' : '已过账凭证'} + 报表模板公式）`}
     >
       <FilterBar>
         <div className="flex items-center gap-2">
@@ -418,6 +423,16 @@ const ReportsPage: React.FC = () => {
             </SelectContent>
           </Select>
         </div>
+        <div className="flex items-center gap-2">
+          <Switch
+            id="reports-include-draft"
+            checked={includeDraft}
+            onCheckedChange={setIncludeDraft}
+          />
+          <Label htmlFor="reports-include-draft" className="text-xs text-muted-foreground">
+            含草稿预览
+          </Label>
+        </div>
         <Button
           type="button"
           variant="outline"
@@ -442,6 +457,16 @@ const ReportsPage: React.FC = () => {
           当前口径：{period} · {entityName}
         </span>
       </FilterBar>
+
+      {includeDraft ? (
+        <div
+          role="status"
+          className="flex items-center gap-2 rounded-lg border border-amber-500/40 bg-amber-500/5 px-4 py-2 text-sm text-amber-700 dark:text-amber-400"
+        >
+          <AlertTriangle className="size-4 shrink-0" />
+          当前为「含草稿预览」口径：已包含<b>未过账草稿凭证</b>，不得作为正式报表对外报送。
+        </div>
+      ) : null}
 
       {entities.error ? (
         <p className="text-sm text-destructive">

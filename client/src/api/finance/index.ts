@@ -6,6 +6,9 @@ import type {
   ApWriteoffDto,
   ArItem,
   ArWriteoffDto,
+  BatchInvoiceVerifyDto,
+  BatchInvoiceVerifyResult,
+  CertifyInvoiceDto,
   CashFlowForecast,
   CreateApDto,
   CreateArDto,
@@ -17,9 +20,14 @@ import type {
   GenerateVendorSettlementResult,
   InvoiceDirection,
   InvoiceItem,
+  InvoiceVerifyResult,
+  InvoiceVerifyStatusView,
   PaymentAction,
   PaymentItem,
   ReceiptItem,
+  ReconRowItem,
+  ReconSummary,
+  RevenueVariance,
   StatementCounterpartyOption,
   StatementDirection,
   StatementResult,
@@ -166,6 +174,56 @@ export async function voidInvoice(id: string): Promise<InvoiceItem> {
   return resp.data;
 }
 
+/* ===================== C-01 发票查验与勾选认证 ===================== */
+
+/** 单张发票查验 */
+export async function verifyInvoice(id: string): Promise<InvoiceVerifyResult> {
+  const resp = await axiosForBackend.post<InvoiceVerifyResult>(
+    `/api/finance/invoices/${id}/verify`,
+  );
+  ensureNotForbidden(resp);
+  return resp.data;
+}
+
+/** 批量查验（逐张隔离，单张失败不影响其余） */
+export async function batchVerifyInvoice(
+  ids: string[],
+): Promise<BatchInvoiceVerifyResult> {
+  const dto: BatchInvoiceVerifyDto = { ids };
+  const resp = await axiosForBackend.post<BatchInvoiceVerifyResult>(
+    '/api/finance/invoices/batch-verify',
+    dto,
+  );
+  ensureNotForbidden(resp);
+  return resp.data;
+}
+
+/** 勾选认证 / 标记已抵扣 */
+export async function certifyInvoice(
+  id: string,
+  certificationPeriod: string,
+  action?: 'certify' | 'deduct',
+): Promise<InvoiceVerifyStatusView> {
+  const dto: CertifyInvoiceDto = { certificationPeriod, action };
+  const resp = await axiosForBackend.post<InvoiceVerifyStatusView>(
+    `/api/finance/invoices/${id}/certify`,
+    dto,
+  );
+  ensureNotForbidden(resp);
+  return resp.data;
+}
+
+/** 查询单张发票查验/认证状态 */
+export async function getInvoiceVerifyStatus(
+  id: string,
+): Promise<InvoiceVerifyStatusView> {
+  const resp = await axiosForBackend.get<InvoiceVerifyStatusView>(
+    `/api/finance/invoices/${id}/verify-status`,
+  );
+  ensureNotForbidden(resp);
+  return resp.data;
+}
+
 export async function vendorSettlementPreview(
   supplierId: string,
   period: string,
@@ -229,13 +287,10 @@ export async function listArWriteoffs(arId?: string) {
 }
 
 export async function reconSummary() {
-  const resp = await axiosForBackend.get('/api/finance/reconciliation/summary');
-  return resp.data as {
-    purchaseUnlinked: number;
-    salesUnlinked: number;
-    receiptUnlinked: number;
-    voidedRisk: number;
-  };
+  const resp = await axiosForBackend.get<ReconSummary>(
+    '/api/finance/reconciliation/summary',
+  );
+  return resp.data;
 }
 
 export async function reconPurchaseAp() {
@@ -253,6 +308,23 @@ export async function reconSalesAr() {
 export async function reconReceiptWriteoff() {
   const resp = await axiosForBackend.get(
     '/api/finance/reconciliation/receipt-writeoff',
+  );
+  return resp.data;
+}
+
+/** P1-1：应收已登记但未开票明细（反向缺口） */
+export async function reconArWithoutInvoice() {
+  const resp = await axiosForBackend.get<ReconRowItem[]>(
+    '/api/finance/reconciliation/ar-without-invoice',
+  );
+  return resp.data;
+}
+
+/** P0-4 / P1-1：总账收入 vs 收入台账 差异检测 */
+export async function reconRevenueVariance(period: string) {
+  const resp = await axiosForBackend.get<RevenueVariance>(
+    '/api/finance/reconciliation/revenue-variance',
+    { params: { period } },
   );
   return resp.data;
 }

@@ -106,10 +106,11 @@ export async function salesReturnAction(
   id: string,
   action: ReturnAction,
   remark?: string,
+  disposalType?: 'restock' | 'scrap',
 ): Promise<SalesReturnItem> {
   const resp = await axiosForBackend.post<SalesReturnItem>(
     `/api/returns/sales/${id}/actions`,
-    { action, remark },
+    { action, remark, disposalType },
   );
   ensureNotForbidden(resp);
   return resp.data;

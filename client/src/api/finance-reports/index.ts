@@ -45,10 +45,13 @@ import type {
 function buildArgs(args: ReportQueryArgs): {
   period: string;
   taxEntityId?: string;
+  includeDraft?: string;
 } {
   return {
     period: args.period,
     taxEntityId: args.taxEntityId || undefined,
+    // 后端按字符串 'true' 判定（见 controller），显式序列化避免歧义
+    includeDraft: args.includeDraft ? 'true' : undefined,
   };
 }
 
@@ -141,6 +144,7 @@ export async function getDetailLedger(
         taxEntityId: args.taxEntityId,
         // 后端按字符串 'true' 判定（见 controller），显式序列化避免歧义
         includeChildren: args.includeChildren ? 'true' : undefined,
+        includeDraft: args.includeDraft ? 'true' : undefined,
       },
     },
   );
@@ -158,6 +162,7 @@ export async function getAuxBalance(
         dimension: args.dimension,
         dimensionId: args.dimensionId,
         taxEntityId: args.taxEntityId,
+        includeDraft: args.includeDraft ? 'true' : undefined,
       },
     },
   );

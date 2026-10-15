@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useFieldArray, useForm } from 'react-hook-form';
@@ -44,15 +44,19 @@ import {
   type ExcelSheetColumn,
 } from '@client/src/components/excel/excel-utils';
 import { voucherApi } from '@client/src/api';
+import * as financeReportsApi from '@client/src/api/finance-reports';
 import { useAsyncData } from '@client/src/hooks/useAsyncData';
 import { formatMoney, currentPeriod, todayIso } from '@client/src/utils/format';
+import { getApiErrorMessage } from '@client/src/utils/api-error-message';
 import type {
   AccountItem,
+  AuxDimensionItem,
   CreateVoucherDto,
   CreateVoucherLineDto,
   PeriodStatus,
   VoucherAction,
   VoucherItem,
+  VoucherLineAuxDto,
   VoucherLineItem,
 } from '@shared/api.interface';
 
@@ -63,6 +67,8 @@ const lineSchema = z.object({
   summary: z.string(),
   debit: z.string(),
   credit: z.string(),
+  /** A-05：科目要求的辅助核算维度值（dimensionCode → dimensionValue） */
+  aux: z.record(z.string(), z.string()),
 });
 
 const voucherSchema = z.object({
@@ -75,9 +81,15 @@ const voucherSchema = z.object({
 
 type VoucherFormData = z.infer<typeof voucherSchema>;
 
-const EMPTY_LINES = (): { accountId: string; summary: string; debit: string; credit: string }[] => [
-  { accountId: '', summary: '', debit: '', credit: '' },
-  { accountId: '', summary: '', debit: '', credit: '' },
+const EMPTY_LINES = (): {
+  accountId: string;
+  summary: string;
+  debit: string;
+  credit: string;
+  aux: Record<string, string>;
+}[] => [
+  { accountId: '', summary: '', debit: '', credit: '', aux: {} },
+  { accountId: '', summary: '', debit: '', credit: '', aux: {} },
 ];
 
 const EMPTY_FORM: VoucherFormData = {
@@ -121,6 +133,8 @@ const VoucherPanel: React.FC = () => {
   const [createOpen, setCreateOpen] = useState(false);
     const [confirmTarget, setConfirmTarget] = useState<ConfirmTarget | null>(null);
   const [operating, setOperating] = useState(false);
+  // P1-3：表单内「错误提示」单列展示（后端 message 原样）
+  const [submitError, setSubmitError] = useState<string | null>(null);
 
   const { data, loading, error, reload } = useAsyncData(
     () =>
@@ -143,9 +157,27 @@ const VoucherPanel: React.FC = () => {
     () => voucherApi.listAccounts({ page: 1, pageSize: 500 }),
     [],
   );
+  /**
+   * P1-2：科目下拉只能选末级科目。
+   * 后端对非末级（汇总）科目直接报错「不可直接做账」，前端不应先把非法项列出来，
+   * 让用户选完再被拒。
+   */
   const activeAccounts = (accountsResult?.items ?? []).filter(
-    (a: AccountItem) => a.status === 'active',
+    (a: AccountItem) => a.status === 'active' && a.isLeaf,
   );
+
+  /** A-05：辅助核算维度定义（code → 名称） */
+  const { data: auxDimensions } = useAsyncData<AuxDimensionItem[]>(
+    () => financeReportsApi.listAuxDimensions(),
+    [],
+  );
+  const auxNameByCode = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const dim of auxDimensions ?? []) {
+      if (dim.enabled) map.set(dim.code, dim.name);
+    }
+    return map;
+  }, [auxDimensions]);
 
   const form = useForm<VoucherFormData>({
     resolver: zodResolver(voucherSchema),
@@ -157,7 +189,47 @@ const VoucherPanel: React.FC = () => {
   });
 
   const watchedDate = form.watch('voucherDate');
+  const watchedPeriod = form.watch('period');
   const watchedLines = form.watch('lines');
+
+  /** 当前表单可能用到的辅助维度编码（已选科目要求挂的维度合集） */
+  const requiredAuxCodes = useMemo(() => {
+    const accountById = new Map(activeAccounts.map((a) => [a.id, a]));
+    const codes = new Set<string>();
+    for (const line of watchedLines ?? []) {
+      const account = accountById.get(line.accountId);
+      for (const code of account?.auxRequired ?? []) codes.add(code);
+    }
+    return [...codes].sort();
+  }, [watchedLines, activeAccounts]);
+
+  /**
+   * A-05：辅助维度可选值（datalist 提示用）。
+   * 取自本期已在用的取值；本期尚无数据时为空，输入框仍允许手录，
+   * 不会因为“新期间没有历史值”而卡住录账。
+   */
+  const { data: auxValueHints } = useAsyncData(async () => {
+    const map = new Map<string, string[]>();
+    await Promise.all(
+      requiredAuxCodes.map(async (code) => {
+        try {
+          const values = await financeReportsApi.getAuxDimensionValues({
+            period: watchedPeriod || currentPeriod(),
+            dimensionCode: code,
+          });
+          map.set(
+            code,
+            values
+              .map((v) => v.dimensionValue)
+              .filter((v) => v && v !== '（未指定）'),
+          );
+        } catch {
+          map.set(code, []);
+        }
+      }),
+    );
+    return map;
+  }, [requiredAuxCodes.join(','), watchedPeriod]);
 
   useEffect(() => {
     if (/^\d{4}-\d{2}-\d{2}$/.test(watchedDate)) {
@@ -193,9 +265,26 @@ const VoucherPanel: React.FC = () => {
     return null;
   };
 
+  /**
+   * P1-2：把「科目必挂维度 → 输入值」转成后端入参（VoucherLineAuxDto[]）。
+   * 只提交科目声明必挂的维度；空值不提交，由后端给出「要求填写辅助核算维度」的准确报错。
+   */
+  const buildLineAux = (
+    accountId: string,
+    aux: Record<string, string> | undefined,
+  ): VoucherLineAuxDto[] | undefined => {
+    const account = activeAccounts.find((a) => a.id === accountId);
+    const items = (account?.auxRequired ?? [])
+      .map((code) => ({
+        dimensionCode: code,
+        dimensionValue: (aux?.[code] ?? '').trim(),
+      }))
+      .filter((item) => item.dimensionValue.length > 0);
+    return items.length > 0 ? items : undefined;
+  };
+
   const onSubmit = form.handleSubmit(async (values) => {
-    const lines: CreateVoucherLineDto[] = [];
-    for (let i = 0; i < values.lines.length; i += 1) {
+    const lines: CreateVoucherLineDto[] = [];    for (let i = 0; i < values.lines.length; i += 1) {
       const line = values.lines[i];
       const debit = Number(line.debit || 0);
       const credit = Number(line.credit || 0);
@@ -216,6 +305,7 @@ const VoucherPanel: React.FC = () => {
         summary: line.summary || undefined,
         debit: debit > 0 ? round2(debit) : undefined,
         credit: credit > 0 ? round2(credit) : undefined,
+        auxDimensions: buildLineAux(line.accountId, line.aux),
       });
     }
     if (Math.abs(totalDebit - totalCredit) > 0.001) {
@@ -234,6 +324,7 @@ const VoucherPanel: React.FC = () => {
       remark: values.remark || undefined,
     };
     setOperating(true);
+    setSubmitError(null);
     try {
       await voucherApi.createVoucher(dto);
       toast.success('手工凭证已创建');
@@ -241,7 +332,10 @@ const VoucherPanel: React.FC = () => {
       setPage(1);
       await reload();
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : '创建凭证失败');
+      // P1-3：原样透出后端 message，并在表单内单列一行「错误提示」
+      const message = getApiErrorMessage(err, '创建凭证失败');
+      setSubmitError(message);
+      toast.error(message);
     } finally {
       setOperating(false);
     }
@@ -267,7 +361,7 @@ const VoucherPanel: React.FC = () => {
       setConfirmTarget(null);
       await reload();
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : '操作失败');
+      toast.error(getApiErrorMessage(err, '操作失败'));
     } finally {
       setOperating(false);
     }
@@ -549,8 +643,15 @@ const VoucherPanel: React.FC = () => {
                   <span className="w-28 shrink-0 text-right">贷方</span>
                   <span className="w-9 shrink-0" aria-hidden="true" />
                 </div>
-                {fields.map((field, index: number) => (
-                  <div key={field.id} className="flex items-start gap-2">
+                {fields.map((field, index: number) => {
+                  const account = activeAccounts.find(
+                    (a: AccountItem) => a.id === (watchedLines[index]?.accountId ?? ''),
+                  );
+                  /** A-05：本行科目必挂的辅助核算维度 */
+                  const requiredAux = account?.auxRequired ?? [];
+                  return (
+                  <React.Fragment key={field.id}>
+                  <div className="flex items-start gap-2">
                     <FormField
                       control={form.control}
                       name={`lines.${index}.accountId`}
@@ -634,13 +735,68 @@ const VoucherPanel: React.FC = () => {
                       <Trash2 className="h-4 w-4" />
                     </Button>
                   </div>
-                ))}
+                  {/*
+                    * P1-2：辅助核算维度输入。
+                    * 科目在「科目表」声明了 auxRequired 时必须填写，否则后端直接 400；
+                    * 这里按科目必挂维度渲染输入框，datalist 提供本期已在用的取值作为提示，
+                    * 新期间无历史值时仍可手录。
+                    */}
+                  {requiredAux.length > 0 ? (
+                    <div className="ml-0 flex flex-wrap items-center gap-2 pl-0">
+                      {requiredAux.map((code) => {
+                        const listId = `voucher-aux-hints-${index}-${code}`;
+                        const hints = auxValueHints?.get(code) ?? [];
+                        return (
+                          <div key={code} className="flex items-center gap-1">
+                            <Label
+                              htmlFor={`voucher-aux-${index}-${code}`}
+                              className="text-xs text-muted-foreground"
+                            >
+                              {auxNameByCode.get(code) ?? code}
+                            </Label>
+                            <Input
+                              id={`voucher-aux-${index}-${code}`}
+                              className="h-8 w-48"
+                              list={hints.length > 0 ? listId : undefined}
+                              placeholder={`请输入${auxNameByCode.get(code) ?? code}`}
+                              value={watchedLines[index]?.aux?.[code] ?? ''}
+                              onChange={(e) =>
+                                form.setValue(
+                                  `lines.${index}.aux.${code}`,
+                                  e.target.value,
+                                  { shouldDirty: true, shouldValidate: false },
+                                )
+                              }
+                            />
+                            {hints.length > 0 ? (
+                              <datalist id={listId}>
+                                {hints.map((hint) => (
+                                  <option key={hint} value={hint} />
+                                ))}
+                              </datalist>
+                            ) : null}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  ) : null}
+                  </React.Fragment>
+                  );
+                })}
                 <Button
                   type="button"
                   variant="outline"
                   size="sm"
                   className="w-fit"
-                  onClick={() => append({ accountId: '', summary: '', debit: '', credit: '' })}
+                  onClick={() =>
+                    append({
+                      accountId: '',
+                      summary: '',
+                      debit: '',
+                      credit: '',
+                      aux: {},
+                    })
+                  }
                 >
                   <Plus className="h-4 w-4" />
                   添加分录行
@@ -654,6 +810,15 @@ const VoucherPanel: React.FC = () => {
                 </p>
                 {getLinesErrorMessage() ? (
                   <p className="text-sm text-destructive">{getLinesErrorMessage()}</p>
+                ) : null}
+                {submitError ? (
+                  <p
+                    role="alert"
+                    className="rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2 text-sm text-destructive"
+                  >
+                    <span className="font-medium">错误提示：</span>
+                    {submitError}
+                  </p>
                 ) : null}
               </div>
               <DialogFooter>

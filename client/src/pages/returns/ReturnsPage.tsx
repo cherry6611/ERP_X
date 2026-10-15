@@ -86,6 +86,13 @@ const ReturnsPage: React.FC = () => {
   const [tab, setTab] = useState<'purchase' | 'sales'>('purchase');
   const [createOpen, setCreateOpen] = useState(false);
   const [busy, setBusy] = useState(false);
+  // 销售退货“完成”前必须逐单确定退回商品的处置方式（决定成本冲回的对方科目）
+  const [completeTarget, setCompleteTarget] = useState<SalesReturnItem | null>(
+    null,
+  );
+  const [disposalType, setDisposalType] = useState<'restock' | 'scrap'>(
+    'restock',
+  );
 
   // 采购退货建单表单
   const [orderId, setOrderId] = useState('');
@@ -187,12 +194,13 @@ const ReturnsPage: React.FC = () => {
     id: string,
     action: ReturnAction,
     label: string,
+    disposal?: 'restock' | 'scrap',
   ) => {
     try {
       if (kind === 'purchase') {
         await returnsApi.purchaseReturnAction(id, action);
       } else {
-        await returnsApi.salesReturnAction(id, action);
+        await returnsApi.salesReturnAction(id, action, undefined, disposal);
       }
       toast.success(`${label}成功`);
       reloadAll();
@@ -401,14 +409,24 @@ const ReturnsPage: React.FC = () => {
                               size="sm"
                               variant="ghost"
                               className="h-6 px-1.5 text-xs"
-                              onClick={() =>
+                              onClick={() => {
+                                // 完成才出红字凭证（含成本冲回），必须先定处置方式
+                                if (action === 'complete') {
+                                  setDisposalType(
+                                    row.disposalType === 'scrap'
+                                      ? 'scrap'
+                                      : 'restock',
+                                  );
+                                  setCompleteTarget(row);
+                                  return;
+                                }
                                 runAction(
                                   'sales',
                                   row.id,
                                   action,
                                   STATUS_LABELS[row.status] ?? '',
-                                )
-                              }
+                                );
+                              }}
                             >
                               {action === 'submit'
                                 ? '提交'
@@ -429,12 +447,82 @@ const ReturnsPage: React.FC = () => {
               </table>
             </div>
             <p className="mt-2 text-xs text-muted-foreground">
-              销售退货只红冲收入与应收；成本冲回需业务确认商品是否回库可用，
-              请人工建凭证（借 1403 原材料 / 贷 6401 主营业务成本）。
+              销售退货完成时红冲收入与应收，并按所选处置方式同步冲回成本
+              （回库：借 1403 原材料 / 报废：借 6602 管理费用，均贷 6401）；
+              成本金额按项目累计成本 × 退货净额占项目净收入的比例自动分摊。
             </p>
           </DataBoundary>
         )}
       </div>
+
+      {/* 销售退货完成：逐单选择退回商品处置方式，决定成本冲回的对方科目 */}
+      <Dialog
+        open={completeTarget !== null}
+        onOpenChange={(open) => {
+          if (!open) setCompleteTarget(null);
+        }}
+      >
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>完成销售退货 {completeTarget?.code}</DialogTitle>
+            <DialogDescription>
+              退回商品是否还能再售必须逐单判定：一律按回库处理会把报废退货挂成库存，
+              一律按报废处理会把可再售退货计成费用。
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-3">
+            <div className="grid gap-2">
+              <Button
+                type="button"
+                variant={disposalType === 'restock' ? 'default' : 'outline'}
+                onClick={() => setDisposalType('restock')}
+              >
+                回库可再售（借 1403 原材料）
+              </Button>
+              <Button
+                type="button"
+                variant={disposalType === 'scrap' ? 'default' : 'outline'}
+                onClick={() => setDisposalType('scrap')}
+              >
+                报废（借 6602 管理费用）
+              </Button>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              两种方式都会贷记 6401 主营业务成本；项目无收入或成本数据时金额记 0，
+              本次不生成成本行（后端会记录告警）。
+            </p>
+            <div className="flex justify-end gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setCompleteTarget(null)}
+              >
+                取消
+              </Button>
+              <Button
+                type="button"
+                disabled={busy}
+                onClick={async () => {
+                  const target = completeTarget;
+                  if (!target) return;
+                  setBusy(true);
+                  await runAction(
+                    'sales',
+                    target.id,
+                    'complete',
+                    '完成退货',
+                    disposalType,
+                  );
+                  setBusy(false);
+                  setCompleteTarget(null);
+                }}
+              >
+                确认完成并生成红字凭证
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={createOpen} onOpenChange={setCreateOpen}>
         <DialogContent className="max-w-2xl">

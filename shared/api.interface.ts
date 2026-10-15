@@ -38,6 +38,19 @@ export type InvoiceType = 'vat_special' | 'vat_normal' | 'electronic';
 export type InvoiceStatus = 'issued' | 'voided';
 export type InvoiceDirection = 'sales' | 'purchase';
 
+/** C-01：发票查验状态 */
+export type InvoiceVerifyStatus =
+  | 'unverified' // 未查验
+  | 'verifying' // 查验中（异步查验占位，本实现同步返回，仅作状态机预留）
+  | 'verified' // 查验通过（税局/第三方确认存在且要素一致）
+  | 'failed'; // 查验失败（税局无记录、要素不符或调用异常）
+
+/** C-01：勾选认证状态 */
+export type InvoiceCertificationStatus =
+  | 'uncertified' // 未认证
+  | 'certified' // 已认证（勾选并通过）
+  | 'deducted'; // 已抵扣（已计入进项抵扣）
+
 /* ========== 主数据 ========== */
 
 export interface Customer {
@@ -877,10 +890,88 @@ export interface InvoiceItem {
   taxAmount: number;
   invoiceDate: string | null;
   status: InvoiceStatus;
+  /** C-01：查验状态 */
+  verifyStatus: InvoiceVerifyStatus;
+  /** C-01：最近查验时间（ISO 字符串，未查验为 null） */
+  verifyTime: string | null;
+  /** C-01：查验失败原因 */
+  verifyError: string | null;
+  /** C-01：勾选认证状态 */
+  certificationStatus: InvoiceCertificationStatus;
+  /** C-01：勾选所属税款所属期 YYYY-MM */
+  certificationPeriod: string | null;
   remark: string | null;
   createdAt: string;
   /** 软提示，如开票额超过已确认收入 */
   warning?: string;
+}
+
+/* ===================== C-01 发票查验与勾选认证 ===================== */
+
+/** Provider 查验结果（由具体查验实现返回，服务层据此落库） */
+export interface InvoiceVerifyOutcome {
+  /** 是否在税局/第三方存在且要素一致 */
+  verified: boolean;
+  /** 查验来源：none=未接入查验/ manual=人工确认/ vendor=第三方服务商 */
+  source: 'none' | 'manual' | 'vendor';
+  /** 人读结论（成功或失败原因） */
+  message: string;
+  /** 结构化明细（如税局返回的发票要素，供核对/审计） */
+  details?: Record<string, unknown>;
+}
+
+/** 单次查验后的返回（含落库后的状态与审计信息） */
+export interface InvoiceVerifyResult {
+  id: string;
+  code: string;
+  verifyStatus: InvoiceVerifyStatus;
+  verifyTime: string | null;
+  verifyError: string | null;
+  /** 本次查验来源 */
+  source: 'none' | 'manual' | 'vendor';
+  message: string;
+}
+
+/** 批量查验结果（逐张隔离，单张失败不阻断其余） */
+export interface BatchInvoiceVerifyResult {
+  total: number;
+  success: number;
+  failed: number;
+  skipped: number;
+  items: Array<{
+    id: string;
+    code: string;
+    verifyStatus: InvoiceVerifyStatus;
+    message: string;
+  }>;
+}
+
+/** 发票查验/认证状态视图（GET verify-status 返回） */
+export interface InvoiceVerifyStatusView {
+  id: string;
+  code: string;
+  direction: InvoiceDirection;
+  status: InvoiceStatus;
+  verifyStatus: InvoiceVerifyStatus;
+  verifyTime: string | null;
+  verifyError: string | null;
+  certificationStatus: InvoiceCertificationStatus;
+  certificationPeriod: string | null;
+  certifiedAt: string | null;
+}
+
+/** C-01：勾选认证入参（class DTO 的契约类型，API-1） */
+export interface CertifyInvoiceDto {
+  /** 勾选所属税款所属期，格式 YYYY-MM */
+  certificationPeriod: string;
+  /** 认证动作：certify=认证 / deduct=已抵扣 */
+  action?: 'certify' | 'deduct';
+}
+
+/** C-01：批量查验入参 */
+export interface BatchInvoiceVerifyDto {
+  /** 发票 id 列表（1~200） */
+  ids: string[];
 }
 
 export interface AgingBucket {
@@ -1718,6 +1809,11 @@ export interface CreatePayrollDto {
   socialInsurance?: number;
   housingFund?: number;
   tax?: number;
+  /**
+   * P2-9：其他税前扣除（企业年金、商业健康险等，本月发生额）。
+   * 既减少累计应纳税所得额，也从实发中扣除（由引擎处理）。
+   */
+  otherDeduction?: number;
   /** 默认 true：走社保/个税引擎；false 时使用手工传入的三金/个税 */
   useEngine?: boolean;
   remark?: string;
@@ -2989,6 +3085,16 @@ export interface TaxEntity {
   taxpayerType: 'general' | 'small';
   defaultOutputRate: number;
   defaultInputRate: number;
+  /**
+   * 城建税率（百分数：市区 7 / 县镇 5 / 其他 1）；null = 未配置。
+   *
+   * 口径与库约束 `chk_tax_entity_urban_maint_rate` 一致：未配置（null）时
+   * 附加税计提会**拒绝出数**，而不是按 0 计提。
+   *
+   * 声明为**可选**的原因：该字段是后加的，既有响应/构造点没有它；
+   * 可选可保证老数据与既有对象字面量都不受影响。
+   */
+  urbanMaintRate?: number | null;
   invoiceTitle: string | null;
   invoiceAddress: string | null;
   invoicePhone: string | null;
@@ -3035,6 +3141,8 @@ export interface LedgerQueryParams {
   /** 科目层级上限，缺省全部 */
   level?: number;
   taxEntityId?: string;
+  /** P0-2：含草稿预览口径（默认只取已过账） */
+  includeDraft?: boolean;
 }
 
 export interface AccountBalanceRow {
@@ -3818,6 +3926,11 @@ export interface TrialBalanceResult {
 export interface ReportQueryArgs {
   period: string;
   taxEntityId?: string;
+  /**
+   * P0-2：「含草稿预览」开关。默认 false = 只取已过账凭证（正式口径）；
+   * true = 已过账 + 草稿（预览口径，需在页面明确标注）。
+   */
+  includeDraft?: boolean;
 }
 
 export interface LedgerQueryArgs extends ReportQueryArgs {
@@ -3832,6 +3945,7 @@ export interface DetailLedgerQueryArgs {
   pageSize?: number;
   taxEntityId?: string;
   includeChildren?: boolean;
+  includeDraft?: boolean;
 }
 
 export interface AuxBalanceQueryArgs {
@@ -3840,6 +3954,7 @@ export interface AuxBalanceQueryArgs {
   dimension: string;
   dimensionId?: string;
   taxEntityId?: string;
+  includeDraft?: boolean;
 }
 
 export interface CarryForwardArgs {
@@ -3857,7 +3972,14 @@ export interface ReverseYearEndArgs {
 /* ========== 批次一 B-02：数据级权限（行级可见范围） ========== */
 
 /** B-02：行级可见范围 */
-export type DataScopeType = 'all' | 'dept' | 'dept_and_child' | 'self' | 'custom';
+export type DataScopeType =
+  | 'all'
+  | 'dept'
+  | 'dept_and_child'
+  | 'self'
+  | 'custom'
+  /** 未配置即拒绝；仅运行时计算结果，不写入 sys_data_scope */
+  | 'none';
 
 /** B-02：可配置数据权限的资源类型 */
 export type DataScopeResource =
@@ -4863,6 +4985,43 @@ export interface StatementCounterpartyOption {
   lastDocDate: string | null;
 }
 
+/* ========== P0-4 / P1-1：内部勾稽中心 ========== */
+
+/** 勾稽明细行（进项↔应付 / 销项↔应收 / 回款↔核销 / 应收未开票 共用） */
+export interface ReconRowItem {
+  id: string;
+  code: string;
+  counterpartName: string;
+  amount: number;
+  linkedAmount: number;
+  openAmount: number;
+  status: string;
+  linkId: string | null;
+  linkCode: string | null;
+  flag: 'ok' | 'unlinked' | 'over' | 'voided_risk';
+}
+
+/** 勾稽中心汇总指标 */
+export interface ReconSummary {
+  purchaseUnlinked: number;
+  salesUnlinked: number;
+  receiptUnlinked: number;
+  voidedRisk: number;
+  /** P1-1：应收已登记但未开票的数量 */
+  arWithoutInvoice: number;
+}
+
+/** P0-4 / P1-1：总账收入 vs 收入台账 差异检测结果 */
+export interface RevenueVariance {
+  period: string;
+  /** 总账口径：已过账凭证 6001/6051 贷方净发生额 */
+  ledgerRevenue: number;
+  /** 台账口径：收入确认（status=recognized）合计 */
+  bookRevenue: number;
+  difference: number;
+  passed: boolean;
+}
+
 /* ========== 批次二 C-05：采购/销售退货闭环 ========== */
 
 export type ReturnStatus = 'draft' | 'submitted' | 'approved' | 'completed' | 'void';
@@ -4949,6 +5108,10 @@ export interface SalesReturnItem {
   taxAmount: number;
   redInvoiceId: string | null;
   revenueAdjustId: string | null;
+  /** 退回商品处置方式（逐单判定）；决定成本冲回的对方科目 */
+  disposalType: 'restock' | 'scrap';
+  /** 已冲回的成本金额（0 = 项目缺收入/成本数据，未生成成本行） */
+  costAmount: number;
   status: ReturnStatus;
   reason: string | null;
   remark: string | null;
@@ -4992,6 +5155,12 @@ export interface SalesReturnListParams {
 export interface ReturnActionDto {
   action: ReturnAction;
   remark?: string;
+  /**
+   * 仅销售退货 complete 动作使用：退回商品的处置方式。
+   * restock = 回库可再售（借 1403 原材料）；scrap = 报废（借 6602 管理费用）。
+   * 不传时沿用退货单上已有的处置方式（默认 restock）。
+   */
+  disposalType?: 'restock' | 'scrap';
 }
 
 /** 退货台账汇总（按状态） */
