@@ -32,10 +32,12 @@ import { inputIssueLines, inputVoidLines } from '@server/common/tax/posting';
 import { todayInShanghai } from '@server/common/utils/biz-date';
 import type {
   CreateInvoiceDto,
+  InvoiceCertificationStatus,
   InvoiceDirection,
   InvoiceItem,
   InvoiceStatus,
   InvoiceType,
+  InvoiceVerifyStatus,
   UpdateInvoiceDto,
 } from '@shared/api.interface';
 
@@ -51,6 +53,8 @@ interface InvoiceLockRow {
   code: string | null;
   invoice_no: string | null;
   direction: string | null;
+  /** P0-2：进项作废冲销凭证需要沿用发票自身的纳税主体 */
+  tax_entity_id: string | null;
 }
 
 @Injectable()
@@ -159,6 +163,14 @@ export class InvoiceService {
       taxAmount: Number(row.invoice.taxAmount ?? 0),
       invoiceDate: row.invoice.invoiceDate,
       status: (row.invoice.status ?? 'issued') as InvoiceStatus,
+      verifyStatus: (row.invoice.verifyStatus ?? 'unverified') as InvoiceVerifyStatus,
+      verifyTime: row.invoice.verifyTime
+        ? new Date(row.invoice.verifyTime).toISOString()
+        : null,
+      verifyError: row.invoice.verifyError ?? null,
+      certificationStatus: (row.invoice.certificationStatus ??
+        'uncertified') as InvoiceCertificationStatus,
+      certificationPeriod: row.invoice.certificationPeriod ?? null,
       remark: row.invoice.remark,
       createdAt: row.invoice.createdAt.toISOString(),
     };
@@ -224,6 +236,44 @@ export class InvoiceService {
       erpInvoice.code,
       'INV'
     );
+    // P1-2：税率解析与买卖双方主体信息**必须在事务外**完成。
+    // `taxResolver.resolve` 走的是注入的 `this.db`（另一条连接），在 `db.transaction`
+    // 内调用会形成「外层事务持有连接 + 内层另开连接」的嵌套（pglite 单连接直接冲突，
+    // 真实 PG 下也是多余的连接占用）。这里先按合同读出税率/主体，再进事务写入。
+    const contractTax = await this.db
+      .select({
+        taxRate: erpContract.taxRate,
+        customerId: erpContract.customerId,
+        taxEntityId: erpContract.taxEntityId,
+      })
+      .from(erpContract)
+      .where(eq(erpContract.id, dto.contractId!))
+      .limit(1);
+    if (contractTax.length === 0) throw new NotFoundException('合同不存在');
+    const resolved = await this.taxResolver.resolve({
+      explicit: dto.taxRate,
+      upstream: Number(contractTax[0].taxRate ?? NaN),
+      customerId: contractTax[0].customerId,
+      taxEntityId: contractTax[0].taxEntityId,
+      side: 'output',
+    });
+    const taxRate = resolved.rate;
+    const split = splitTax(dto.amount, taxRate);
+    const seller = resolved.taxEntityId
+      ? await this.db
+          .select()
+          .from(mdTaxEntity)
+          .where(eq(mdTaxEntity.id, resolved.taxEntityId))
+          .limit(1)
+      : [];
+    const buyer = contractTax[0].customerId
+      ? await this.db
+          .select()
+          .from(mdCustomer)
+          .where(eq(mdCustomer.id, contractTax[0].customerId))
+          .limit(1)
+      : [];
+
     const rows = await this.db.transaction(async (tx) => {
       const contractRows = await tx
         .select()
@@ -266,29 +316,6 @@ export class InvoiceService {
           );
         }
       }
-      const resolved = await this.taxResolver.resolve({
-        explicit: dto.taxRate,
-        upstream: Number(contract.taxRate ?? NaN),
-        customerId: contract.customerId,
-        taxEntityId: contract.taxEntityId,
-        side: 'output',
-      });
-      const taxRate = resolved.rate;
-      const split = splitTax(dto.amount, taxRate);
-      const seller = resolved.taxEntityId
-        ? await tx
-            .select()
-            .from(mdTaxEntity)
-            .where(eq(mdTaxEntity.id, resolved.taxEntityId))
-            .limit(1)
-        : [];
-      const buyer = contract.customerId
-        ? await tx
-            .select()
-            .from(mdCustomer)
-            .where(eq(mdCustomer.id, contract.customerId))
-            .limit(1)
-        : [];
       return tx
         .insert(erpInvoice)
         .values({
@@ -433,6 +460,8 @@ export class InvoiceService {
       voucherDate: row.invoiceDate ?? todayInShanghai(),
       summary: `进项发票 ${row.invoiceNo ?? row.code}`,
       lines: inputIssueLines(Number(row.amount ?? 0), taxRate),
+      // P0-2：进项发票凭证的纳税主体与发票一致（解析器已按合同/主体给出）
+      taxEntityId: resolved.taxEntityId,
     });
     return this.getInvoiceItem(row.id);
   }
@@ -441,7 +470,7 @@ export class InvoiceService {
   async voidInvoice(id: string, userId: string): Promise<InvoiceItem> {
     const locked = await this.db.transaction(async (tx) => {
       const rows: unknown = await tx.execute(sql`
-        SELECT id, status, contract_id, amount, tax_rate, code, invoice_no, direction
+        SELECT id, status, contract_id, amount, tax_rate, code, invoice_no, direction, tax_entity_id
         FROM erp_invoice
         WHERE id = ${id}
         FOR UPDATE
@@ -481,6 +510,7 @@ export class InvoiceService {
         voucherDate: todayInShanghai(),
         summary: `进项发票作废冲销 ${ref}`,
         lines: inputVoidLines(amount, rate),
+        taxEntityId: locked.tax_entity_id,
       });
       if (voucherStatus !== 'created') {
         this.logger.error(

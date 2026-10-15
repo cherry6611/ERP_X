@@ -19,6 +19,7 @@ import { ArService } from './ar.service';
 import { ApService } from './ap.service';
 import { CashFlowService } from './cash-flow.service';
 import { InvoiceService } from './invoice.service';
+import { InvoiceVerifyService } from './invoice-verify.service';
 import { FinanceService } from './finance.service';
 import { VendorSettlementService } from './vendor-settlement.service';
 import { ReconciliationService } from './reconciliation.service';
@@ -49,6 +50,8 @@ import {
   CreateReceiptDto,
   GenerateVendorSettlementDto,
   UpdateInvoiceDto,
+  CertifyInvoiceDto,
+  BatchInvoiceVerifyDto,
 } from './finance.dto';
 
 export class ApprovePaymentDto {
@@ -86,6 +89,15 @@ export class StatementQueryDto implements IStatementQueryDto {
   direction!: StatementDirection;
 }
 
+/**
+ * P0-4 / P1-1：勾稽中心期间查询参数。
+ * 按 API-1 用 class DTO 承载 `@Query()`，校验规则与契约同源。
+ */
+export class ReconPeriodQueryDto {
+  @Matches(/^\d{4}-(0[1-9]|1[0-2])$/, { message: 'period 必须为 YYYY-MM' })
+  period!: string;
+}
+
 @NeedLogin()
 @Controller('api/finance')
 export class FinanceController {
@@ -98,6 +110,7 @@ export class FinanceController {
     private readonly vendorSettlementService: VendorSettlementService,
     private readonly reconciliationService: ReconciliationService,
     private readonly statementService: StatementService,
+    private readonly invoiceVerifyService: InvoiceVerifyService,
   ) {}
 
   /* ==================== C-11 客户/供应商对账单 ====================
@@ -319,6 +332,20 @@ export class FinanceController {
     return this.reconciliationService.summary();
   }
 
+  /** P1-1：应收已登记但一张发票也没开（反向缺口） */
+  @FinanceRead()
+  @Get('reconciliation/ar-without-invoice')
+  reconArWithoutInvoice() {
+    return this.reconciliationService.listArWithoutInvoice();
+  }
+
+  /** P0-4 / P1-1：总账收入 vs 收入台账 差异检测 */
+  @FinanceRead()
+  @Get('reconciliation/revenue-variance')
+  reconRevenueVariance(@Query() query: ReconPeriodQueryDto) {
+    return this.reconciliationService.revenueVariance(query.period);
+  }
+
   @FinanceRead()
   @Get('reconciliation/purchase-ap')
   reconPurchaseAp() {
@@ -403,6 +430,48 @@ export class FinanceController {
   ): Promise<InvoiceItem> {
     const userId: string = req.userContext?.userId ?? 'anonymous';
     return this.invoiceService.updateInvoice(id, dto, userId);
+  }
+
+  /* ==================== C-01 发票查验与勾选认证 ==================== */
+
+  /** 单张发票查验：调用可插拔 Provider，落查验状态（失败只标记不阻断） */
+  @CanCapability('finance_write')
+  @Post('invoices/:id/verify')
+  async verifyInvoice(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Req() req: Request
+  ) {
+    return this.invoiceVerifyService.verifyInvoice(id, actorFromRequest(req));
+  }
+
+  /** 批量查验：逐张隔离，单张失败不影响其余 */
+  @CanCapability('finance_write')
+  @Post('invoices/batch-verify')
+  async batchVerifyInvoice(
+    @Body() dto: BatchInvoiceVerifyDto,
+    @Req() req: Request
+  ) {
+    return this.invoiceVerifyService.batchVerify(dto, actorFromRequest(req));
+  }
+
+  /** 勾选认证 / 标记已抵扣：独立于查验，仅校验期间格式 */
+  @CanCapability('finance_write')
+  @Post('invoices/:id/certify')
+  async certifyInvoice(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: CertifyInvoiceDto,
+    @Req() req: Request
+  ) {
+    return this.invoiceVerifyService.certifyInvoice(id, dto, actorFromRequest(req));
+  }
+
+  /** 查询单张发票查验/认证状态 */
+  @FinanceRead()
+  @Get('invoices/:id/verify-status')
+  async getInvoiceVerifyStatus(
+    @Param('id', ParseUUIDPipe) id: string
+  ) {
+    return this.invoiceVerifyService.getVerifyStatus(id);
   }
 
   @FinanceRead()

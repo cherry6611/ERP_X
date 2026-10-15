@@ -1,4 +1,7 @@
 import {
+  ArrayMaxSize,
+  ArrayMinSize,
+  IsArray,
   IsDateString,
   IsIn,
   IsNotEmpty,
@@ -13,6 +16,8 @@ import {
 import type {
   ApWriteoffDto as IApWriteoffDto,
   ArWriteoffDto as IArWriteoffDto,
+  BatchInvoiceVerifyDto as IBatchInvoiceVerifyDto,
+  CertifyInvoiceDto as ICertifyInvoiceDto,
   CreateApDto as ICreateApDto,
   CreateArDto as ICreateArDto,
   CreateInvoiceDto as ICreateInvoiceDto,
@@ -256,4 +261,31 @@ export class GenerateVendorSettlementDto implements IGenerateVendorSettlementDto
   @IsOptional()
   @IsDateString()
   dueDate?: string;
+}
+
+/* ===================== C-01 发票查验与勾选认证 ===================== */
+
+/** 勾选认证入参（API-1：class DTO，字段与 shared 契约同源） */
+export class CertifyInvoiceDto implements ICertifyInvoiceDto {
+  @IsString()
+  @IsNotEmpty()
+  @Matches(/^\d{4}-(0[1-9]|1[0-2])$/, {
+    message: 'certificationPeriod 必须为 YYYY-MM（税款所属期）',
+  })
+  certificationPeriod!: string;
+
+  @IsOptional()
+  @IsIn(['certify', 'deduct'], {
+    message: 'action 仅支持 certify（认证）/ deduct（已抵扣）',
+  })
+  action?: 'certify' | 'deduct';
+}
+
+/** 批量查验入参 */
+export class BatchInvoiceVerifyDto implements IBatchInvoiceVerifyDto {
+  @IsArray()
+  @ArrayMinSize(1, { message: 'ids 至少包含 1 张发票' })
+  @ArrayMaxSize(200, { message: 'ids 最多 200 张（超过请分批）' })
+  @IsUUID('4', { each: true, message: 'ids 每项必须为合法 UUID' })
+  ids!: string[];
 }
