@@ -353,6 +353,8 @@ export class HrPayService {
     let tax: number = Number(dto.tax ?? 0);
     let engineSnapshot: string | null = null;
     let manualOverride = 1;
+    /** P2-9：引擎口径的实发（已扣其他扣除）。手工口径回退到简单相减。 */
+    let engineNet: number | null = null;
     // A-07：累计预扣预缴口径字段（引擎计算时落库，便于逐月递推与审计复核）
     const ytdFields: {
       ytdIncome?: string;
@@ -380,10 +382,14 @@ export class HrPayService {
         baseSalary: base,
         perfSalary: perf,
         allowance,
+        // P2-9：其他扣除（企业年金/商业健康险等）必须传入引擎，否则个税按含
+        // 其他扣除的口径计算、实发却按不含的口径发放，两边对不上。
+        otherDeduction: dto.otherDeduction,
       });
       social = preview.socialInsurance;
       fund = preview.housingFund;
       tax = preview.tax;
+      engineNet = preview.netSalary;
       engineSnapshot = JSON.stringify(preview);
       manualOverride = 0;
       const cumulative = preview.cumulative;
@@ -414,7 +420,9 @@ export class HrPayService {
         ytdNet: String(Math.round((priorNet + preview.netSalary) * 100) / 100),
       });
     }
-    const net: number = base + perf + allowance - social - fund - tax;
+    // P2-9：走引擎时以引擎实发为准（含其他扣除）；手工录入时按字段简单相减。
+    const net: number =
+      engineNet ?? base + perf + allowance - social - fund - tax;
     const code = await generateBizCode(
       this.db,
       hrPayroll,
@@ -481,6 +489,8 @@ export class HrPayService {
       await this.approvePayroll(payroll);
 
       /* 方案 A：借 6401 / 贷 2211；预提红冲凭证在 approvePayroll 内按项目发出 */
+      let payrollVoucherLines: { accountCode: string; debit?: number; credit?: number }[] | undefined;
+      let payrollVoucherDate: string | undefined;
       try {
         const netAmount = Number(payroll.netSalary ?? 0);
         const periodMatch = /^(\d{4})-(\d{2})$/.exec(payroll.period ?? '');
@@ -493,15 +503,26 @@ export class HrPayService {
           : todayInShanghai();
         // 修复 P1-8：净工资为 0 或负数时不生成凭证（否则会出现借方为负数的凭证）
         if (netAmount > 0) {
+          // P1-9：分录提到 try 外层做常量，补偿登记时才能带上可重放的分录
+          payrollVoucherDate = voucherDate;
+          // P2-11：借方科目不再写死。工资归集到哪个科目是业务决策（生产成本/管理费用/
+          // 主营业务成本都可能），6401 又是一级末级科目、走不了下钻配置，因此按场景取。
+          // 未配置时回落 6401，存量行为不变。
+          const payrollExpenseAccount =
+            await this.voucherHookService.resolveSceneAccount(
+              'payroll_accrual',
+              '6401'
+            );
+          payrollVoucherLines = [
+            { accountCode: payrollExpenseAccount?.code ?? '6401', debit: netAmount },
+            { accountCode: '2211', credit: netAmount },
+          ];
           await this.voucherHookService.generateVoucherDraft({
             sourceType: 'payroll',
             sourceRef: `payroll:${payroll.code}`,
             voucherDate,
             summary: `工资单审批 ${payroll.code}`,
-            lines: [
-              { accountCode: '6401', debit: netAmount },
-              { accountCode: '2211', credit: netAmount },
-            ],
+            lines: payrollVoucherLines,
           });
         } else {
           this.logger.warn(
@@ -518,7 +539,9 @@ export class HrPayService {
           await this.voucherHookService.recordCompensation(
             'payroll',
             `payroll:${payroll.code}`,
-            '工资单审批凭证生成失败'
+            '工资单审批凭证生成失败',
+            payrollVoucherLines,
+            payrollVoucherDate
           );
         } catch (compError) {
           this.logger.error(

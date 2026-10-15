@@ -257,6 +257,9 @@ describe('previewPayroll（A-07 累计预扣预缴）', () => {
     // 30000 − 1000 − 5000 − 500 = 23500 → 3% = 705
     expect(result.taxable).toBe(23500);
     expect(result.tax).toBe(705);
+    // P2-9：其他扣除是税前扣除，既要减应纳税所得额，也必须从实发里扣回
+    // 30000 − 500（企业年金）− 705（个税）= 28795
+    expect(result.netSalary).toBe(28795);
   });
 
   it('累计多扣时本期税额为 0 并给出可退金额（不产生负税）', () => {

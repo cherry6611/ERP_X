@@ -289,7 +289,12 @@ export function previewPayroll(input: PayrollPreviewInput): PayrollPreviewResult
   const rawCurrent = r2(cumulativeTax - ytdTaxPaidBefore);
   const tax = Math.max(0, rawCurrent);
   const refundable = rawCurrent < 0 ? Math.abs(rawCurrent) : 0;
-  const netSalary = r2(gross - socialInsurance - housingFund - otherEmp - tax);
+  // P2-9：其他扣除（企业年金、商业健康险等）是**税前**扣除，既要减少累计应纳税所得额
+  // （见上方 cumulativeTaxable），也必须从员工实发中真实扣回。
+  // 原实现只在税额里减、不在实发里减 → 实发虚高、2211 应付职工薪酬与实际发放对不平。
+  const netSalary = r2(
+    gross - socialInsurance - housingFund - otherEmp - otherThisMonth - tax
+  );
 
   return {
     gross,

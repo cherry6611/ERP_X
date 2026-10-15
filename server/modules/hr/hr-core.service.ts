@@ -150,7 +150,9 @@ export class HrCoreService {
    * `sys_data_scope` 里 `hr_manager × employee` 种为 `dept_and_child`，
    * 于是"部门经理只能看到本部门及下级部门的员工档案"（需求书验收标准①）
    * 由 `md_employee.department_id IN (...)` 在 SQL 里完成，而不是取全量后再筛。
-   * 未配置该资源时返回 undefined（保持既有"人事经理可读全量"的行为）。
+   * 未配置该资源时：若 employee 资源**完全没用过行级权限**，返回 undefined
+   * （保持既有"人事经理可读全量"的行为）；若已启用（`from === 'policy'`），
+   * 则由 `conditionFor` 走 fail-closed，不给全量。
    */
   private async employeeScopeCondition(
     actor?: RequestActor
@@ -160,7 +162,7 @@ export class HrCoreService {
       actor.roles ?? [],
       'employee'
     );
-    if (resolved.from !== 'config') return undefined;
+    if (resolved.from === 'default') return undefined;
     return this.dataScope.conditionFor(
       'employee',
       actor,
@@ -190,7 +192,15 @@ export class HrCoreService {
       actor.roles ?? [],
       'attendance'
     );
-    if (resolved.from !== 'config' || resolved.scope === 'all') return undefined;
+    if (resolved.from === 'default' || resolved.scope === 'all') return undefined;
+    if (resolved.scope === 'none') {
+      return this.dataScope.failClosed(
+        'attendance',
+        actor,
+        resolved,
+        '该资源已启用行级权限但本角色未配置'
+      );
+    }
     const ctx = await this.dataScope.resolveContext(actor, 'attendance');
     if (resolved.scope === 'self' || resolved.scope === 'custom') {
       return applyScope(hrAttendance.employeeId, resolved, ctx);
