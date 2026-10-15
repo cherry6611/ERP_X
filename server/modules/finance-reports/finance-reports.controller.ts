@@ -161,6 +161,15 @@ export class FinanceReportsController {
     return period;
   }
 
+  /**
+   * P0-2：includeDraft 查询参数解释。
+   * 默认（未传/非 true）=【只取已过账凭证】，与页面“取数来源：已过账凭证”一致；
+   * `includeDraft=true` 降级为「含草稿预览」（已过账 + 草稿），仅用于财务提交前预览。
+   */
+  private parseIncludeDraft(value?: string): boolean {
+    return value === 'true' || value === '1';
+  }
+
   /* ========== A-01 / A-02 法定财务报表 ========== */
 
   @CanCapability('finance')
@@ -168,10 +177,12 @@ export class FinanceReportsController {
   getBalanceSheet(
     @Query('period') period?: string,
     @Query('taxEntityId') taxEntityId?: string,
+    @Query('includeDraft') includeDraft?: string,
   ) {
     return this.reportsService.balanceSheet({
       period: this.assertPeriod(period),
       taxEntityId: taxEntityId || undefined,
+      includeDraft: this.parseIncludeDraft(includeDraft),
     });
   }
 
@@ -180,10 +191,12 @@ export class FinanceReportsController {
   getIncomeStatement(
     @Query('period') period?: string,
     @Query('taxEntityId') taxEntityId?: string,
+    @Query('includeDraft') includeDraft?: string,
   ) {
     return this.reportsService.incomeStatement({
       period: this.assertPeriod(period),
       taxEntityId: taxEntityId || undefined,
+      includeDraft: this.parseIncludeDraft(includeDraft),
     });
   }
 
@@ -192,10 +205,12 @@ export class FinanceReportsController {
   getCashFlow(
     @Query('period') period?: string,
     @Query('taxEntityId') taxEntityId?: string,
+    @Query('includeDraft') includeDraft?: string,
   ) {
     return this.reportsService.cashFlow({
       period: this.assertPeriod(period),
       taxEntityId: taxEntityId || undefined,
+      includeDraft: this.parseIncludeDraft(includeDraft),
     });
   }
 
@@ -210,6 +225,7 @@ export class FinanceReportsController {
     @Param('reportCode') reportCode: string,
     @Query('period') period?: string,
     @Query('taxEntityId') taxEntityId?: string,
+    @Query('includeDraft') includeDraft?: string,
   ) {
     if (!REPORT_CODES.includes(reportCode as ReportCodeParam)) {
       throw new BadRequestException(
@@ -219,6 +235,7 @@ export class FinanceReportsController {
     return this.reportsService.getReport(reportCode as ReportCodeParam, {
       period: this.assertPeriod(period),
       taxEntityId: taxEntityId || undefined,
+      includeDraft: this.parseIncludeDraft(includeDraft),
     });
   }
 
@@ -242,6 +259,7 @@ export class FinanceReportsController {
     @Req() req: Request,
     @Query('period') period?: string,
     @Query('taxEntityId') taxEntityId?: string,
+    @Query('includeDraft') includeDraft?: string,
   ) {
     if (!REPORT_CODES.includes(reportCode as ReportCodeParam)) {
       throw new BadRequestException(
@@ -252,6 +270,7 @@ export class FinanceReportsController {
       period: this.assertPeriod(period),
       taxEntityId: taxEntityId || undefined,
       operator: req.userContext?.userName ?? req.userContext?.userId ?? null,
+      includeDraft: this.parseIncludeDraft(includeDraft),
     });
   }
 
@@ -263,11 +282,13 @@ export class FinanceReportsController {
     @Query('period') period?: string,
     @Query('level') level?: string,
     @Query('taxEntityId') taxEntityId?: string,
+    @Query('includeDraft') includeDraft?: string,
   ) {
     return this.ledgersService.accountBalance({
       period: this.assertPeriod(period),
       level: level ? Math.min(Math.max(Number(level) || 6, 1), 6) : undefined,
       taxEntityId: taxEntityId || undefined,
+      includeDraft: this.parseIncludeDraft(includeDraft),
     });
   }
 
@@ -276,10 +297,12 @@ export class FinanceReportsController {
   getGeneralLedger(
     @Query('period') period?: string,
     @Query('taxEntityId') taxEntityId?: string,
+    @Query('includeDraft') includeDraft?: string,
   ) {
     return this.ledgersService.generalLedger({
       period: this.assertPeriod(period),
       taxEntityId: taxEntityId || undefined,
+      includeDraft: this.parseIncludeDraft(includeDraft),
     });
   }
 
@@ -292,6 +315,7 @@ export class FinanceReportsController {
     @Query('pageSize') pageSize?: string,
     @Query('taxEntityId') taxEntityId?: string,
     @Query('includeChildren') includeChildren?: string,
+    @Query('includeDraft') includeDraft?: string,
   ) {
     if (!accountCode) {
       throw new BadRequestException('accountCode 必填');
@@ -303,6 +327,7 @@ export class FinanceReportsController {
       pageSize: Math.min(Math.max(Number(pageSize) || 50, 1), 500),
       taxEntityId: taxEntityId || undefined,
       includeChildren: includeChildren === 'true',
+      includeDraft: this.parseIncludeDraft(includeDraft),
     });
   }
 
@@ -313,6 +338,7 @@ export class FinanceReportsController {
     @Query('dimension') dimension?: string,
     @Query('dimensionId') dimensionId?: string,
     @Query('taxEntityId') taxEntityId?: string,
+    @Query('includeDraft') includeDraft?: string,
   ) {
     if (!dimension) {
       throw new BadRequestException('dimension 必填（如 project / department）');
@@ -322,6 +348,7 @@ export class FinanceReportsController {
       dimensionCode: dimension,
       dimensionId: dimensionId || undefined,
       taxEntityId: taxEntityId || undefined,
+      includeDraft: this.parseIncludeDraft(includeDraft),
     });
   }
 

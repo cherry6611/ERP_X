@@ -722,6 +722,8 @@ export class ProjectsService {
           .where(eq(erpContract.id, row.contractId))
       : [];
     const contract = contractRows[0];
+    // P0-2：解析出的纳税主体要透给收入凭证（解析失败时退回合同主体）
+    let taxEntityId: string | null = contract?.taxEntityId ?? null;
     try {
       // 修复 P1-11：税率改走 TaxResolverService，与开票口径一致（不再硬编码 6）
       const resolved = await this.taxResolver.resolve({
@@ -731,6 +733,7 @@ export class ProjectsService {
         side: 'output',
       });
       rate = resolved.rate;
+      taxEntityId = resolved.taxEntityId ?? taxEntityId;
     } catch (error) {
       this.logger.warn(
         `项目收入税率解析失败，按 6% 兜底：${row.code} ${
@@ -771,6 +774,7 @@ export class ProjectsService {
       voucherDate,
       summary: `收入确认 ${row.code}`,
       lines,
+      taxEntityId,
     });
     if (voucherResult === 'failed') {
       await this.voucherHook.recordCompensation(

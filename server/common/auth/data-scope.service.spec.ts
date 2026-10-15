@@ -144,6 +144,24 @@ describe('B-02 applyScope：SQL 层行级过滤条件', () => {
     expect(condition).toBe(SCOPE_FAIL_CLOSED);
   });
 
+  it('fail-closed：scope=none（未配置即拒绝）即使 ctx 完整也返回永假条件', () => {
+    // P1-7 的核心断言：ctx 越完整越容易让人以为"有归属就能看到"，
+    // 但 none 的语义是"没有配置行就不给数据"，与 actor 归属性无关。
+    const condition = applyScope(
+      mdEmployee.departmentId,
+      resolved('none'),
+      ctx
+    );
+    expect(condition).toBe(SCOPE_FAIL_CLOSED);
+    expect(compile(condition).sql).toBe('1 = 0');
+  });
+
+  it('none：bypass（管理员/系统任务）仍优先放行，避免后台任务被权限误伤', () => {
+    expect(
+      applyScope(mdEmployee.id, resolved('none'), { userId: 'u', bypass: true })
+    ).toBeUndefined();
+  });
+
   it('空白/重复值被清洗，不会生成 IN () 这种语法错误', () => {
     const { sql: text, params } = compile(
       applyScope(mdEmployee.departmentId, resolved('dept_and_child'), {

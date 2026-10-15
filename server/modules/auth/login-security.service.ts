@@ -320,8 +320,10 @@ export class LoginSecurityService {
   }
 
   private async loadRoles(userId: string): Promise<string[]> {
+    // 注意：sys_role_member.user_id 是 varchar(64)（uuid 以文本存储，见 0000_baseline.sql），
+    // 不能 ::uuid 强转，否则报 operator does not exist: character varying = uuid
     const rows = await this.db.execute(sql`
-      SELECT role_code FROM sys_role_member WHERE user_id = ${userId}::uuid
+      SELECT role_code FROM sys_role_member WHERE user_id = ${userId}
     `);
     return unwrapRows<{ role_code: string }>(rows).map((row) => row.role_code);
   }

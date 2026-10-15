@@ -24,6 +24,10 @@ import { VoucherHookService } from '@server/modules/voucher/voucher-hook.service
 import { outputIssueLines, outputVoidLines } from '@server/common/tax/posting';
 import { FALLBACK_RATE } from '@shared/tax';
 import { todayInShanghai } from '@server/common/utils/biz-date';
+import {
+  assertFiscalYearOpen,
+  assertPeriodOpen,
+} from '@server/common/utils/period-guard';
 import type {
   AdjustType,
   CreateRevenueAdjustDto,
@@ -51,10 +55,10 @@ export class RevenuesService {
    * 后果：合同未填税率、但客户/纳税主体已配置 13%/1% 时，凭证销项税按 6% 记，
    * 与合同、应收、发票三处口径不一致。改为统一走解析器。
    */
-  private async resolveOutputRate(
+  private async resolveOutputTax(
     contractId: string | null | undefined
-  ): Promise<number> {
-    if (!contractId) return FALLBACK_RATE;
+  ): Promise<{ rate: number; taxEntityId: string | null }> {
+    if (!contractId) return { rate: FALLBACK_RATE, taxEntityId: null };
     const rows = await this.db
       .select({
         taxRate: erpContract.taxRate,
@@ -64,7 +68,7 @@ export class RevenuesService {
       .from(erpContract)
       .where(eq(erpContract.id, contractId));
     const contract = rows[0];
-    if (!contract) return FALLBACK_RATE;
+    if (!contract) return { rate: FALLBACK_RATE, taxEntityId: null };
     const resolved = await this.taxResolver.resolve({
       explicit: contract.taxRate != null ? Number(contract.taxRate) : null,
       customerId: contract.customerId,
@@ -74,7 +78,8 @@ export class RevenuesService {
     if (resolved.warning) {
       this.logger.warn(`收入税率解析：${contractId} ${resolved.warning}`);
     }
-    return resolved.rate;
+    // P0-2：顺带把解析出的纳税主体透给凭证，避免收入凭证在报表里成为"无主体"缺口
+    return { rate: resolved.rate, taxEntityId: resolved.taxEntityId ?? null };
   }
 
   async listRevenues(
@@ -118,6 +123,11 @@ export class RevenuesService {
     if (!/^\d{4}-\d{2}$/u.test(dto.period)) {
       throw new BadRequestException('期间格式须为 YYYY-MM');
     }
+    // P2-8：收入确认会计期间必须过期间闸门。原先仅校验格式，已结账/已年结期间
+    // 仍能确认收入 —— 凭证生成会被钩子拦下进补偿队列，业务数据却已落库，
+    // 形成"有收入无凭证"的静默不一致。
+    await assertPeriodOpen(this.db, dto.period, '确认收入');
+    await assertFiscalYearOpen(this.db, dto.period);
     const code = await generateBizCode(
       this.db,
       erpProjectRevenue,
@@ -141,7 +151,8 @@ export class RevenuesService {
     const row = rows[0];
 
     /* 收入确认成功 → 自动生成应收单，失败不阻塞收入登记本身 */
-    const taxRate = await this.resolveOutputRate(row.contractId);
+    const outputTax = await this.resolveOutputTax(row.contractId);
+    const taxRate = outputTax.rate;
     if (row.contractId) {
       try {
         await this.arService.createAr({
@@ -164,6 +175,7 @@ export class RevenuesService {
       voucherDate: `${dto.period}-01`,
       summary: `收入确认 ${code}`,
       lines,
+      taxEntityId: outputTax.taxEntityId,
     });
     if (voucherResult === 'failed') {
       await this.voucherHookService.recordCompensation(
@@ -265,7 +277,8 @@ export class RevenuesService {
       });
     });
 
-    const taxRate = await this.resolveOutputRate(revenue.contractId);
+    const outputTax = await this.resolveOutputTax(revenue.contractId);
+    const taxRate = outputTax.rate;
     if (revenue.contractId) {
       try {
         await this.arService.applyCredit(
@@ -278,10 +291,11 @@ export class RevenuesService {
         this.logger.warn(
           `收入冲回 applyCredit 失败（仍继续开红冲凭证）：${revenue.code} ${msg}`
         );
-        await this.voucherHookService.recordCompensation(
-          'revenue-reverse-ar',
-          `revenue-reverse-ar:${revenue.code}`,
-          msg
+        // P1-9：这里失败的是「应收冲减」（AR 侧），不是凭证生成 —— 补偿队列只承载
+        // 可重放的凭证 payload，塞一条无分录的记录既不能重放、又会污染队列统计。
+        // 故改为显式错误日志 + 稳定的可检索前缀，由运维按 sourceRef 定位补做。
+        this.logger.error(
+          `[需人工处理] 收入冲回应收未冲减 contract=${revenue.contractId} amount=${amount} 收入=${revenue.code}：${msg}`
         );
       }
     }
@@ -291,6 +305,7 @@ export class RevenuesService {
       voucherDate: todayInShanghai(),
       summary: `收入冲回 ${revenue.code}`,
       lines: outputVoidLines(amount, taxRate),
+      taxEntityId: outputTax.taxEntityId,
     });
 
     const items = await this.listRevenues(revenue.projectId ?? undefined);
@@ -328,7 +343,7 @@ export class RevenuesService {
       .returning();
     const row = rows[0];
     if (revenue[0].contractId) {
-      const taxRate = await this.resolveOutputRate(revenue[0].contractId);
+      const outputTax = await this.resolveOutputTax(revenue[0].contractId);
       await this.arService.applyCredit(
         revenue[0].contractId,
         Math.abs(dto.amount),
@@ -339,7 +354,8 @@ export class RevenuesService {
         sourceRef: `revenue-adjust:${row.code}`,
         voucherDate: todayInShanghai(),
         summary: `收入调整冲回 ${row.code}`,
-        lines: outputVoidLines(Math.abs(dto.amount), taxRate),
+        lines: outputVoidLines(Math.abs(dto.amount), outputTax.rate),
+        taxEntityId: outputTax.taxEntityId,
       });
     }
     return {
@@ -376,7 +392,16 @@ export class RevenuesService {
         erpProjectRevenue,
         eq(erpRevenueAdjust.revenueId, erpProjectRevenue.id)
       )
-      .where(eq(erpRevenueAdjust.status, 'applied'))
+      // P1-4：重置只统计**仍为 recognized** 的收入所挂的调整。
+      // `reverseRevenue` 会同时（a）把收入置为 reversed、（b）写一条 adjust_type='return'
+      // 的调整。若这里把 reversed 收入的调整也计入，则该笔金额被扣两次：
+      // 一次是收入本身被 `status='recognized'` 过滤掉，一次是调整被减掉 → 未开票金额虚低。
+      .where(
+        and(
+          eq(erpRevenueAdjust.status, 'applied'),
+          eq(erpProjectRevenue.status, 'recognized')
+        )
+      )
       .groupBy(erpProjectRevenue.projectId);
     const invoiceRows = await this.db
       .select({

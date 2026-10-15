@@ -489,18 +489,48 @@ describe('C-11 对账单 SQL 集成（pglite + 真实 StatementService）', () =
     );
   });
 
-  it('B-02：未配置范围的角色按既有行为放行（不收紧）', async () => {
+  /**
+   * P1-7：未配置即拒绝（fail-closed）。
+   *
+   * ⚠️ **本用例推翻了需求书 B-02 的原契约**（原契约："未配置范围的角色按既有行为放行，
+   * 不收紧"）。变更经确认后按"默认 fail-closed"落地，理由是没配置就等于没授权，
+   * 而不是等于全部可见。为免新环境瞬间变空，收紧的**前提是"该资源类型已经在用行级权限"**
+   * （存在 enabled 配置行）；一个从没配置过的资源仍按原行为放行。
+   *
+   * 逃生开关：`DATA_SCOPE_UNCONFIGURED_POLICY=allow` 可整体退回 B-02 原契约（排障用）。
+   */
+  it('P1-7：该资源已启用行级权限时，未配置角色按 fail-closed 拒绝；开关 allow 可回退', async () => {
+    // 前置条件：让 finance_ledger 处于"已启用行级权限"状态（由另一角色持有配置行）
+    await harness.db.exec(`
+      INSERT INTO sys_data_scope (role_code, resource_type, scope, custom_ids, enabled)
+      VALUES ('${PREFIX}in-use-role', 'finance_ledger', 'self', '[]', 1)
+      ON CONFLICT (role_code, resource_type) DO UPDATE SET enabled = 1;
+    `);
     const actor = {
       userId: `${PREFIX}user-2`,
       userName: `${PREFIX} 用户二`,
       roles: [`${PREFIX}no-such-role`],
     };
-    const result = await service.getCustomerStatement(
-      UUID.customer,
-      '2026-10',
-      actor
-    );
-    expect(result.closingBalance).toBe(1650.4);
+    try {
+      // 默认策略（deny）：没有配置行 → 拒绝，而不是看到全部数据
+      await expect(
+        service.getCustomerStatement(UUID.customer, '2026-10', actor)
+      ).rejects.toBeInstanceOf(ForbiddenException);
+
+      // 逃生开关：退回 B-02 原契约（未配置 → 放行既有行为）
+      process.env.DATA_SCOPE_UNCONFIGURED_POLICY = 'allow';
+      const result = await service.getCustomerStatement(
+        UUID.customer,
+        '2026-10',
+        actor
+      );
+      expect(result.closingBalance).toBe(1650.4);
+    } finally {
+      delete process.env.DATA_SCOPE_UNCONFIGURED_POLICY;
+      await harness.db.exec(
+        `DELETE FROM sys_data_scope WHERE role_code = '${PREFIX}in-use-role'`
+      );
+    }
   });
 });
 

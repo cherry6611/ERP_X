@@ -76,10 +76,27 @@ export class LedgersService {
     }
   }
 
-  /** 科目维度余额（期初 / 本期发生 / 期末），排除作废凭证 */
+  /**
+   * P0-2：凭证状态过滤。
+   * 默认【只取已过账】——未过账草稿不参与账簿/报表取数，保证「过账」控制有意义；
+   * includeDraft=true 时降级为「含草稿预览」口径（已过账 + 草稿），供财务提交前预览。
+   * SQL 里 fin_voucher 的别名统一为 v。
+   */
+  private statusCondition(includeDraft?: boolean) {
+    return includeDraft
+      ? sql`v.status IN ('posted', 'draft')`
+      : sql`v.status = 'posted'`;
+  }
+
+  /** 科目维度余额（期初 / 本期发生 / 期末），仅统计已过账凭证（草稿不参与账簿/报表取数） */
   async rawBalances(
     period: string,
-    options: { taxEntityId?: string; from?: string; to?: string } = {}
+    options: {
+      taxEntityId?: string;
+      from?: string;
+      to?: string;
+      includeDraft?: boolean;
+    } = {}
   ): Promise<Map<string, RawBalanceRow>> {
     const from = options.from ?? period;
     const to = options.to ?? period;
@@ -92,7 +109,7 @@ export class LedgersService {
                coalesce(sum(l.credit), 0) AS opening_credit
         FROM fin_voucher_line l
         JOIN fin_voucher v ON v.id = l.voucher_id
-        WHERE v.status <> 'voided'
+        WHERE ${this.statusCondition(options.includeDraft)}
           AND v.period < ${from}
           AND l.account_code IS NOT NULL
           ${options.taxEntityId ? sql`AND v.tax_entity_id = ${options.taxEntityId}::uuid` : sql``}
@@ -104,7 +121,7 @@ export class LedgersService {
                coalesce(sum(l.credit), 0) AS credit_occur
         FROM fin_voucher_line l
         JOIN fin_voucher v ON v.id = l.voucher_id
-        WHERE v.status <> 'voided'
+        WHERE ${this.statusCondition(options.includeDraft)}
           AND v.period >= ${from}
           AND v.period <= ${to}
           AND l.account_code IS NOT NULL
@@ -181,7 +198,14 @@ export class LedgersService {
    */
   async rolledBalances(
     period: string,
-    options: { taxEntityId?: string } = {}
+    options: {
+      taxEntityId?: string;
+      includeDraft?: boolean;
+      /** 期初截止期间（不含）：累计口径取数时传「年初前一期间」 */
+      from?: string;
+      /** 发生额截止期间（含） */
+      to?: string;
+    } = {}
   ): Promise<
     Map<
       string,
@@ -307,14 +331,19 @@ export class LedgersService {
     this.assertPeriod(params.period, 'period');
     const rolled = await this.rolledBalances(params.period, {
       taxEntityId: params.taxEntityId,
+      includeDraft: params.includeDraft,
     });
     const maxLevel = params.level && params.level > 0 ? params.level : 6;
     const items: AccountBalanceRow[] = [];
     for (const [code, values] of rolled) {
       if (values.level > maxLevel) continue;
-      const closingDebit = round2(values.closingDebit);
-      const closingCredit = round2(values.closingCredit);
-      const net = round2(closingDebit - closingCredit);
+      // P0-3 / P2-5：余额按科目方向轧差后【单侧列示】。
+      // 同一科目同时出现借贷双侧余额（如 1122 期末借 127,200 与期末贷 63,600）
+      // 会误导阅读，且使「期末借方合计 ≠ 期末贷方合计」误报不平衡。
+      // 轧差后每个科目只在净额方向列示，全表期末借合计 = 期末贷合计 自动成立。
+      // 发生额保持借贷双侧原值（发生额本身就是双侧口径）。
+      const openingNet = round2(values.openingDebit - values.openingCredit);
+      const closingNet = round2(values.closingDebit - values.closingCredit);
       items.push({
         accountCode: code,
         accountName: values.name,
@@ -322,14 +351,14 @@ export class LedgersService {
         isLeaf: values.isLeaf,
         direction: values.direction as AccountBalanceRow['direction'],
         accountType: values.accountType,
-        openingDebit: values.openingDebit,
-        openingCredit: values.openingCredit,
+        openingDebit: openingNet > 0 ? openingNet : 0,
+        openingCredit: openingNet < 0 ? round2(-openingNet) : 0,
         debitOccur: values.debitOccur,
         creditOccur: values.creditOccur,
-        closingDebit,
-        closingCredit,
-        closingNet: net,
-        closingSide: net === 0 ? 'flat' : net > 0 ? 'debit' : 'credit',
+        closingDebit: closingNet > 0 ? closingNet : 0,
+        closingCredit: closingNet < 0 ? round2(-closingNet) : 0,
+        closingNet,
+        closingSide: closingNet === 0 ? 'flat' : closingNet > 0 ? 'debit' : 'credit',
       });
     }
     items.sort((a, b) => (a.accountCode < b.accountCode ? -1 : a.accountCode > b.accountCode ? 1 : 0));
@@ -360,10 +389,44 @@ export class LedgersService {
         closingDebit: round2(totalClosingDebit),
         closingCredit: round2(totalClosingCredit),
       },
-      balanced:
-        round2(totalClosingDebit) === round2(totalClosingCredit) &&
-        round2(totalDebitOccur) === round2(totalCreditOccur),
+      // 余额表"平衡"以凭证行级借贷合计为权威口径（与试算平衡一致），
+      // 不受非末级科目发生额被 Leaf 汇总排除的影响，避免误报不平衡。
+      balanced: await this.isPeriodBalanced(
+        params.period,
+        params.taxEntityId,
+        params.includeDraft
+      ),
     };
+  }
+
+  /** 凭证行级借贷合计（仅已过账），用于余额表/试算平衡的一致性校验 */
+  private async isPeriodBalanced(
+    period: string,
+    taxEntityId?: string,
+    includeDraft?: boolean
+  ): Promise<boolean> {
+    this.assertPeriod(period, 'period');
+    const rows = await this.db
+      .select({
+        debit: sql<string>`coalesce(sum(${finVoucherLine.debit}), 0)`,
+        credit: sql<string>`coalesce(sum(${finVoucherLine.credit}), 0)`,
+      })
+      .from(finVoucherLine)
+      .innerJoin(finVoucher, eq(finVoucherLine.voucherId, finVoucher.id))
+      .where(
+        and(
+          eq(finVoucher.period, period),
+          includeDraft
+            ? inArray(finVoucher.status, ['posted', 'draft'])
+            : eq(finVoucher.status, 'posted'),
+          taxEntityId
+            ? sql`${finVoucher.taxEntityId} = ${taxEntityId}::uuid`
+            : sql``
+        )
+      );
+    const debit = round2(toNumber(rows[0]?.debit));
+    const credit = round2(toNumber(rows[0]?.credit));
+    return debit === credit;
   }
 
   /** A-03 ④：辅助余额表（按辅助维度 + 维度值汇总） */
@@ -372,6 +435,7 @@ export class LedgersService {
     dimensionCode: string;
     dimensionId?: string;
     taxEntityId?: string;
+    includeDraft?: boolean;
   }): Promise<AuxBalanceSheet> {
     this.assertPeriod(params.period, 'period');
     const dimensionRows = await this.db
@@ -394,7 +458,7 @@ export class LedgersService {
         JOIN fin_voucher_line l ON l.id = a.line_id
         JOIN fin_voucher v ON v.id = l.voucher_id
         WHERE a.dimension_code = ${params.dimensionCode}
-          AND v.status <> 'voided'
+          AND ${this.statusCondition(params.includeDraft)}
           AND v.period < ${from}
           ${params.dimensionId ? sql`AND a.dimension_id = ${params.dimensionId}::uuid` : sql``}
           ${params.taxEntityId ? sql`AND v.tax_entity_id = ${params.taxEntityId}::uuid` : sql``}
@@ -410,7 +474,7 @@ export class LedgersService {
         JOIN fin_voucher_line l ON l.id = a.line_id
         JOIN fin_voucher v ON v.id = l.voucher_id
         WHERE a.dimension_code = ${params.dimensionCode}
-          AND v.status <> 'voided'
+          AND ${this.statusCondition(params.includeDraft)}
           AND v.period = ${from}
           ${params.dimensionId ? sql`AND a.dimension_id = ${params.dimensionId}::uuid` : sql``}
           ${params.taxEntityId ? sql`AND v.tax_entity_id = ${params.taxEntityId}::uuid` : sql``}
@@ -447,21 +511,23 @@ export class LedgersService {
       const creditOccur = toNumber(row.credit_occur);
       const closingDebit = round2(openingDebit + debitOccur);
       const closingCredit = round2(openingCredit + creditOccur);
-      const net = round2(closingDebit - closingCredit);
+      // P2-5：与科目余额表同口径，期末余额按方向轧差后单侧列示
+      const openingNet = round2(openingDebit - openingCredit);
+      const closingNet = round2(closingDebit - closingCredit);
       return {
         dimensionCode: params.dimensionCode,
         dimensionId: row.dimension_id,
         dimensionValue: row.dimension_value,
         accountCode: row.account_code,
         accountName: nameByCode.get(row.account_code) ?? '',
-        openingDebit,
-        openingCredit,
+        openingDebit: openingNet > 0 ? openingNet : 0,
+        openingCredit: openingNet < 0 ? round2(-openingNet) : 0,
         debitOccur,
         creditOccur,
-        closingDebit,
-        closingCredit,
-        closingNet: net,
-        closingSide: net === 0 ? 'flat' : net > 0 ? 'debit' : 'credit',
+        closingDebit: closingNet > 0 ? closingNet : 0,
+        closingCredit: closingNet < 0 ? round2(-closingNet) : 0,
+        closingNet,
+        closingSide: closingNet === 0 ? 'flat' : closingNet > 0 ? 'debit' : 'credit',
       };
     });
     items.sort((a, b) => {
@@ -493,26 +559,27 @@ export class LedgersService {
     this.assertPeriod(params.period, 'period');
     const rolled = await this.rolledBalances(params.period, {
       taxEntityId: params.taxEntityId,
+      includeDraft: params.includeDraft,
     });
     const items: GeneralLedgerRow[] = [];
     for (const [code, values] of rolled) {
       if (values.level !== 1) continue;
-      const closingDebit = round2(values.closingDebit);
-      const closingCredit = round2(values.closingCredit);
-      const net = round2(closingDebit - closingCredit);
+      // P2-5：期末/期初余额按方向轧差后单侧列示（与科目余额表同口径）
+      const openingNet = round2(values.openingDebit - values.openingCredit);
+      const closingNet = round2(values.closingDebit - values.closingCredit);
       items.push({
         accountCode: code,
         accountName: values.name,
         direction: values.direction as GeneralLedgerRow['direction'],
         accountType: values.accountType,
-        openingDebit: values.openingDebit,
-        openingCredit: values.openingCredit,
+        openingDebit: openingNet > 0 ? openingNet : 0,
+        openingCredit: openingNet < 0 ? round2(-openingNet) : 0,
         debitOccur: values.debitOccur,
         creditOccur: values.creditOccur,
-        closingDebit,
-        closingCredit,
-        closingNet: net,
-        closingSide: net === 0 ? 'flat' : net > 0 ? 'debit' : 'credit',
+        closingDebit: closingNet > 0 ? closingNet : 0,
+        closingCredit: closingNet < 0 ? round2(-closingNet) : 0,
+        closingNet,
+        closingSide: closingNet === 0 ? 'flat' : closingNet > 0 ? 'debit' : 'credit',
         childCount: values.children.length,
       });
     }
@@ -545,10 +612,12 @@ export class LedgersService {
     pageSize: number;
     taxEntityId?: string;
     includeChildren?: boolean;
+    includeDraft?: boolean;
   }): Promise<DetailLedgerResult> {
     this.assertPeriod(params.period, 'period');
     const rolled = await this.rolledBalances(params.period, {
       taxEntityId: params.taxEntityId,
+      includeDraft: params.includeDraft,
     });
     const self = rolled.get(params.accountCode);
     if (!self) {
@@ -561,7 +630,9 @@ export class LedgersService {
     const conditions = [
       inArray(finVoucherLine.accountCode, codes),
       eq(finVoucher.period, params.period),
-      sql`${finVoucher.status} <> 'voided'`,
+      params.includeDraft
+        ? inArray(finVoucher.status, ['posted', 'draft'])
+        : eq(finVoucher.status, 'posted'),
     ];
 
     const totalRows = await this.db
@@ -620,7 +691,7 @@ export class LedgersService {
           JOIN fin_voucher v ON v.id = l.voucher_id
           WHERE l.account_code = ANY(${sql.raw(`ARRAY[${codes.map((code) => `'${code.replace(/'/g, "''")}'`).join(',')}]`)}::varchar[])
             AND v.period = ${params.period}
-            AND v.status <> 'voided'
+            AND ${this.statusCondition(params.includeDraft)}
             ${params.taxEntityId ? sql`AND v.tax_entity_id = ${params.taxEntityId}::uuid` : sql``}
         )
         SELECT coalesce(sum(debit), 0) AS debit, coalesce(sum(credit), 0) AS credit
@@ -783,7 +854,7 @@ export class LedgersService {
       .where(
         and(
           eq(finVoucher.period, period),
-          sql`${finVoucher.status} <> 'voided'`
+          sql`${finVoucher.status} = 'posted'`
         )
       );
     const totalDebit = round2(toNumber(rows[0]?.debit));

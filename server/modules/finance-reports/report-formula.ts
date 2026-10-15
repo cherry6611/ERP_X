@@ -48,6 +48,7 @@ export type FormulaNode =
   | { type: 'number'; value: number }
   | { type: 'account'; ref: FormulaAccountRef; sign: 1 | -1 }
   | { type: 'row'; ref: FormulaRowRef; sign: 1 | -1 }
+  | { type: 'plnet'; sign: 1 | -1 }
   | { type: 'group'; nodes: FormulaNode[]; sign: 1 | -1 }
   | { type: 'abs'; node: FormulaNode; sign: 1 | -1 }
   | { type: 'mul'; nodes: FormulaNode[]; sign: 1 | -1 };
@@ -262,6 +263,16 @@ export function parseFormula(input: string): ParsedFormula {
         sign: 1,
       };
     }
+    /** 本年损益净额()：取本会计年度至当前期间的损益类科目净额合计，
+     * 用于资产负债表"未分配利润"在未做年终结转（4103 为空）时纳入本期利润，
+     * 使月度资产负债表恒等式通过。年终结转后损益科目清零、4103 承接，不会重复计算。 */
+    if (token === '本年损益净额') {
+      const open = next();
+      if (open !== '(') throw new FormulaParseError(`${token} 缺少左括号：${text}`);
+      const close = next();
+      if (close !== ')') throw new FormulaParseError(`${token} 缺少右括号：${text}`);
+      return { type: 'plnet', sign: 1 };
+    }
     throw new FormulaParseError(`无法识别的公式片段：${token}（完整公式：${text}）`);
   }
 
@@ -332,6 +343,8 @@ export interface FormulaContext {
   rowValues: Map<string, number>;
   /** 行次 → 上一期间结果 */
   prevRowValues: Map<string, number>;
+  /** 本年损益净额（资产负债表用）：本会计年度至当前期间损益类科目净额合计 */
+  plNet?: number;
 }
 
 export interface FormulaAccountValues {
@@ -413,6 +426,8 @@ function evalNode(node: FormulaNode, ctx: FormulaContext): number {
       const value = map.get(node.ref.rowNo);
       return node.sign * (value ?? 0);
     }
+    case 'plnet':
+      return node.sign * (ctx.plNet ?? 0);
     case 'group': {
       let total = 0;
       for (const child of node.nodes) total += evalNode(child, ctx);

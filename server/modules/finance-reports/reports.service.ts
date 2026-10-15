@@ -134,12 +134,14 @@ export class ReportsService {
   private evaluateRows(
     template: TemplateRow[],
     accountValues: FormulaContext['accountValues'],
-    prevRowValues: Map<string, number>
+    prevRowValues: Map<string, number>,
+    plNet?: number
   ): { rows: ReportRow[]; rowValues: Map<string, number> } {
     const ctx: FormulaContext = {
       accountValues,
       rowValues: new Map(),
       prevRowValues,
+      plNet,
     };
     const rows: ReportRow[] = [];
     for (const row of template) {
@@ -259,11 +261,36 @@ export class ReportsService {
     return rows.find((row) => row.rowNo === rowNo)?.amount ?? 0;
   }
 
+  /**
+   * 本会计年度至当前期间损益类科目净额合计（净利 = 收入 − 费用）。
+   *
+   * 为什么需要它：年终结转前 4103（本年利润）为空，资产负债表「未分配利润」
+   * 只取已结转数据就会漏掉本期利润，导致月度中途恒等式必然不通过。
+   * 年终结转后损益科目已被清零、4103 已承接本期利润，本值自然为 0，不会重复计算。
+   *
+   * 取数口径：rolledBalances 的期末净额为「建账至本期末」的累计数；损益类科目
+   * 年终结转即清零，因此累计数即本年累计。只汇总末级科目，避免父级重复计入。
+   */
+  private ytdProfitLossNet(rolled: Rolled): number {
+    let expenseMinusRevenue = 0;
+    for (const values of rolled.values()) {
+      if (!values.isLeaf) continue;
+      if (
+        !['income', 'revenue', 'expense', 'cost'].includes(values.accountType)
+      ) {
+        continue;
+      }
+      expenseMinusRevenue += values.closingDebit - values.closingCredit;
+    }
+    return round2(-expenseMinusRevenue);
+  }
+
   /* ========== A-01 资产负债表 ========== */
 
   async balanceSheet(params: {
     period: string;
     taxEntityId?: string;
+    includeDraft?: boolean;
   }): Promise<BalanceSheetResult> {
     this.assertPeriod(params.period);
     const template = await this.loadTemplate('balance_sheet');
@@ -271,14 +298,21 @@ export class ReportsService {
       throw new NotFoundException('资产负债表模板未初始化，请执行迁移 2026-10-15-upgrade-batch1-report-templates.sql');
     }
     const [rolled, openingRolled, entityName] = await Promise.all([
-      this.ledgers.rolledBalances(params.period, { taxEntityId: params.taxEntityId }),
+      this.ledgers.rolledBalances(params.period, {
+        taxEntityId: params.taxEntityId,
+        includeDraft: params.includeDraft,
+      }),
       this.ledgers.rolledBalances(previousPeriod(params.period), {
         taxEntityId: params.taxEntityId,
+        includeDraft: params.includeDraft,
       }),
       this.taxEntityName(params.taxEntityId),
     ]);
-    const openingValues = this.buildContext(openingRolled).accountValues;
     const currentValues = this.buildContext(rolled).accountValues;
+
+    // 本年损益净额（资产负债表权益区用）：本会计年度至当前期间损益类科目净额合计。
+    // 年终结转前 4103（本年利润）为空，未结转损益必须纳入"未分配利润"才能使恒等式通过。
+    const ytdProfitLossNet = this.ytdProfitLossNet(rolled);
 
     // 年初（上一年 12 月）余额，用于"年初余额"列
     const priorYear = `${Number(params.period.slice(0, 4)) - 1}-12`;
@@ -286,12 +320,15 @@ export class ReportsService {
       ? openingRolled
       : await this.ledgers.rolledBalances(priorYear, {
           taxEntityId: params.taxEntityId,
+          includeDraft: params.includeDraft,
         });
     const yearOpeningValues = this.buildContext(yearOpeningRolled).accountValues;
 
-    const { rows } = this.evaluateRows(template, currentValues, new Map());
-    // 期末列 = amount；年初列 = 上一会计年度 12 月 31 日余额
-    const openingRows = this.evaluateRows(template, yearOpeningValues, new Map());
+    const { rows } = this.evaluateRows(template, currentValues, new Map(), ytdProfitLossNet);
+    // 期末列 = amount；年初列 = 上一会计年度 12 月 31 日余额。
+    // 年初列不再加回本期利润：上一会计年度已年终结转，损益科目清零、4103 已承接，
+    // 若在此再叠加本期 pLNet 会把本期利润误计入年初列。
+    const openingRows = this.evaluateRows(template, yearOpeningValues, new Map(), 0);
     const previous = new Map(openingRows.rows.map((row) => [row.rowNo, row.amount]));
     for (const row of rows) {
       row.previousAmount = previous.get(row.rowNo) ?? 0;
@@ -319,7 +356,6 @@ export class ReportsService {
           round2(this.findRow(rows, '22')) === round2(liabilitiesTotal + equityTotal),
       },
     ];
-    void openingValues;
 
     return {
       reportCode: 'balance_sheet',
@@ -342,6 +378,7 @@ export class ReportsService {
   async incomeStatement(params: {
     period: string;
     taxEntityId?: string;
+    includeDraft?: boolean;
   }): Promise<IncomeStatementResult> {
     this.assertPeriod(params.period);
     const template = await this.loadTemplate('income_statement');
@@ -349,9 +386,13 @@ export class ReportsService {
       throw new NotFoundException('利润表模板未初始化，请执行迁移 2026-10-15-upgrade-batch1-report-templates.sql');
     }
     const [currentRolled, prevRolled, entityName] = await Promise.all([
-      this.ledgers.rolledBalances(params.period, { taxEntityId: params.taxEntityId }),
+      this.ledgers.rolledBalances(params.period, {
+        taxEntityId: params.taxEntityId,
+        includeDraft: params.includeDraft,
+      }),
       this.ledgers.rolledBalances(previousPeriod(params.period), {
         taxEntityId: params.taxEntityId,
+        includeDraft: params.includeDraft,
       }),
       this.taxEntityName(params.taxEntityId),
     ]);
@@ -366,7 +407,8 @@ export class ReportsService {
     const ytdValues = await this.ytdAccountValues(
       fiscalYearStart(params.period),
       params.period,
-      params.taxEntityId
+      params.taxEntityId,
+      params.includeDraft
     );
     const ytdRows = this.evaluateRows(template, ytdValues, new Map());
     const ytdMap = new Map(ytdRows.rows.map((row) => [row.rowNo, row.amount]));
@@ -391,7 +433,11 @@ export class ReportsService {
 
     // 校验①：净利润 = 利润总额 − 所得税费用
     // 校验②：净利润（本期）与本年利润科目发生额一致
-    const yearProfitOccur = await this.profitAccountNet(params.period, params.taxEntityId);
+    const yearProfitOccur = await this.profitAccountNet(
+      params.period,
+      params.taxEntityId,
+      params.includeDraft
+    );
     const checks: ReportCheck[] = [
       {
         code: 'income_statement_net_profit',
@@ -414,7 +460,23 @@ export class ReportsService {
         passed: round2(operatingProfit) === round2(revenueTotal - costTotal),
       },
     ];
-    void yearProfitOccur;
+
+    // P2-3：把原先「算了但被 void 掉」的年终结转一致性校验真正落地。
+    // 4103（本年利润）平时不动，只在年终结转时被写入；因此仅在 4103 本期有发生额
+    // （说明本期做过结转）时才校验：-4103 本期发生额 == 本年累计净利润（第 12 行本年累计列）。
+    // 结转只结转部分期间的情况会被如实标红，提示结转不完整。
+    const netProfitYtd =
+      rows.find((row) => row.rowNo === '12')?.ytdAmount ?? netProfit;
+    if (round2(yearProfitOccur) !== 0) {
+      checks.push({
+        code: 'income_statement_year_profit',
+        label: '本年利润（4103）本期发生额 = 本年累计净利润（年终结转一致性）',
+        left: round2(-yearProfitOccur),
+        right: round2(netProfitYtd),
+        difference: round2(-yearProfitOccur - netProfitYtd),
+        passed: round2(-yearProfitOccur) === round2(netProfitYtd),
+      });
+    }
 
     return {
       reportCode: 'income_statement',
@@ -433,24 +495,33 @@ export class ReportsService {
     };
   }
 
-  /** 1 月至 to 期间的累计科目余额/发生额（用于利润表本年累计列） */
+  /**
+   * 1 月至 to 期间的累计科目余额/发生额（用于利润表本年累计列）。
+   *
+   * 注意：必须用**区间口径**一次取数 —— `rawBalances(period)` 的 `debitOccur` 是
+   * **单期发生额**（`ledgers.service.ts` 中 `from = to = period`），把两次单期发生额
+   * 相减得到的是「本期发生额 − 上期发生额」而非累计发生额。此处传 `from=年初前一期`
+   * 让 rawBalances 直接给出「期初(年初前) / 发生额(年初..期末) / 期末(累计)」。
+   */
   private async ytdAccountValues(
     from: string,
     to: string,
-    taxEntityId?: string
+    taxEntityId?: string,
+    includeDraft?: boolean
   ): Promise<FormulaContext['accountValues']> {
-    const rolledFrom = await this.ledgers.rolledBalances(previousPeriod(from), {
+    const rolled = await this.ledgers.rolledBalances(to, {
       taxEntityId,
+      includeDraft,
+      from: previousPeriod(from),
+      to,
     });
-    const rolledTo = await this.ledgers.rolledBalances(to, { taxEntityId });
     const result: FormulaContext['accountValues'] = new Map();
-    for (const [code, values] of rolledTo) {
-      const opening = rolledFrom.get(code);
+    for (const [code, values] of rolled) {
       result.set(code, {
         openingDebit: values.openingDebit,
         openingCredit: values.openingCredit,
-        debitOccur: round2(values.debitOccur - (opening?.debitOccur ?? 0)),
-        creditOccur: round2(values.creditOccur - (opening?.creditOccur ?? 0)),
+        debitOccur: values.debitOccur,
+        creditOccur: values.creditOccur,
         closingDebit: values.closingDebit,
         closingCredit: values.closingCredit,
         name: values.name,
@@ -461,9 +532,13 @@ export class ReportsService {
 
   private async profitAccountNet(
     period: string,
-    taxEntityId?: string
+    taxEntityId?: string,
+    includeDraft?: boolean
   ): Promise<number> {
-    const rolled = await this.ledgers.rolledBalances(period, { taxEntityId });
+    const rolled = await this.ledgers.rolledBalances(period, {
+      taxEntityId,
+      includeDraft,
+    });
     const values = rolled.get('4103');
     if (!values) return 0;
     return round2(
@@ -476,6 +551,7 @@ export class ReportsService {
   async cashFlow(params: {
     period: string;
     taxEntityId?: string;
+    includeDraft?: boolean;
   }): Promise<CashFlowResult> {
     this.assertPeriod(params.period);
     const template = await this.loadTemplate('cash_flow');
@@ -483,7 +559,10 @@ export class ReportsService {
       throw new NotFoundException('现金流量表模板未初始化，请执行迁移 2026-10-15-upgrade-batch1-report-templates.sql');
     }
     const [currentRolled, entityName] = await Promise.all([
-      this.ledgers.rolledBalances(params.period, { taxEntityId: params.taxEntityId }),
+      this.ledgers.rolledBalances(params.period, {
+        taxEntityId: params.taxEntityId,
+        includeDraft: params.includeDraft,
+      }),
       this.taxEntityName(params.taxEntityId),
     ]);
     const currentValues = this.buildContext(currentRolled).accountValues;
@@ -492,7 +571,8 @@ export class ReportsService {
     const ytdValues = await this.ytdAccountValues(
       fiscalYearStart(params.period),
       params.period,
-      params.taxEntityId
+      params.taxEntityId,
+      params.includeDraft
     );
     const ytdFinal = this.evaluateRows(template, ytdValues, new Map());
     const ytdFinalMap = new Map(ytdFinal.rows.map((row) => [row.rowNo, row.amount]));
@@ -568,7 +648,7 @@ export class ReportsService {
   /** 通用报表查询入口（供 Controller 按 reportCode 路由） */
   async getReport(
     reportCode: 'balance_sheet' | 'income_statement' | 'cash_flow',
-    params: { period: string; taxEntityId?: string }
+    params: { period: string; taxEntityId?: string; includeDraft?: boolean }
   ): Promise<ReportSheet> {
     switch (reportCode) {
       case 'balance_sheet':
@@ -596,7 +676,12 @@ export class ReportsService {
    */
   async printPack(
     reportCode: 'balance_sheet' | 'income_statement' | 'cash_flow',
-    params: { period: string; taxEntityId?: string; operator?: string | null }
+    params: {
+      period: string;
+      taxEntityId?: string;
+      operator?: string | null;
+      includeDraft?: boolean;
+    }
   ): Promise<ReportPrintPack> {
     const sheet: ReportSheet = await this.getReport(reportCode, params);
     const header: PrintHeader = await this.printHeader(sheet.reportName, sheet.period);

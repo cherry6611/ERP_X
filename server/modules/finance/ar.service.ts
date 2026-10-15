@@ -22,11 +22,15 @@ import {
 import { generateBizCode } from '@server/common/utils/biz-code';
 import { DataScopeService } from '@server/common/auth/data-scope.service';
 import type { RequestActor } from '@server/common/auth/actor';
-import { outputIssueLines, receiptLines, receiptVoidLines } from '@server/common/tax/posting';
+import {
+  arRegisterLines,
+  receiptLines,
+  receiptVoidLines,
+} from '@server/common/tax/posting';
 import { VoucherHookService } from '@server/modules/voucher/voucher-hook.service';
 import { TaxResolverService } from '@server/modules/tax/tax-resolver.service';
 import { arSettleStatus, receiptMatchStatus } from './ar-match';
-import { todayInShanghai } from '@server/common/utils/biz-date';
+import { todayInShanghai, addDaysInShanghai } from '@server/common/utils/biz-date';
 import { assertPeriodOpen } from '@server/common/utils/period-guard';
 import type {
   AgingBucket,
@@ -162,17 +166,14 @@ export class ArService {
     let dueDate = dto.dueDate ?? null;
     if (!dueDate) {
       const terms = customer[0].termsDays ?? 30;
-      const d = new Date();
-      d.setDate(d.getDate() + terms);
-      dueDate = d.toISOString().slice(0, 10);
+      // P1-6：按业务时区做日期加减，避免 UTC 转换把到期日偏一天
+      dueDate = addDaysInShanghai(terms);
     }
     const source = dto.source ?? 'manual';
-    // D-27：业务写入校验期间未结账
-    await assertPeriodOpen(
-      this.db,
-      dueDate ?? todayInShanghai(),
-      '登记应收',
-    );
+    // P1-5：期间闸门必须校验**业务发生日（登记日）**所在期间。
+    // 原实现校验的是「账期到期日」所在期间：登记日已结账时漏拦，到期日落在已结账
+    // 期间时又误拦。到期日只是账期推算结果，不对应任何业务发生。
+    await assertPeriodOpen(this.db, todayInShanghai(), '登记应收');
     // D-03'：手工应收先解析税率，失败不落库
     let voucherRate: number | null = null;
     if (source === 'manual') {
@@ -248,14 +249,21 @@ export class ArService {
       }
       throw error;
     }
-    /** T1：手工应收借1122/贷6001/贷222101；source=revenue 不出凭证（收入侧已生成） */
+    /**
+     * P0-4：手工应收只登记债权，**不确认收入**。
+     * 借 1122 / 贷 2203 预收账款（合同结算）/ 贷 222101 销项税；
+     * 收入统一由「收入确认」模块单点产生，避免双通道重复贷记 6001。
+     * source=revenue 仍不出凭证（收入侧已生成）。
+     */
     if (source === 'manual' && voucherRate != null) {
       await this.voucherHookService.generateVoucherDraft({
         sourceType: 'ar',
         sourceRef: `ar:${code}`,
         voucherDate: todayInShanghai(),
         summary: `手工应收登记 ${code}`,
-        lines: outputIssueLines(dto.amount, voucherRate),
+        lines: arRegisterLines(dto.amount, voucherRate),
+        // P0-2：沿用合同主体（同一合同的其他凭证也据此归属，保证主体内自洽）
+        taxEntityId: contract[0].taxEntityId,
       });
     }
     return this.buildArItem({
@@ -347,6 +355,9 @@ export class ArService {
       .from(mdCustomer)
       .where(eq(mdCustomer.id, dto.customerId));
     if (customer.length === 0) throw new NotFoundException('客户不存在');
+    const receiptDate = dto.receiptDate ?? todayInShanghai();
+    // P1-5：回款登记原先完全没有期间闸门；且校验须用**回款业务日**而非登记当天。
+    await assertPeriodOpen(this.db, receiptDate, '登记回款');
     const code = await generateBizCode(
       this.db,
       erpReceipt,
@@ -359,7 +370,7 @@ export class ArService {
         code,
         customerId: dto.customerId,
         amount: String(dto.amount),
-        receiptDate: dto.receiptDate ?? todayInShanghai(),
+        receiptDate,
         method: dto.method ?? 'bank',
         source: dto.source,
         status: 'unmatched',

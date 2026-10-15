@@ -743,16 +743,19 @@ export class FinExpenseService {
     });
 
     /* A1：挂应付，贷 2202；付款审批再借 2202 / 贷 1001，避免银行重复出账 */
+    // P1-9：把分录取出为常量，失败登记补偿队列时**必须带上分录**，否则队列里是一条
+    // 永远无法重放、只会被判 dead 的空记录（等于没登记）。
+    const expenseLines = [
+      { accountCode: '6602', debit: amount },
+      { accountCode: '2202', credit: amount },
+    ];
     try {
       await this.voucherHookService.generateVoucherDraft({
         sourceType: 'expense',
         sourceRef: `expense:${claim.code}`,
         voucherDate: expenseDate,
         summary: `报销挂账 ${claim.code}`,
-        lines: [
-          { accountCode: '6602', debit: amount },
-          { accountCode: '2202', credit: amount },
-        ],
+        lines: expenseLines,
       });
     } catch (error) {
       this.logger.error(
@@ -762,7 +765,9 @@ export class FinExpenseService {
       await this.voucherHookService.recordCompensation(
         'expense',
         `expense:${claim.code}`,
-        error instanceof Error ? error.message : String(error)
+        error instanceof Error ? error.message : String(error),
+        expenseLines,
+        expenseDate
       );
     }
 

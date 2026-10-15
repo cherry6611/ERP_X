@@ -4,7 +4,8 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { and, desc, eq, ne, sum } from 'drizzle-orm';
+import { and, desc, eq, ne, sql, sum } from 'drizzle-orm';
+import type { ReconRowItem } from '@shared/api.interface';
 import {
   DRIZZLE_DATABASE,
   type PostgresJsDatabase,
@@ -13,23 +14,21 @@ import {
   erpApBill,
   erpAr,
   erpArWriteoff,
+  erpContract,
   erpInvoice,
+  erpProjectRevenue,
   erpReceipt,
+  finVoucher,
+  finVoucherLine,
   mdCustomer,
   mdSupplier,
 } from '@server/database/schema';
 
-export interface ReconRow {
-  id: string;
-  code: string;
-  counterpartName: string;
-  amount: number;
-  linkedAmount: number;
-  openAmount: number;
-  status: string;
-  linkId: string | null;
-  linkCode: string | null;
-  flag: 'ok' | 'unlinked' | 'over' | 'voided_risk';
+/** 勾稽明细行：契约以 shared 为唯一权威（ReconRowItem） */
+export type ReconRow = ReconRowItem;
+
+function round2(value: number): number {
+  return Math.round(value * 100) / 100;
 }
 
 @Injectable()
@@ -171,6 +170,112 @@ export class ReconciliationService {
     return rows;
   }
 
+  /**
+   * P1-1：应收未开票。
+   *
+   * 既有 `listSalesAr` 只看「发票→应收」方向（发票未关联应收），
+   * 会让“已登记应收但一张发票都没开”的缺口（ARR0001-0003 这类）静默漏报。
+   * 本方法补上反向口径：应收已确认、未作废发票累计为 0 的行。
+   */
+  async listArWithoutInvoice(): Promise<ReconRow[]> {
+    const ars = await this.db
+      .select({
+        ar: erpAr,
+        customerName: mdCustomer.name,
+        contractName: erpContract.name,
+      })
+      .from(erpAr)
+      .leftJoin(mdCustomer, eq(erpAr.customerId, mdCustomer.id))
+      .leftJoin(erpContract, eq(erpAr.contractId, erpContract.id))
+      .orderBy(desc(erpAr.createdAt))
+      .limit(500);
+
+    const rows: ReconRow[] = [];
+    for (const row of ars) {
+      const invoicedRows = await this.db
+        .select({ total: sum(erpInvoice.amount) })
+        .from(erpInvoice)
+        .where(
+          and(
+            eq(erpInvoice.arId, row.ar.id),
+            ne(erpInvoice.status, 'voided'),
+          ),
+        );
+      const invoiced = Number(invoicedRows[0]?.total ?? 0);
+      if (invoiced > 0.01) continue;
+      const amount = Number(row.ar.amount ?? 0);
+      rows.push({
+        id: row.ar.id,
+        code: row.ar.code,
+        counterpartName:
+          row.customerName ?? row.contractName ?? '',
+        amount,
+        linkedAmount: invoiced,
+        openAmount: round2(amount - invoiced),
+        status: row.ar.status ?? 'open',
+        linkId: null,
+        linkCode: null,
+        flag: 'unlinked',
+      });
+    }
+    return rows;
+  }
+
+  /**
+   * P0-4 / P1-1：总账收入 vs 收入台账 差异检测。
+   *
+   * 总账口径：已过账凭证中 6001/6051 的贷方净发生额；
+   * 台账口径：erp_project_revenue 中 status=recognized 的确认金额。
+   * 两者应相等；不等说明存在“确认收入未入账”或“入账未确认”的双通道缺口。
+   */
+  async revenueVariance(period: string): Promise<{
+    period: string;
+    ledgerRevenue: number;
+    bookRevenue: number;
+    difference: number;
+    passed: boolean;
+  }> {
+    // 总账收入：6001 主营业务收入 + 6051 其他业务收入（贷方 − 借方）
+    const ledgerRows = await this.db
+      .select({
+        debit: sql<string>`coalesce(sum(${finVoucherLine.debit}), 0)`,
+        credit: sql<string>`coalesce(sum(${finVoucherLine.credit}), 0)`,
+      })
+      .from(finVoucherLine)
+      .innerJoin(finVoucher, eq(finVoucherLine.voucherId, finVoucher.id))
+      .where(
+        and(
+          eq(finVoucher.period, period),
+          eq(finVoucher.status, 'posted'),
+          sql`(${finVoucherLine.accountCode} like '6001%' or ${finVoucherLine.accountCode} like '6051%')`,
+        ),
+      );
+    const ledgerRevenue = round2(
+      Number(ledgerRows[0]?.credit ?? 0) - Number(ledgerRows[0]?.debit ?? 0),
+    );
+
+    // 收入台账：已确认收入合计（期间为 YYYY-MM）
+    const bookRows = await this.db
+      .select({ total: sum(erpProjectRevenue.amount) })
+      .from(erpProjectRevenue)
+      .where(
+        and(
+          eq(erpProjectRevenue.period, period),
+          eq(erpProjectRevenue.status, 'recognized'),
+        ),
+      );
+    const bookRevenue = round2(Number(bookRows[0]?.total ?? 0));
+
+    const difference = round2(ledgerRevenue - bookRevenue);
+    return {
+      period,
+      ledgerRevenue,
+      bookRevenue,
+      difference,
+      passed: Math.abs(difference) < 0.01,
+    };
+  }
+
   async bindPurchaseAp(invoiceId: string, apId: string): Promise<void> {
     // D-11：FOR UPDATE 与额度校验、更新必须在同一事务内，否则锁语句结束即释放
     await this.db.transaction(async (tx) => {
@@ -233,17 +338,20 @@ export class ReconciliationService {
     salesUnlinked: number;
     receiptUnlinked: number;
     voidedRisk: number;
+    arWithoutInvoice: number;
   }> {
-    const [p, s, r] = await Promise.all([
+    const [p, s, r, a] = await Promise.all([
       this.listPurchaseAp(),
       this.listSalesAr(),
       this.listReceiptWriteoff(),
+      this.listArWithoutInvoice(),
     ]);
     return {
       purchaseUnlinked: p.filter((x) => x.flag === 'unlinked').length,
       salesUnlinked: s.filter((x) => x.flag === 'unlinked').length,
       receiptUnlinked: r.filter((x) => x.flag === 'unlinked').length,
       voidedRisk: [...p, ...s, ...r].filter((x) => x.flag === 'voided_risk').length,
+      arWithoutInvoice: a.length,
     };
   }
 }

@@ -12,6 +12,7 @@ import {
 } from '@server/platform';
 import { and, count, desc, eq, inArray, sql } from 'drizzle-orm';
 import {
+  erpContract,
   erpProject,
   erpProjectCost,
   erpProjectRevenue,
@@ -30,6 +31,7 @@ import {
   purchaseReturnLines,
   returnAmount,
   returnableQuantity,
+  salesReturnCostLines,
   salesReturnLines,
   validateReturnAction,
   type ReturnAction,
@@ -442,6 +444,8 @@ export class ReturnService {
       taxAmount: round2(toNumber(item.taxAmount)),
       redInvoiceId: item.redInvoiceId,
       revenueAdjustId: item.revenueAdjustId,
+      disposalType: item.disposalType === 'scrap' ? 'scrap' : 'restock',
+      costAmount: round2(toNumber(item.costAmount)),
       status: item.status as ReturnStatus,
       reason: item.reason,
       remark: item.remark,
@@ -606,9 +610,26 @@ export class ReturnService {
     } else if (dto.action === 'void') {
       patch.status = 'void';
     } else if (dto.action === 'complete') {
-      const lines = salesReturnLines(current.netAmount, current.taxAmount);
+      // 逐单确定退货商品的处置方式：回库（借 1403）还是报废（借 6602）。
+      // 未显式指定时沿用退货单上已有的值（默认 restock），不替业务做假设。
+      const disposal: 'restock' | 'scrap' =
+        dto.disposalType === 'scrap' || dto.disposalType === 'restock'
+          ? dto.disposalType
+          : current.disposalType === 'scrap'
+            ? 'scrap'
+            : 'restock';
+      const costAmount = await this.resolveSalesReturnCost(current);
+      const lines = [
+        ...salesReturnLines(current.netAmount, current.taxAmount),
+        ...salesReturnCostLines(costAmount, disposal),
+      ];
       if (!isBalanced(lines)) {
         throw new BadRequestException('销售退货分录借贷不平，请检查金额');
+      }
+      if (costAmount <= 0) {
+        this.logger.warn(
+          `销售退货 ${current.code} 未算出可冲回成本（项目无收入或成本数据），仅生成收入红冲分录`
+        );
       }
       const sourceRef = `sales-return:${current.code}`;
       const voucherResult = await this.voucherHookService.generateVoucherDraft({
@@ -630,6 +651,8 @@ export class ReturnService {
       patch.status = 'completed';
       patch.completedAt = now;
       patch.voucherRef = voucherResult === 'created' ? sourceRef : null;
+      patch.disposalType = disposal;
+      patch.costAmount = String(costAmount);
     }
     if (dto.remark) patch.remark = dto.remark;
 
@@ -641,6 +664,59 @@ export class ReturnService {
       `销售退货 ${current.code} ${current.status}→${dto.action} by=${operator}`
     );
     return this.getSalesReturn(current.id);
+  }
+
+  /**
+   * 按含税收入占比分摊项目成本，算出本次退货应冲回的成本。
+   *
+   *   退货成本 = 项目累计成本 × (退货净额 / 项目累计净收入)
+   *
+   * 净收入口径与 `projects.service.ts getAccounting()` 完全一致（按合同税率拆税），
+   * 避免同一项目在"毛利"和"退货成本"两处出现两套收入口径。
+   *
+   * 无项目、无成本或无收入数据时返回 0 —— 此时**不生成成本行**，
+   * 由调用方记录告警，而不是用一个猜出来的金额去凑平报表。
+   */
+  private async resolveSalesReturnCost(row: {
+    projectId: string | null;
+    revenueId: string | null;
+    netAmount: number;
+  }): Promise<number> {
+    let projectId = row.projectId;
+    if (!projectId && row.revenueId) {
+      const revenueRows = await this.db
+        .select({ projectId: erpProjectRevenue.projectId })
+        .from(erpProjectRevenue)
+        .where(eq(erpProjectRevenue.id, row.revenueId))
+        .limit(1);
+      projectId = revenueRows[0]?.projectId ?? null;
+    }
+    if (!projectId || row.netAmount <= 0) return 0;
+
+    const revenueRows = await this.db
+      .select({
+        total: sql<string>`coalesce(sum(
+          coalesce(${erpProjectRevenue.amount}, 0) * 100.0
+          / (100.0 + coalesce(${erpContract.taxRate}, 6))
+        ), 0)`,
+      })
+      .from(erpProjectRevenue)
+      .leftJoin(erpContract, eq(erpProjectRevenue.contractId, erpContract.id))
+      .where(
+        and(
+          eq(erpProjectRevenue.projectId, projectId),
+          eq(erpProjectRevenue.status, 'recognized')
+        )
+      );
+    const costRows = await this.db
+      .select({ total: sql<string>`coalesce(sum(${erpProjectCost.amount}), 0)` })
+      .from(erpProjectCost)
+      .where(eq(erpProjectCost.projectId, projectId));
+    const netRevenue = Number(revenueRows[0]?.total ?? 0);
+    const totalCost = Number(costRows[0]?.total ?? 0);
+    if (netRevenue <= 0 || totalCost <= 0) return 0;
+    const share = Math.min(1, row.netAmount / netRevenue);
+    return Math.round(totalCost * share * 100) / 100;
   }
 
   /* ========== 台账 ========== */

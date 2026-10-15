@@ -22,7 +22,19 @@ import type { RequestActor } from '@server/common/auth/actor';
  * ========================================================================== */
 
 /** B-02：行级可见范围 */
-export type DataScopeType = 'all' | 'dept' | 'dept_and_child' | 'self' | 'custom';
+export type DataScopeType =
+  | 'all'
+  | 'dept'
+  | 'dept_and_child'
+  | 'self'
+  | 'custom'
+  /**
+   * 未配置即拒绝（fail-closed）：**只用于运行时计算结果**，不会写入 `sys_data_scope`。
+   * 含义：该资源类型已启用行级权限（存在配置行），但当前角色没有命中任何配置行。
+   * 为什么不直接把默认值改成这个：没有任何配置行的环境里，一翻转会让所有列表瞬间变空，
+   * 看起来像全站故障。因此只在“该资源类型已经在用行级权限”时才收紧。
+   */
+  | 'none';
 
 /** B-02：可配置数据权限的资源类型（与迁移里的 chk_sys_data_scope_resource 一致） */
 export const DATA_SCOPE_RESOURCES = [
@@ -49,6 +61,7 @@ export const DATA_SCOPE_TYPE_LABELS: Record<DataScopeType, string> = {
   dept_and_child: '本部门及下级',
   self: '仅本人',
   custom: '自定义',
+  none: '无（未配置即拒绝）',
 };
 
 /** 解析后的范围（已含 custom_ids） */
@@ -58,8 +71,8 @@ export interface ResolvedScope {
   resourceType: string;
   scope: DataScopeType;
   customIds: string[];
-  /** 结论来源：bypass（管理员）/ config（命中配置）/ default（未配置，放行给既有规则） */
-  from: 'bypass' | 'config' | 'default';
+  /** 结论来源：bypass（管理员）/ config（命中配置）/ policy（未配置时按策略拒绝）/ default（未配置，放行给既有规则） */
+  from: 'bypass' | 'config' | 'policy' | 'default';
 }
 
 /** 过滤条件的执行上下文（部门集合已按 scope 需要展开） */
@@ -164,6 +177,10 @@ export function applyScope(
 ): SQL | undefined {
   if (ctx.bypass === true || scope.scope === 'all') return undefined;
 
+  // 未配置即拒绝（fail-closed）：该资源类型已启用行级权限，但当前角色没有配置行。
+  // 优先级高于其它分支，且不受 ctx 影响——没有配置就不给数据，而不是默认放开。
+  if (scope.scope === 'none') return SCOPE_FAIL_CLOSED;
+
   if (scope.scope === 'self') {
     const value = (ctx.selfValue ?? ctx.userId ?? '').trim();
     if (!value) return SCOPE_FAIL_CLOSED;
@@ -232,12 +249,25 @@ const DEPARTMENT_CACHE_MS = 60_000;
 export class DataScopeService {
   private readonly logger = new Logger(DataScopeService.name);
   private departmentCache: DepartmentCache | null = null;
+  /** 已告警过的资源类型（避免每次请求都刷日志） */
+  private readonly unconfiguredDenyWarned = new Set<string>();
 
   constructor(
     @Inject(DRIZZLE_DATABASE) private readonly db: PostgresJsDatabase
   ) {}
 
   /* ==================== 配置解析 ==================== */
+
+  /**
+   * 未配置时的策略。默认 `deny`（fail-closed），环境变量 `DATA_SCOPE_UNCONFIGURED_POLICY=allow`
+   * 可临时退回放行（排障用；仅接受 'allow' 作为放开值，其它任何值均按 deny 处理）。
+   */
+  private unconfiguredPolicy(): 'allow' | 'deny' {
+    return (process.env.DATA_SCOPE_UNCONFIGURED_POLICY ?? '').toLowerCase() ===
+      'allow'
+      ? 'allow'
+      : 'deny';
+  }
 
   /**
    * 解析 `roles × resourceType` 的可见范围。
@@ -284,9 +314,47 @@ export class DataScopeService {
           eq(sysDataScope.enabled, 1)
         )
       );
-    if (rows.length === 0) return fallback;
+    if (rows.length === 0) {
+      // 未命中配置。P1-7：默认改为 fail-closed，但**只在"该资源类型已启用行级权限"时**收紧。
+      //
+      // 为什么加这个前置条件：`sys_data_scope` 在没有任何配置行的环境（新环境、演示库）里
+      // 若直接返回 'none'，所有列表会瞬间变空，看起来像全站故障而不是权限生效。
+      // 因此判据是"这个资源类型已经有配置行了"——一旦开始用行级权限，
+      // 没被显式授权的角色就不能再看到全部数据。
+      //
+      // 逃生开关：`DATA_SCOPE_UNCONFIGURED_POLICY=allow` 可退回原行为（排障用）。
+      if (this.unconfiguredPolicy() === 'deny') {
+        const inUse = await this.db
+          .select({ roleCode: sysDataScope.roleCode })
+          .from(sysDataScope)
+          .where(
+            and(
+              eq(sysDataScope.resourceType, resourceType),
+              eq(sysDataScope.enabled, 1)
+            )
+          )
+          .limit(1);
+        if (inUse.length > 0) {
+          if (!this.unconfiguredDenyWarned.has(resourceType)) {
+            this.unconfiguredDenyWarned.add(resourceType);
+            this.logger.warn(
+              `资源 ${resourceType} 已启用行级权限，角色 [${roleList.join(',')}] 无配置行 → 按 fail-closed 拒绝（可通过 DATA_SCOPE_UNCONFIGURED_POLICY=allow 临时放开）`
+            );
+          }
+          return {
+            roleCode: null,
+            resourceType,
+            scope: 'none',
+            customIds: [],
+            from: 'policy',
+          };
+        }
+      }
+      return fallback;
+    }
 
     const rank: Record<DataScopeType, number> = {
+      none: -1,
       self: 0,
       custom: 1,
       dept: 2,

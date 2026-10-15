@@ -25,6 +25,7 @@ import {
 } from '@server/common/tax/account-codes';
 import { generateBizCode } from '@server/common/utils/biz-code';
 import { unwrapRows } from '@server/common/utils/rows';
+import { assertFiscalYearOpen } from '@server/common/utils/period-guard';
 import { LedgersService } from './ledgers.service';
 import type {
   PeriodCarryForwardPreview,
@@ -69,7 +70,7 @@ export class YearEndService {
     this.assertPeriod(params.period);
     const fiscalYear = this.yearOf(params.period);
     const [accounts, closedRows, draftRows, trial] = await Promise.all([
-      this.profitLossBalances(params.period),
+      this.profitLossBalances(params.period, params.taxEntityId),
       this.db
         .select({ id: finYearEndClose.id })
         .from(finYearEndClose)
@@ -174,7 +175,17 @@ export class YearEndService {
   }
 
   /** 本年度损益类科目的借方/贷方发生额（从 1 月累计到 12 月） */
-  private async profitLossBalances(period: string): Promise<
+  /**
+   * 本年度损益类科目的借方/贷方发生额（从 1 月累计到 12 月）。
+   *
+   * P2-4：必须按纳税主体隔离。原实现不区分 `tax_entity_id`，把同一年度**所有主体**的
+   * 损益合并进一张结转凭证，且凭证自身不落主体 —— 多主体下各主体损益被互相冲平
+   * （A 主体盈利、B 主体亏损 ⇒ 结转后谁都看不出真实损益），本年利润也无法按主体归属。
+   */
+  private async profitLossBalances(
+    period: string,
+    taxEntityId?: string
+  ): Promise<
     Array<{
       code: string;
       name: string;
@@ -184,6 +195,11 @@ export class YearEndService {
     }>
   > {
     const year = period.slice(0, 4);
+    // 未指定主体时只结转「无主体」凭证（与凭证/报表的 NULL 语义一致），
+    // 而不是把有无主体的凭证混在一起 —— 混算正是本条缺陷的根源。
+    const entityFilter = taxEntityId
+      ? sql`AND v.tax_entity_id = ${taxEntityId}::uuid`
+      : sql`AND v.tax_entity_id IS NULL`;
     const rows = await this.db.execute(sql`
       SELECT l.account_code AS code,
              coalesce(max(a.name), '') AS name,
@@ -197,6 +213,7 @@ export class YearEndService {
         AND v.period LIKE ${`${year}-%`}
         AND l.account_code IS NOT NULL
         AND l.account_code NOT LIKE '4103%'
+        ${entityFilter}
         AND coalesce(a.account_type, 'expense') = ANY(${sql.raw(
           `ARRAY[${PROFIT_LOSS_TYPES.map((type) => `'${type}'`).join(',')}]`
         )}::varchar[])
@@ -330,6 +347,9 @@ export class YearEndService {
           sourceType: 'manual',
           sourceRef,
           status: 'posted',
+          // P2-4：结转凭证必须落在被结转的主体上，否则凭证自身游离在主体之外，
+          // 按主体出的报表看不到它，而按总额看的报表又看得到它。
+          taxEntityId: params.taxEntityId ?? null,
           remark: `年结自动生成，操作人 ${params.userId}`,
         })
         .returning({ id: finVoucher.id });
@@ -550,26 +570,13 @@ export class YearEndService {
 
   /**
    * 年结后的期间只读校验：本年度已年结的期间不允许再新增/过账凭证。
-   * 由 VoucherService 与 VoucherHookService 调用。
+   *
+   * P0-3：真正的接线在 `assertFiscalYearOpen`（`common/utils/period-guard.ts`），
+   * 由 VoucherService 与 VoucherHookService 调用；此处保留同名方法供年结模块内部
+   * 与既有调用复用，委托到同一实现，避免两处规则漂移。
    */
   async assertPeriodWritable(period: string): Promise<void> {
-    if (!PERIOD_PATTERN.test(period)) return;
-    const fiscalYear = Number(period.slice(0, 4));
-    const rows = await this.db
-      .select({ id: finYearEndClose.id })
-      .from(finYearEndClose)
-      .where(
-        and(
-          eq(finYearEndClose.fiscalYear, fiscalYear),
-          eq(finYearEndClose.status, 'closed')
-        )
-      )
-      .limit(1);
-    if (rows.length > 0) {
-      throw new BadRequestException(
-        `会计年度 ${fiscalYear} 已年结，期间 ${period} 只读；如需调整请先反年结`
-      );
-    }
+    await assertFiscalYearOpen(this.db, period);
   }
 
   /** 纳税主体名称（供前端展示） */

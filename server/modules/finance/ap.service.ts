@@ -76,6 +76,25 @@ export class ApService {
     );
   }
 
+  /**
+   * P0-2：应付/付款凭证的纳税主体。
+   *
+   * `erp_ap_bill` / `erp_payment` 都没有 `tax_entity_id` 列，故按**供应商档案**归属
+   * —— 与列表数据权限口径（`md_supplier.tax_entity_id`）保持一致，避免"看得到却归不了主体"。
+   * 供应商未配置主体时返回 null，交给凭证钩子兜底（唯一默认主体 / 暴露为未归属）。
+   */
+  private async supplierTaxEntityId(
+    supplierId: string | null | undefined
+  ): Promise<string | null> {
+    if (!supplierId) return null;
+    const rows = await this.db
+      .select({ taxEntityId: mdSupplier.taxEntityId })
+      .from(mdSupplier)
+      .where(eq(mdSupplier.id, supplierId))
+      .limit(1);
+    return rows[0]?.taxEntityId ?? null;
+  }
+
   async listAps(
     supplierId?: string,
     status?: string,
@@ -119,11 +138,10 @@ export class ApService {
     if (dto.amount <= 0) {
       throw new BadRequestException('应付金额必须大于 0');
     }
-    await assertPeriodOpen(
-      this.db,
-      dto.dueDate ?? todayInShanghai(),
-      '登记应付',
-    );
+    // P1-5（同类缺陷，报告只在 ar 侧点名）：期间闸门必须校验**业务发生日（登记日）**。
+    // 校验 `dueDate` 是错的 —— 到期日 = 登记日 + 账期，既会漏拦（登记日已结账仍能登记），
+    // 又会误拦（到期日落在已结账期间被拒）。与 ar.service 的修法保持一致。
+    await assertPeriodOpen(this.db, todayInShanghai(), '登记应付');
     const supplier = await this.db
       .select({ id: mdSupplier.id, name: mdSupplier.name })
       .from(mdSupplier)
@@ -161,6 +179,8 @@ export class ApService {
       voucherDate: todayInShanghai(),
       summary: `应付登记 ${row.code}`,
       lines: inputIssueLines(Number(row.amount ?? 0), resolved.rate),
+      // P0-2：应付单自身无 tax_entity_id，主体随供应商/解析结果归属
+      taxEntityId: resolved.taxEntityId ?? (await this.supplierTaxEntityId(dto.supplierId)),
     });
     let projectName: string | null = null;
     if (row.projectId) {
@@ -363,6 +383,7 @@ export class ApService {
         voucherDate: row.payDate ?? todayInShanghai(),
         summary: `付款审批 ${row.code}`,
         lines: paymentLines(payAmount),
+        taxEntityId: await this.supplierTaxEntityId(row.supplierId),
       });
       if (voucherStatus !== 'created') {
         this.logger.error(
@@ -439,6 +460,7 @@ export class ApService {
         voucherDate: todayInShanghai(),
         summary: `付款作废 ${row.code}`,
         lines: paymentVoidLines(payAmount),
+        taxEntityId: await this.supplierTaxEntityId(row.supplierId),
       });
     }
     const ap = await this.db

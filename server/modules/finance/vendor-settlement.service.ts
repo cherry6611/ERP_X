@@ -192,17 +192,20 @@ export class VendorSettlementService {
 
     // A3：外协结算补进项凭证
     const amount = Number(inserted.amount ?? 0);
+    // P1-9：先把税率解析与分录取出（纯读），失败登记补偿队列时才能带上可重放的分录。
+    const resolved = await this.taxResolver.resolve({
+      supplierId: dto.supplierId,
+      side: 'input',
+    });
+    const settlementLines = inputIssueLines(amount, resolved.rate);
     try {
-      const resolved = await this.taxResolver.resolve({
-        supplierId: dto.supplierId,
-        side: 'input',
-      });
       await this.voucherHookService.generateVoucherDraft({
         sourceType: 'ap',
         sourceRef: `ap:${inserted.code}`,
         voucherDate: dto.dueDate ?? todayInShanghai(),
         summary: `外协结算 ${dto.period} ${inserted.code}`,
-        lines: inputIssueLines(amount, resolved.rate),
+        lines: settlementLines,
+        taxEntityId: resolved.taxEntityId,
       });
     } catch (error) {
       this.logger.error(
@@ -212,7 +215,9 @@ export class VendorSettlementService {
       await this.voucherHookService.recordCompensation(
         'ap',
         `ap:${inserted.code}`,
-        error instanceof Error ? error.message : String(error)
+        error instanceof Error ? error.message : String(error),
+        settlementLines,
+        dto.dueDate ?? todayInShanghai()
       );
     }
 

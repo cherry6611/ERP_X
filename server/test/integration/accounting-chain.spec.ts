@@ -376,8 +376,11 @@ describe('核心账务链路集成（pglite + 真实 VoucherService）', () => {
 
     await expect(
       service.createVoucher({
-        voucherDate: '2026-04-05',
-        period: '2026-04',
+        // P2-2 后这里不能再借用 2026-04：该期间早于已结账期间（2026-06），
+        // 会先被「补记守卫」拦下。改用晚于最新已结账期间的 2026-09，
+        // 让本用例继续验证它真正想覆盖的「无效科目」分支。
+        voucherDate: '2026-09-05',
+        period: '2026-09',
         summary: `${TEST_PREFIX} 无效科目`,
         lines: [
           { accountId: '00000000-0000-0000-0000-000000000000', debit: 10, credit: 0 },
@@ -476,6 +479,28 @@ describe('核心账务链路集成（pglite + 真实 VoucherService）', () => {
       balanced: true,
       closed: true,
     });
+  });
+
+  /**
+   * P2-2：跳期结账本身允许，但**不允许把凭证补记到已结账期间之前**。
+   * 上一条用例已把 2026-08 结账，此处 2026-07 仍未结账 —— 若允许写入，
+   * 08 月已出具的报表期初数会与 07 月期末数永久矛盾。
+   */
+  it('补记守卫：已结账期间之前的未结账期间禁止新增/过账凭证', async () => {
+    const cash = await ensureAccount('9405', `${TEST_PREFIX} 测试现金I`, 'asset');
+    const revenue = await ensureAccount('9406', `${TEST_PREFIX} 测试收入I`, 'revenue');
+
+    await expect(
+      service.createVoucher({
+        voucherDate: '2026-07-15',
+        period: '2026-07',
+        summary: `${TEST_PREFIX} 补记到 08 月之前`,
+        lines: [
+          { accountId: cash.id, debit: 100, credit: 0 },
+          { accountId: revenue.id, debit: 0, credit: 100 },
+        ],
+      })
+    ).rejects.toThrow('早于已结账期间 2026-08');
   });
 
   it('反结账：清空结账标记并写审计留痕，未结账期间反结账被拒', async () => {

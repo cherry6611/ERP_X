@@ -641,7 +641,12 @@ export class StatementService {
       actor.roles ?? [],
       'finance_ledger'
     );
-    if (resolved.from !== 'config' || resolved.scope === 'all') return;
+    // from === 'policy' 表示"该资源已启用行级权限但本角色未配置"，属 fail-closed，必须拦住；
+    // 只放行 from === 'config' 会漏掉这一支，让权限改动看起来生效却实际无效。
+    if (resolved.from === 'default' || resolved.scope === 'all') return;
+    if (resolved.scope === 'none') {
+      throw new ForbiddenException('未配置该资源的数据权限，无法查看对账单');
+    }
 
     const label = direction === 'customer' ? '客户' : '供应商';
     const condition: SQL | undefined =
