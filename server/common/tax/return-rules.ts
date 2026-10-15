@@ -29,6 +29,7 @@
 
 import { splitTax } from '@shared/tax';
 import {
+  ACCOUNT_ADMIN_EXPENSE,
   ACCOUNT_AP,
   ACCOUNT_AR,
   ACCOUNT_COST_MAIN,
@@ -266,13 +267,25 @@ export function salesReturnLines(
 }
 
 /**
- * 销售退货同步红冲成本（可选，调 `purchaseReturnCostLines` 由业务显式触发）：
- * 借 1403 原材料 / 贷 6401 主营业务成本
+ * 销售退货同步红冲成本（按**处置方式**选择对方科目）：
+ *   - `restock`（退回商品可再售）：借 1403 原材料 / 贷 6401 主营业务成本
+ *   - `scrap`  （退回商品报废）  ：借 6602 管理费用 / 贷 6401 主营业务成本
+ *
+ * 为什么不给一个全局默认：处置方式取决于实物状态，只能逐单判定。
+ * 一律按回库处理会把报废退货挂成库存（报表显示"有货"而实际没有）；
+ * 一律按报废处理会把可再售退货计成费用。两者都属于"错误数字看起来是对的"。
+ *
+ * 金额为 0（项目缺收入/成本数据）时返回空数组，由调用方保持"不生成成本行"。
  */
-export function salesReturnCostLines(cost: number): PostingLine[] {
+export function salesReturnCostLines(
+  cost: number,
+  disposal: 'restock' | 'scrap' = 'restock'
+): PostingLine[] {
   if (cost <= 0) return [];
+  const counterAccount =
+    disposal === 'scrap' ? ACCOUNT_ADMIN_EXPENSE : ACCOUNT_INVENTORY;
   return [
-    { accountCode: ACCOUNT_INVENTORY, debit: cost },
+    { accountCode: counterAccount, debit: cost },
     { accountCode: ACCOUNT_COST_MAIN, credit: cost },
   ];
 }

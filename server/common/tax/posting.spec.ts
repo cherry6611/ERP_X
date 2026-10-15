@@ -1,4 +1,5 @@
 import {
+  arRegisterLines,
   costConfirmLines,
   inputCapitalizeLines,
   inputIssueLines,
@@ -80,6 +81,21 @@ describe('会计分录模板', () => {
     expect(byCode.get('1122')?.debit).toBe(10600);
     expect(byCode.get('6001')?.credit).toBe(10000);
     expect(byCode.get('222101')?.credit).toBe(600);
+  });
+
+  it('P0-4：手工应收登记不确认收入，贷预收账款而非主营业务收入', () => {
+    for (const rate of VAT_RATES) {
+      for (const gross of amounts) {
+        assertBalanced(arRegisterLines(gross, rate), `arRegister ${gross}@${rate}`);
+      }
+    }
+    const lines = arRegisterLines(10600, 6);
+    const byCode = new Map(lines.map((l) => [l.accountCode, l]));
+    expect(byCode.get('1122')?.debit).toBe(10600);
+    expect(byCode.get('2203')?.credit).toBe(10000);
+    expect(byCode.get('222101')?.credit).toBe(600);
+    // 关键断言：手工应收绝不能贷记 6001（否则与收入确认重复入账）
+    expect(byCode.has('6001')).toBe(false);
   });
 
   it('方向正确：进项借管理费用与进项税、贷应付', () => {

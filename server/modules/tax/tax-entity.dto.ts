@@ -3,7 +3,9 @@ import {
   IsNotEmpty,
   IsNumber,
   IsOptional,
+  IsPositive,
   IsString,
+  Max,
   MaxLength,
   Min,
   ValidateIf,
@@ -18,6 +20,10 @@ import {
  * 税率口径：`defaultOutputRate` / `defaultInputRate` 是百分数（如 6 表示 6%），
  * 与 `shared/tax.ts` 的 VAT_RATES 一致；这里只做区间校验（0~100），
  * 是否为"法定档位"由 service 按纳税人资格（一般/小规模）判定，避免把两处口径混淆。
+ *
+ * `urbanMaintRate`（城建税率）同样是百分数，但区间是 **(0, 100]**，与库约束
+ * `chk_tax_entity_urban_maint_rate` 一致 —— 用 `@IsPositive` 而非 `@Min(0)`，
+ * 是为了把"误填 0"挡在入参层（400），而不是留给库约束去拒（500）。
  */
 
 export class CreateTaxEntityDto {
@@ -47,6 +53,19 @@ export class CreateTaxEntityDto {
   @IsNumber({ maxDecimalPlaces: 2 })
   @Min(0)
   defaultInputRate!: number;
+
+  /**
+   * 城建税率（百分数：市区 7 / 县镇 5 / 其他 1）。
+   *
+   * 可选：未配置时附加税计提会**拒绝出数**（不按 0 计提），因此允许先建主体、
+   * 后补税率 —— 强制必填会阻断一个本来能正常开票报税的主体建档。
+   */
+  @IsOptional()
+  @ValidateIf((_, v) => v !== null)
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @IsPositive({ message: '城建税率必须大于 0（百分数，如 7 表示 7%）' })
+  @Max(100, { message: '城建税率不得大于 100（百分数口径）' })
+  urbanMaintRate?: number | null;
 
   @IsOptional()
   @ValidateIf((_, v) => v !== null)
@@ -111,6 +130,14 @@ export class UpdateTaxEntityDto {
   @IsNumber({ maxDecimalPlaces: 2 })
   @Min(0)
   defaultInputRate?: number;
+
+  /** 城建税率（百分数，>0 且 ≤100）；传 null 表示清除配置（附加税计提将拒绝出数） */
+  @IsOptional()
+  @ValidateIf((_, v) => v !== null)
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @IsPositive({ message: '城建税率必须大于 0（百分数，如 7 表示 7%）' })
+  @Max(100, { message: '城建税率不得大于 100（百分数口径）' })
+  urbanMaintRate?: number | null;
 
   @IsOptional()
   @ValidateIf((_, v) => v !== null)

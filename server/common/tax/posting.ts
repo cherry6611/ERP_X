@@ -2,6 +2,7 @@ import { splitTax } from '@shared/tax';
 import {
   ACCOUNT_ACCUM_DEPRECIATION,
   ACCOUNT_ADMIN_EXPENSE,
+  ACCOUNT_ADVANCE_RECEIPT,
   ACCOUNT_AP,
   ACCOUNT_AR,
   ACCOUNT_ASSET_IMPAIRMENT,
@@ -46,12 +47,47 @@ export function outputIssueLines(gross: number, rate: number): PostingLine[] {
   ]);
 }
 
+/**
+ * ⚠️ **方案 A 下为死代码，禁止接线到销项作废路径。**
+ *
+ * 本函数是「销项开票即确认收入」时代的分录。方案 A 之后，收入确认是唯一收入入口，
+ * 销项开票只登记台账、**不生成任何凭证**（见 `finance/invoice.service.ts` 开票路径），
+ * 因此销项发票作废时**不能**生成本函数的分录 —— 那会把该发票从未入账的
+ * 6001 / 222101 / 1122 反向冲掉，等于凭空冲减「收入确认」已确认的收入（比原缺陷更严重）。
+ *
+ * 现状下进项（`inputVoidLines`）必须冲、销项不必冲，这个"不对称"是正确的：
+ * 进项开票时入了账（借库存/进项税、贷应付），销项开票时没入账。
+ * 两者在底稿层面的口径差异由增值税底稿显式披露，而不是靠补一笔假凭证去"抹平"。
+ *
+ * 保留函数仅为兼容既有单测对分录方向的锁定；新代码不要调用。
+ */
 export function outputVoidLines(gross: number, rate: number): PostingLine[] {
   const { net, tax } = splitTax(gross, rate);
   return keep([
     { accountCode: ACCOUNT_REVENUE_MAIN, debit: net },
     { accountCode: ACCOUNT_VAT_OUTPUT, debit: tax },
     { accountCode: ACCOUNT_AR, credit: gross },
+  ]);
+}
+
+/**
+ * P0-4：手工应收登记分录。
+ *
+ * 为什么不再贷 6001 主营业务收入：
+ *   手工应收登记与「收入确认」是两条独立入口，若两者都贷记 6001，
+ *   同一合同会被重复确认收入（走查中总账收入 120,000 vs 收入台账 60,000）。
+ *   收入只由「收入确认」模块单点确认，手工应收只登记债权：
+ *     借 1122 应收账款（价税合计）
+ *     贷 2203 预收账款（合同结算口径，不含税）
+ *     贷 222101 应交增值税（销项税）
+ *   开票即发生纳税义务，因此仍按不含税/销项税拆分，保持与增值税底稿一致。
+ */
+export function arRegisterLines(gross: number, rate: number): PostingLine[] {
+  const { net, tax } = splitTax(gross, rate);
+  return keep([
+    { accountCode: ACCOUNT_AR, debit: gross },
+    { accountCode: ACCOUNT_ADVANCE_RECEIPT, credit: net },
+    { accountCode: ACCOUNT_VAT_OUTPUT, credit: tax },
   ]);
 }
 

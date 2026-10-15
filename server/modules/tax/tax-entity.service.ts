@@ -28,6 +28,8 @@ export interface TaxEntityItem {
   taxpayerType: TaxpayerType;
   defaultOutputRate: number;
   defaultInputRate: number;
+  /** 城建税率（百分数）；null = 未配置，附加税计提会拒绝出数 */
+  urbanMaintRate: number | null;
   invoiceTitle: string | null;
   invoiceAddress: string | null;
   invoicePhone: string | null;
@@ -45,6 +47,7 @@ export interface TaxEntityInput {
   taxpayerType: TaxpayerType;
   defaultOutputRate: number;
   defaultInputRate: number;
+  urbanMaintRate?: number | null;
   invoiceTitle?: string | null;
   invoiceAddress?: string | null;
   invoicePhone?: string | null;
@@ -105,6 +108,14 @@ export class TaxEntityService {
         dto.defaultOutputRate ?? Number(existing.defaultOutputRate),
       defaultInputRate:
         dto.defaultInputRate ?? Number(existing.defaultInputRate),
+      // 这里必须用 `=== undefined` 而非 `??`：`null` 是有效值（清除配置），
+      // 用 `??` 会把显式传 null 当成"未传"，导致税率清不掉。
+      urbanMaintRate:
+        dto.urbanMaintRate === undefined
+          ? existing.urbanMaintRate === null
+            ? null
+            : Number(existing.urbanMaintRate)
+          : dto.urbanMaintRate,
       invoiceTitle:
         dto.invoiceTitle === undefined ? existing.invoiceTitle : dto.invoiceTitle,
       invoiceAddress:
@@ -227,6 +238,15 @@ export class TaxEntityService {
     ) {
       throw new BadRequestException('税率与纳税人类型不匹配');
     }
+    // 城建税率与库约束 chk_tax_entity_urban_maint_rate 保持同一口径。
+    // 入参层已校验，这里是服务层兼底：任何绕过 DTO 的调用（如脚本、内部服务）也被拦住。
+    if (dto.urbanMaintRate !== null && dto.urbanMaintRate !== undefined) {
+      if (!(dto.urbanMaintRate > 0 && dto.urbanMaintRate <= 100)) {
+        throw new BadRequestException(
+          '城建税率须大于 0 且不超过 100（百分数，如 7 表示 7%）'
+        );
+      }
+    }
   }
 
   private toRow(dto: TaxEntityInput) {
@@ -238,6 +258,10 @@ export class TaxEntityService {
       taxpayerType: dto.taxpayerType,
       defaultOutputRate: String(dto.defaultOutputRate),
       defaultInputRate: String(dto.defaultInputRate),
+      urbanMaintRate:
+        dto.urbanMaintRate === null || dto.urbanMaintRate === undefined
+          ? null
+          : String(dto.urbanMaintRate),
       invoiceTitle: dto.invoiceTitle ?? null,
       invoiceAddress: dto.invoiceAddress ?? null,
       invoicePhone: dto.invoicePhone ?? null,
@@ -265,6 +289,10 @@ export class TaxEntityService {
       taxpayerType: row.taxpayerType as TaxpayerType,
       defaultOutputRate: Number(row.defaultOutputRate),
       defaultInputRate: Number(row.defaultInputRate),
+      urbanMaintRate:
+        row.urbanMaintRate === null || row.urbanMaintRate === undefined
+          ? null
+          : Number(row.urbanMaintRate),
       invoiceTitle: row.invoiceTitle,
       invoiceAddress: row.invoiceAddress,
       invoicePhone: row.invoicePhone,

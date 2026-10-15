@@ -217,6 +217,21 @@ describe('C-05 退货分录', () => {
     expect(salesReturnCostLines(0)).toEqual([]);
   });
 
+  it('报废退货的成本冲回走 6602 管理费用，不虚增存货', () => {
+    const lines = salesReturnCostLines(400, 'scrap');
+    expect(isBalanced(lines)).toBe(true);
+    expect(lines.find((l) => l.accountCode === '6602')?.debit).toBe(400);
+    expect(lines.find((l) => l.accountCode === '6401')?.credit).toBe(400);
+    // 关键：报废时绝不能动 1403，否则报表会显示"有库存"而实物已报废
+    expect(lines.find((l) => l.accountCode === '1403')).toBeUndefined();
+  });
+
+  it('回库退货的成本冲回动 1403，不动 6602', () => {
+    const lines = salesReturnCostLines(400, 'restock');
+    expect(lines.find((l) => l.accountCode === '1403')?.debit).toBe(400);
+    expect(lines.find((l) => l.accountCode === '6602')).toBeUndefined();
+  });
+
   it('金额全为 0 时采购/销售退货都不产生空分录行', () => {
     expect(purchaseReturnLines(0, 0)).toEqual([]);
     expect(salesReturnLines(0, 0)).toEqual([]);
