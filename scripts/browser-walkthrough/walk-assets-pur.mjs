@@ -1328,15 +1328,26 @@ async function main() {
       d = await dialogInfo(page);
       record('「贴现」弹窗打开', discOpen === 'ok' && !!d, d ? `标题=${d.title} 字段=${JSON.stringify(d.labels)}` : `click=${discOpen}`);
       const rate = 3.6;
-      await fillByLabel(page, '贴现率', String(rate));
-      await setDateField(page, '贴现日', today()).catch(() => 'skip');
-      await clickButton(page, '试算', { settleMs: 1700 }).catch(() => 'no-btn');
+      /*
+       * ⚠️ 2026-10-19：这四步原先全是 `.catch(() => 'skip')` —— 任何一步失败都会
+       * **静默退化成 'skip'**，于是"填不进/点不到"被记成"功能坏了"：
+       * 上一轮贴现 4 条断言一起红，详情只有 `rate=null days=null 息=null toast=[]`，
+       * 完全看不出是第几步失败（API 直测证明产品链路是通的）。
+       *
+       * 现在**保留每步的返回值**，并统一放进断言详情里，让下一次失败可诊断。
+       * 注意仍用 `.catch`（弹窗形态可能变，不该让脚本直接崩），
+       * 但**不再吞掉信息**。
+       */
+      const discStepRate = await fillByLabel(page, '贴现率', String(rate)).catch((e) => `err:${String(e?.message ?? e).slice(0, 40)}`);
+      const discStepDate = await setDateField(page, '贴现日', today()).catch((e) => `err:${String(e?.message ?? e).slice(0, 40)}`);
+      const discStepPreview = await clickButton(page, '试算', { settleMs: 1700 }).catch(() => 'no-btn');
       const prevText = ((await dialogInfo(page))?.text ?? '').replace(/\s+/g, ' ');
       // 「贴现息」在弹窗文案里出现两次（"试算贴现息与分录" 与结果行），取**最后一次**匹配
       const interestMatches = [...prevText.matchAll(/贴现息\s*([\d,]+\.\d{2})/g)];
       const uiInterest = interestMatches[interestMatches.length - 1]?.[1]?.replace(/,/g, '');
       note('贴现试算（界面）', prevText.slice(0, 320));
-      await clickButton(page, '确认', { settleMs: 2100 });
+      const discStepConfirm = await clickButton(page, '确认', { settleMs: 2100 }).catch(() => 'no-confirm-btn');
+      const discSteps = `步骤[贴现率:${discStepRate} 贴现日:${discStepDate} 试算:${discStepPreview} 确认:${discStepConfirm}]`;
       t = await toasts(page);
       await sleep(1300);
       const d0 = (await sql`SELECT status, discount_rate, discount_interest, discount_days, settled_amount, settled_date
@@ -1348,12 +1359,12 @@ async function main() {
       record(
         '贴现落库：状态/贴现率/计息天数/贴现息（360 天基准，算头不算尾 —— 已确认口径）',
         d0?.status === 'discounted' && Number(d0?.discount_days) === days && Math.abs(Number(d0?.discount_interest) - expectInterest) < 0.005,
-        `status=${d0?.status} rate=${d0?.discount_rate} days=${d0?.discount_days}（期望 ${days} = ${discDate}→${dueIso} 算头不算尾）息=${d0?.discount_interest}（期望 ${expectInterest} = ${noteAmount}×${rate}%×${days}/360）界面试算=${uiInterest} toast=${JSON.stringify(t)}`,
+        `status=${d0?.status} rate=${d0?.discount_rate} days=${d0?.discount_days} ${discSteps}（期望 ${days} = ${discDate}→${dueIso} 算头不算尾）息=${d0?.discount_interest}（期望 ${expectInterest} = ${noteAmount}×${rate}%×${days}/360）界面试算=${uiInterest} toast=${JSON.stringify(t)}`,
       );
       record(
         '贴现到账额 = 票面 − 贴现息',
         Math.abs(Number(d0?.settled_amount) - (noteAmount - Number(d0?.discount_interest))) < 0.005,
-        `到账=${d0?.settled_amount} = ${noteAmount} − ${d0?.discount_interest}`,
+        `到账=${d0?.settled_amount} = ${noteAmount} − ${d0?.discount_interest} ${discSteps}`,
       );
       const nvch = await sql`SELECT v.code,
           (SELECT COALESCE(SUM(debit),0) FROM fin_voucher_line WHERE voucher_id = v.id) AS dr,
