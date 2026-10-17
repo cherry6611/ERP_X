@@ -845,4 +845,33 @@ describe('VatDeclarationService confirm() 转出未交增值税接线（T-S3）'
     expect(dec.voucherCalls.find((c) => c.sourceType === 'vat_transfer')?.voucherDate)
       .toBe('2026-12-31');
   });
+
+  /*
+   * 结构性不变量：**可比的**行次里，difference 必须等于 amount − ledgerAmount。
+   *
+   * ⚠️ 从实测缺陷提炼：第 12 行（进项税额）原先 amount 取 creditableInput（账簿有
+   * 已过账进项时等于 ledger.input），而 difference 取 invoice.input − ledger.input ——
+   * 于是"账簿有进项、发票侧为 0"时界面显示
+   *   申报数 3878.75 / 账簿数 3878.75 / **差异 −3878.75 · 未解释**（两侧相等却亮红灯）。
+   *
+   * **第 1 行是已知例外，故排除**：其 amount 是**不含税销售额**，
+   * 而 ledgerAmount 取 ledger.output（**销项税额**）—— 不同维度，
+   * 所以 difference 被刻意写 0 且 explained: true。
+   * ⚠️ 该行"净销售额与销项税额并列显示"本身易误读，已记入上线文档待确认项。
+   */
+  it('结构性不变量：可比行次 difference === amount − ledgerAmount（自查结果不得自相矛盾）', async () => {
+    const result = await makeService(reconciledOptions(ENTITY_GENERAL)).generate({
+      period: PERIOD,
+      taxEntityId: ENTITY_ID,
+    });
+    const comparable = result.lines.filter((line) => line.rowNo !== '1');
+    expect(comparable.length).toBeGreaterThan(0);
+    for (const line of comparable) {
+      const diff = Math.round((line.amount - line.ledgerAmount) * 100) / 100;
+      expect({ row: line.rowNo, difference: line.difference }).toEqual({
+        row: line.rowNo,
+        difference: diff,
+      });
+    }
+  });
 });

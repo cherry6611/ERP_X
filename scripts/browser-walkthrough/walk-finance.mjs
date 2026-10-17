@@ -1223,7 +1223,7 @@ async function main() {
     const cleanContract = '0d727962-d49f-4c21-a800-27e95e59b4fd'; // CTR2026100002：draft，未开任何票
     const billableOf = async (contractId) =>
       Number((await sql`
-        SELECT c.amount - coalesce((SELECT sum(i.amount) FROM erp_invoice i WHERE i.contract_id = c.id AND i.status = 'issued'), 0) AS billable
+        SELECT c.amount - coalesce((SELECT sum(i.amount) FROM erp_invoice i WHERE i.contract_id = c.id AND i.status = 'issued' AND i.direction = 'sales'), 0) AS billable
         FROM erp_contract c WHERE c.id = ${contractId}`)[0].billable);
     const cleanBefore = await billableOf(cleanContract);
     const purLeakNo = `${TEST_INVOICE_PREFIX}PUR-LEAK-${Date.now()}`;
@@ -1278,7 +1278,7 @@ async function main() {
     if (salesInv) {
       const vBefore = Number((await sql`SELECT count(*)::int AS v FROM fin_voucher`)[0].v);
       const billableBeforeVoid = (await sql`
-        SELECT c.amount - coalesce((SELECT sum(i.amount) FROM erp_invoice i WHERE i.contract_id = c.id AND i.status = 'issued'), 0) AS billable
+        SELECT c.amount - coalesce((SELECT sum(i.amount) FROM erp_invoice i WHERE i.contract_id = c.id AND i.status = 'issued' AND i.direction = 'sales'), 0) AS billable
         FROM erp_contract c WHERE c.id = ${base.contractB}`)[0].billable;
       const v = await apiJson('POST', `/api/finance/invoices/${salesInv.id}/void`, { reason: `${TAG} 作废销项` });
       const after = (await sql`SELECT status, void_reason FROM erp_invoice WHERE id = ${salesInv.id}`)[0];
@@ -1289,7 +1289,7 @@ async function main() {
         `HTTP=${v.status} status=${after.status} fin_voucher ${vBefore}→${vAfter}`
       );
       const billableAfter = (await sql`
-        SELECT c.amount - coalesce((SELECT sum(i.amount) FROM erp_invoice i WHERE i.contract_id = c.id AND i.status = 'issued'), 0) AS billable
+        SELECT c.amount - coalesce((SELECT sum(i.amount) FROM erp_invoice i WHERE i.contract_id = c.id AND i.status = 'issued' AND i.direction = 'sales'), 0) AS billable
         FROM erp_contract c WHERE c.id = ${base.contractB}`)[0].billable;
       record(
         '销项作废后合同可开金额回补（作废前 74200−10600=63600 → 作废后 74200）',
@@ -1972,10 +1972,27 @@ async function main() {
       !!vatApi.data && near(vatApi.data.inputTaxFromInvoices, Number(vatSql.input_tax)),
       `底稿=${vatApi.data?.inputTaxFromInvoices} SQL 可抵扣=${vatSql.input_tax} 未勾选=${vatSql.uncertified_input}`
     );
+    /*
+     * ⚠️ 2026-10-17 修正比较基准：第 12 行取哪一侧是**产品刻意设计**的。
+     *
+     * `vat-declaration.service.ts`（计税基数的唯一性段）明确：
+     *   · 本期 222102 **有**过账（`ledger.inputPosted`）→ 本期抵的就是**总账数**；
+     *   · 无过账时才退化为发票台账预览。
+     * 理由是防止同一笔进项"本期抵一次、又在上期留抵里再抵一次" ——
+     * 那会**少缴增值税，且借贷仍平、报表仍平，账面上完全看不出来**。
+     *
+     * 原断言无条件拿"已勾选认证发票合计"（`vatSql.input_tax`）比，
+     * 在"账簿有进项过账、发票尚未勾选"时必然误报（实测 5237.25 vs 0）。
+     * 现按产品的同一规则取基准。
+     */
+    const ledgerInputTax = Number(vatApi.data?.inputTaxFromLedger ?? 0);
+    const expectedRow12 = ledgerInputTax !== 0 ? ledgerInputTax : Number(vatSql.input_tax);
     record(
-      '底稿第 12 行（可抵扣进项）界面值 == 接口 == SQL',
-      !!vatApi.data && (vatApi.data.lines ?? []).some((l) => l.rowNo === '12' && near(l.amount, Number(vatSql.input_tax))) && vatText.includes('进项税额'),
-      `第12行=${JSON.stringify((vatApi.data?.lines ?? []).find((l) => l.rowNo === '12'))} SQL=${vatSql.input_tax}`
+      '底稿第 12 行（可抵扣进项）界面值 == 接口（按产品规则取基准：有账簿过账取账簿数，否则取认证发票数）',
+      !!vatApi.data &&
+        (vatApi.data.lines ?? []).some((l) => l.rowNo === '12' && near(l.amount, expectedRow12)) &&
+        vatText.includes('进项税额'),
+      `第12行=${JSON.stringify((vatApi.data?.lines ?? []).find((l) => l.rowNo === '12'))} 账簿进项=${ledgerInputTax} 认证发票合计=${vatSql.input_tax} 期望=${expectedRow12}`
     );
     conclude(
       '增值税底稿销项/进项取数与发票台账一致性',

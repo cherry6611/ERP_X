@@ -607,6 +607,23 @@ export class VatDeclarationService {
       : ledger.inputPosted
         ? ledger.input
         : invoice.input;
+    /*
+     * 第 12 行的**行内差异**必须与"该行显示的两侧"同源。
+     *
+     * ⚠️ 2026-10-17 修：原先行 12 的 amount 取 creditableInput（账簿有已过账进项时
+     * **等于** ledger.input），而 difference 取 inputDifference（= invoice.input − ledger.input）。
+     * 于是"账簿有进项、发票侧为 0"时，界面会显示
+     *   申报数 3878.75 / 账簿数 3878.75 / **差异 -3878.75 · 未解释**
+     * —— 两侧明明相等却亮红灯，属**自相矛盾的自查结果**（使用者会以为系统坏了）。
+     *
+     * 行 11（销项）本就自洽：amount = invoice.output、difference = invoice.output − ledger.output。
+     * 现在行 12 也满足同一不变量：difference === amount − ledgerAmount。
+     *
+     * 注意："发票台账与账簿不符"这个信号**没有丢** —— 它仍由 inputDifference
+     * 在响应顶层 differences（code = input_mismatch）与第 25 行「待认证进项税额」披露；
+     * 行内差异只表示"这一行显示的两个数是否一致"。
+     */
+    const creditableInputDifference = round2(creditableInput - ledger.input);
     const effectivePreviousCredit = isSmallScale
       ? 0
       : previousCreditSource === 'confirmed_declaration'
@@ -710,11 +727,11 @@ export class VatDeclarationService {
         // 依法不得在当期抵扣，其台账额（已入 222102）在 `uncertified_input` 差异项披露。
         amount: creditableInput,
         ledgerAmount: ledger.input,
-        difference: inputDifference,
+        difference: creditableInputDifference,
         // 小规模下"进项 ≠ 0 但不抵扣"是政策预期，不是勾稽错误 → 视为已解释
         explained:
           isSmallScale ||
-          inputDifference === 0 ||
+          creditableInputDifference === 0 ||
           Boolean(saved[0]?.differenceReason),
         summable: true,
       },
