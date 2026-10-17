@@ -1,8 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { toast } from 'sonner';
-import { AlertTriangle, CheckCircle2, Download, FileCheck2, RefreshCw, ShieldCheck } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, Download, FileCheck2, RefreshCw } from 'lucide-react';
 import PageShell from '@client/src/components/PageShell';
-import TaxRiskPanel from './TaxRiskPanel';
 import VatLineTable from './components/VatLineTable';
 import VatHistorySection from './components/VatHistorySection';
 import VatConfirmDialog from './components/VatConfirmDialog';
@@ -32,7 +31,6 @@ import { currentPeriod, formatMoney } from '@client/src/utils/format';
 import { getApiErrorMessage } from '@client/src/utils/api-error-message';
 import type {
   TaxEntity,
-  TaxRiskScanResult,
   VatDeclarationHistoryItem,
   VatDeclarationResult,
 } from '@shared/api.interface';
@@ -48,57 +46,9 @@ const TaxDeclarationPage: React.FC = () => {
   const [reasonError, setReasonError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
-  /*
-   * D-06 风险扫描的状态**提升到本页持有**（原在 `TaxRiskPanel` 内部）。
-   *
-   * 三个理由：
-   *   ① 同一页两个主体口径 —— 原面板只传 `period`，于是上方「纳税主体」筛选
-   *      只作用于底稿、**不作用于扫描**，使用者会以为扫描也跟着筛。
-   *      现在扫描与底稿共用同一个 `entityArg`。
-   *   ② 筛选区应当纯净 —— 「严重程度」是筛选，归 `FilterBar`。
-   *   ③ 主操作应当落位 —— 「扫描」是本页主操作，归 `PageShell.actions`。
-   *      原实现把它挤在面板标题行右侧（截图可见拥挤、与标题基线不齐）。
-   */
-  const [riskResult, setRiskResult] = useState<TaxRiskScanResult | null>(null);
-  const [riskLoading, setRiskLoading] = useState(false);
-  const [severityFilter, setSeverityFilter] = useState<string>('all');
-
   const entityArg = taxEntityId === ALL_ENTITIES ? undefined : taxEntityId;
 
   const entities = useAsyncData<TaxEntity[]>(() => masterDataApi.listTaxEntities(), []);
-
-  const runRiskScan = async () => {
-    setRiskLoading(true);
-    try {
-      /*
-       * ⚠️ 必须带上 `taxEntityId` —— 与底稿同口径。
-       * 接口 `GET /api/finance/tax-risk-scan` 支持该参数
-       * （`finance-reports.controller.ts` 的 `@Query('taxEntityId')`），
-       * 且返回体里本来就有 `taxEntityId/taxEntityName`，说明后端一直是主体感知的，
-       * 只有前端漏传。
-       */
-      const data = await financeReportsApi.scanTaxRisk({
-        period,
-        taxEntityId: entityArg,
-      });
-      setRiskResult(data);
-      const scope = data.taxEntityName ? `（${data.taxEntityName}）` : '（全部主体）';
-      if (data.totalFindings === 0) {
-        toast.success(`${period} ${scope} 未发现税务风险线索`);
-      } else {
-        toast.warning(
-          `${period} ${scope} 发现 ${data.totalFindings} 条线索（高 ${data.bySeverity.high} / 中 ${data.bySeverity.medium} / 低 ${data.bySeverity.low}）`,
-        );
-      }
-      if (data.skipped.length > 0) {
-        toast.warning(`有 ${data.skipped.length} 个扫描方向未完成，详见面板提示`);
-      }
-    } catch (err) {
-      toast.error(getApiErrorMessage(err, '扫描失败'));
-    } finally {
-      setRiskLoading(false);
-    }
-  };
 
   const declaration = useAsyncData<VatDeclarationResult>(
     () => financeReportsApi.getVatDeclaration({ period, taxEntityId: entityArg }),
@@ -184,35 +134,12 @@ const TaxDeclarationPage: React.FC = () => {
   return (
     <PageShell
       title="增值税申报"
-      description="发票台账口径与总账口径的销项/进项比对底稿，确认后留痕可追溯；含 D-06 税务风险扫描"
+      description="发票台账口径与总账口径的销项/进项比对底稿，确认后留痕可追溯"
       actions={
         /*
-         * 两个主操作都落在页头 `actions`：
-         *   · 「扫描 <期间>」    —— D-06 风险扫描（只读检测）
-         *   · 「确认底稿」      —— **写操作**，确认后留痕可追溯
-         *
-         * 「确认底稿」原先挤在筛选区最右（与刷新/导出并列）。它是本页**唯一的写操作**，
-         * 且确认后不可随意回退 —— 放在筛选控件中间既不显眼也不符合规范
-         * （`AGENTS.md`：页头 `actions` 插槽放主操作）。
+         * 「确认底稿」是本页唯一写操作，放在页头 `actions` 插槽。
          */
         <>
-          <Button
-            type="button"
-            disabled={riskLoading}
-            onClick={() => void runRiskScan()}
-          >
-            {riskLoading ? (
-              <>
-                <RefreshCw className="mr-1 h-4 w-4 animate-spin" />
-                扫描中…
-              </>
-            ) : (
-              <>
-                <ShieldCheck className="mr-1 h-4 w-4" />
-                扫描 {period}
-              </>
-            )}
-          </Button>
           <CanCapabilityWrite capability="finance_write">
             <Button
               type="button"
@@ -232,12 +159,6 @@ const TaxDeclarationPage: React.FC = () => {
         </>
       }
     >
-      <TaxRiskPanel
-        period={period}
-        result={riskResult}
-        severityFilter={severityFilter}
-      />
-
       <FilterBar>
         <div className="flex items-center gap-2">
           <Label htmlFor="vat-period" className="text-xs text-muted-foreground">
@@ -266,29 +187,6 @@ const TaxDeclarationPage: React.FC = () => {
                   {entity.name}
                 </SelectItem>
               ))}
-            </SelectContent>
-          </Select>
-        </div>
-        {/*
-          「严重程度」是**筛选**（只过滤已扫出的线索）→ 归 FilterBar，
-          与期间/主体并列。原来长在风险面板标题行右侧。
-        */}
-        <div className="flex items-center gap-2">
-          <Label className="text-xs text-muted-foreground" id="vat-risk-severity-label">
-            风险严重程度
-          </Label>
-          <Select value={severityFilter} onValueChange={setSeverityFilter}>
-            <SelectTrigger
-              className="w-[140px]"
-              aria-labelledby="vat-risk-severity-label"
-            >
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">全部</SelectItem>
-              <SelectItem value="high">仅高风险</SelectItem>
-              <SelectItem value="medium">仅中风险</SelectItem>
-              <SelectItem value="low">仅低风险</SelectItem>
             </SelectContent>
           </Select>
         </div>
