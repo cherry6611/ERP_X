@@ -198,7 +198,18 @@ export class AuthController {
         };
       }
       this.writeCookie(res, result.token);
-      return { mfaRequired: false as const, user: result.user };
+      /*
+       * 强制 MFA 但尚未绑定：必须把 mfaSetupRequired 透传给前端，
+       * 否则前端只看到普通登录成功，跳首页后被守卫拦成
+       * “请先完成 MFA 绑定后再使用系统”，且页面上没有任何绑定入口。
+       */
+      return {
+        mfaRequired: false as const,
+        ...(result.mfaSetupRequired
+          ? { mfaSetupRequired: true as const }
+          : {}),
+        user: result.user,
+      };
     } catch (error: unknown) {
       throw error;
     }
