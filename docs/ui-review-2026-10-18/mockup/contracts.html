@@ -1,0 +1,30 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>合同管理 · 设计稿</title><link rel="stylesheet" href="./mock.css"></head><body>
+<div class="app">
+ <aside class="sidebar">
+  <div class="brand"><div class="brand-mark">晟</div><div><div class="brand-name">晟笙 ERP</div><div class="brand-sub">数据服务一体化</div></div></div>
+  <div class="side-search">⌕&nbsp; 搜索功能 / 单据</div>
+  <div class="nav">
+   <div class="nav-label">工作台</div><div class="nav-item"><span class="ico"></span>经营看板</div><div class="nav-item"><span class="ico"></span>我的待办 <span class="badge">6</span></div><div class="nav-item"><span class="ico"></span>指标中心</div>
+   <div class="nav-label">客户与合同</div><div class="nav-item"><span class="ico"></span>客户管理</div><div class="nav-item"><span class="ico"></span>线索与商机</div><div class="nav-item active"><span class="ico"></span>合同管理</div>
+   <div class="nav-label">项目交付</div><div class="nav-item"><span class="ico"></span>项目管理</div><div class="nav-item"><span class="ico"></span>成本核算</div><div class="nav-item"><span class="ico"></span>收入确认</div>
+   <div class="nav-label">采购与资产</div><div class="nav-item"><span class="ico"></span>采购管理</div><div class="nav-item"><span class="ico"></span>供应商管理</div><div class="nav-item"><span class="ico"></span>退货管理</div><div class="nav-item"><span class="ico"></span>固定资产</div>
+   <div class="nav-label">财务</div><div class="nav-item"><span class="ico"></span>应收应付</div><div class="nav-item"><span class="ico"></span>票据管理</div><div class="nav-item"><span class="ico"></span>预算费控</div><div class="nav-item"><span class="ico"></span>总账凭证</div><div class="nav-item"><span class="ico"></span>财务报表</div><div class="nav-item"><span class="ico"></span>税务申报</div>
+   <div class="nav-label">人力与行政</div><div class="nav-item"><span class="ico"></span>人力资源</div><div class="nav-item"><span class="ico"></span>行政管理</div>
+  </div>
+  <div class="sidebar-foot"><div class="nav-item"><span class="ico"></span>企业文档</div><div class="nav-item"><span class="ico"></span>系统设置</div></div>
+ </aside>
+ <main class="main">
+  <div class="topbar"><div class="crumb">客户与合同&nbsp; / &nbsp;<b>合同管理</b></div><div class="top-actions"><div class="search">⌕&nbsp; 搜索单据、客户、项目&nbsp; <span style="margin-left:auto;color:#aeb4bf">⌘K</span></div><div class="btn primary">＋ 新建</div><div class="iconbtn">◌</div><div class="avatar">UI</div></div></div>
+  <div class="content">
+   <div class="page-head"><div><h1 class="page-title">合同管理</h1><div class="page-sub">合同全生命周期、金额与回款条款，一处看清</div></div><div class="head-actions"><div class="btn">导入</div><div class="btn">导出</div><div class="btn primary">＋ 登记合同</div></div></div>
+   <div class="toolbar"><div class="chip active">全部 <span style="opacity:.55">86</span></div><div class="chip">待审批 5</div><div class="chip">履约中 41</div><div class="chip">已完结 32</div><div class="chip">已作废 8</div><div class="grow"></div><div class="chip">⌕ 搜索合同 / 客户</div><div class="chip">筛选</div><div class="chip">列设置</div></div>
+   <div class="panel"><table class="table"><thead><tr><th>合同编号</th><th>合同名称 / 客户</th><th>金额</th><th>状态</th><th>负责人</th><th>签订日期</th><th>回款进度</th><th style="width:44px"></th></tr></thead><tbody>
+    <tr><td class="money">CTR202610001</td><td><b>某银行数据中台建设</b><div class="hint">某商业银行股份有限公司</div></td><td class="money">¥ 2,400,000</td><td><span class="status green">履约中</span></td><td><span class="avatar-sm">陈</span>陈晟</td><td>2026-09-18</td><td><span class="progress"><i style="width:72%"></i></span>72%</td><td>⋯</td></tr>
+    <tr><td class="money">CTR202610002</td><td><b>零售客户标签体系</b><div class="hint">某零售集团</div></td><td class="money">¥ 1,600,000</td><td><span class="status blue">待审批</span></td><td><span class="avatar-sm">李</span>李敏</td><td>2026-09-26</td><td><span class="progress"><i style="width:0%"></i></span>—</td><td>⋯</td></tr>
+    <tr><td class="money">CTR202609018</td><td><b>供应链主数据治理</b><div class="hint">某制造集团</div></td><td class="money">¥ 2,350,000</td><td><span class="status green">履约中</span></td><td><span class="avatar-sm">周</span>周航</td><td>2026-08-11</td><td><span class="progress"><i style="width:88%"></i></span>88%</td><td>⋯</td></tr>
+    <tr><td class="money">CTR202609009</td><td><b>营销自动化二期</b><div class="hint">某快消品牌</div></td><td class="money">¥ 1,200,000</td><td><span class="status amber">待回款</span></td><td><span class="avatar-sm">王</span>王倩</td><td>2026-07-30</td><td><span class="progress"><i style="width:35%"></i></span>35%</td><td>⋯</td></tr>
+    <tr><td class="money">CTR202608021</td><td><b>客服知识库升级</b><div class="hint">某运营商</div></td><td class="money">¥ 860,000</td><td><span class="status gray">已完结</span></td><td><span class="avatar-sm">赵</span>赵磊</td><td>2026-06-02</td><td><span class="progress"><i style="width:100%"></i></span>100%</td><td>⋯</td></tr>
+   </tbody></table><div class="pagination"><span>共 86 条 · 每页 20 条</span><div class="page-btns"><span>‹</span><span class="on">1</span><span>2</span><span>3</span><span>4</span><span>5</span><span>›</span></div></div></div>
+  </div>
+ </main>
+</div></body></html>
