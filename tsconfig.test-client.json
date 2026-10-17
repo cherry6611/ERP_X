@@ -1,0 +1,19 @@
+{
+  "extends": "./tsconfig.app.json",
+  "compilerOptions": {
+    "types": ["jest", "node"],
+    "noEmit": true,
+    "jsx": "react-jsx",
+    "module": "CommonJS",
+    "moduleResolution": "node",
+    "isolatedModules": false,
+    "allowImportingTsExtensions": false,
+    "paths": {
+      "@client/*": ["client/*"],
+      "@shared/*": ["shared/*"],
+      "@/*": ["./client/src/*"]
+    }
+  },
+  "include": ["client/**/*.ts", "client/**/*.tsx", "shared/**/*.ts"],
+  "exclude": ["node_modules", "dist"]
+}

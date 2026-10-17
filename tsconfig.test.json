@@ -3,16 +3,32 @@
   "compilerOptions": {
     "types": ["jest", "node"],
     "noEmit": true,
+    /*
+     * F8/§5.9 关联修复：**必须开 jsx**。
+     *
+     * 服务端 spec 里没有 JSX，但**客户端纯逻辑模块**（如 `ap-schemas.ts`）
+     * 会 `import type { BadgeProps } from '.../badge'` —— 而 `badge.tsx`
+     * 是 TSX。ts-jest 处理那个 `.ts` 依赖时若 `jsx` 未设，会报
+     *   TS6142: Module '...badge.tsx' was resolved ... but '--jsx' is not set
+     * 于是"前端纯逻辑可单测"这件事在遇到第一个 TSX 类型依赖时就断了。
+     *
+     * 开 `react-jsx` 对纯 `.ts` 文件无副作用（不产生 JSX 代码路径）。
+     */
+    "jsx": "react-jsx",
+    "isolatedModules": false,
+    "allowImportingTsExtensions": false,
     "paths": {
       "@server/*": ["server/*"],
       "@shared/*": ["shared/*"],
-      "@client/*": ["client/*"]
+      "@client/*": ["client/*"],
+      "@/*": ["./client/src/*"]
     }
   },
   "include": [
     "server/**/*.ts",
     "shared/**/*.ts",
+    "client/**/*.ts",
     "server/**/*.spec.ts"
   ],
-  "exclude": ["node_modules", "dist", "client"]
+  "exclude": ["node_modules", "dist"]
 }

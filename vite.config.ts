@@ -50,9 +50,22 @@ export default defineConfig({
           if (id.includes('antd') || id.includes('@ant-design')) {
             return 'antd';
           }
-          if (id.includes('echarts')) {
-            return 'charts';
-          }
+          /**
+           * F1：**不要**把 echarts 归入手动 chunk。
+           *
+           * 曾经这里是 `if (id.includes('echarts')) return 'charts';`。
+           * 但手动 chunk 会让 rolldown 把 echarts 的**辅助函数导出**
+           * （`__assign` / `__rest` / `__awaiter` 等 TS 降级 helper）也放进
+           * `charts` chunk，而 `EChart.tsx`（被页面 chunk 静态引用）恰好需要
+           * 这些 helper → `es2015` 公共 chunk 静态 `import{...}from"./charts-*.js"`
+           * → 入口又静态引用 `es2015` → **首屏预加载整个 1,136 KB 的 charts**。
+           *
+           * 实测证据（构建产物可复核）：
+           *   · `es2015-*.js` 的 import 列表含 `from"./charts-*.js"`
+           *   · `index.html` 的 `modulepreload` 列表含 `charts-*.js`
+           * 去掉这条手动 chunk 后，echarts 只被**动态导入**的
+           * `echarts-for-react` 引用，`index.html` 的预加载列表里不再有 charts。
+           */
         },
       },
     },

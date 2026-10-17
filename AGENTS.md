@@ -7,11 +7,26 @@
 - 风格：企业后台管理系统，紧凑密度。主色用 shadcn 默认 primary，背景 `bg-background`，卡片白色。
 - 布局：固定左侧栏 `w-56`（分组导航），主内容区最小宽度自适应，页面容器统一 `p-6`，区块纵向 `gap-6`，并列卡片 `gap-4`。
 - 排版：页面标题 `text-2xl font-semibold`，区块标题 `text-base font-semibold`，正文/表格 `text-sm`，辅助说明 `text-sm text-muted-foreground`。
-- 组件：表格用 `@lark-apaas/client-toolkit/antd-table`（见 table-skill）；表单用 shadcn Form + Dialog（见 forms-skill）；图表用 ReactECharts，色板统一从 `utils/chart-colors.ts` 导入（见 charts-skill）；图标只用 lucide-react。Card 禁止嵌套 Card。
+- 组件：**数据表格一律用 antd `<Table>`**（`import { Table } from 'antd'`，列定义 `TableColumnsType`）；表单用 shadcn Form + Dialog（见 forms-skill）；图表用 ReactECharts，色板统一从 `theme/tokens.ts` 的 `seriesColor(...)` / `CHART_COLORS` 取（见 charts-skill）；图标只用 lucide-react。Card 禁止嵌套 Card。
+  - ⚠️ **规范修正（§5.10 / P2-5）**：原文写「色板统一从 `utils/chart-colors.ts` 导入」，但实测**该模块只有 1 处引用**（`CostsPage.tsx`），其余 5 个图表文件都直接 `seriesColor(...)` —— 而 `seriesColor` 的真正定义处在 `theme/tokens.ts`（与 CSS 变量同源，暗色下能跟随主题）。规范指向了一个**事实上不是入口**的文件，与 F4 同一类问题（规范无法 grep 验证）。
+    **但"禁止裸写色值"这条实际已达成**：实测 5 个图表文件中硬编码 `#RRGGBB` 为 **0 处**。所以这次只修规范文本，未改代码 —— 把 6 个文件统一迁到 `chart-colors` 反而是退化（多一层转发，且 `chart-colors` 不含暗色映射）。
+    判据：**图表取色一律走 `seriesColor(语义键)`**（`revenue`/`cost`/`budget`/`other` 等），不要写十六进制，也不要在页面里自建色表。
+  - ⚠️ **规范修正（§5.5 / F4）**：原文写「表格用 `@lark-apaas/client-toolkit/antd-table`」，但**该包未安装、也不在 `package.json` 依赖中**，全仓 0 引用（唯一命中是一句注释）。规范描述了一个不存在的实现，使"规范可 grep 验证"这一能力失效 —— 按它写的代码**根本编译不过**。现已改为指向真实在用的 antd `<Table>`（130 实例 / 87 文件）。
+  - **shadcn `<Table>` 仅限非数据表场景**：打印件（`components/print/PrintDocument.tsx`）、Excel 导入预览（`components/excel/ExcelImportDialog.tsx`）、以及 `components/ui/table.tsx` 这一原子组件本身。判据：**需要分页 / 排序 / 固定列 / 横向 scroll / 空态钩子 → 必须 antd**。
+  - 为什么不是"两套都行"：shadcn `Table` 是**纯样式表格**，没有分页、排序、固定列、`scroll` 横向容器与空态钩子。账簿明细、增值税底稿这类可达数千行的表用它 = **全量渲染**，且科目编码列在横向滚动时不会固定。
+  - antd Table 的落地要点（`LedgersPage.tsx` 是完整范例）：`useMemo` 稳定 `columns` 与 `dataSource`（否则分页/排序状态每次渲染被重置）；聚合行用 `Table.Summary`（不是手写 `<tfoot>`）；下钻交互用 `onRow`；溢出文本用 `ellipsis`（自带 tooltip，优于 `truncate` 的静默截断）；**不要同时保留手写分页控件**。
 - 共享组件（components/erp/）：StatCard 指标卡（icon + tone + delta，替代裸 border 卡）、FilterBar 筛选区卡片容器；PageShell 支持 actions 插槽（页头右侧主操作按钮）。Layout 含顶栏（面包屑 + 用户区 UserDisplay）。
 - 状态展示：业务状态用 Badge（含 success/warning/info 语义 variant，映射见 utils/biz-labels.ts STATUS_VARIANTS）：草稿/待审批=灰，已生效/待回款=蓝，进行中/部分完成=黄，终态成功（完成/结项/回款/批准）=绿，驳回/逾期/超限=红。
 - 所有交互按钮必须挂真实 handler；列表页必须有真实空态文案与失败反馈（toast 用 sonner，仅用于操作结果反馈）。
 - 响应式：最小适配 1280px 宽即可。
+- **数据层两套并存是有意的分工，不是遗留**（§5.6 复核结论）。判据一句话：
+  **同一个 id 在多个组件里被解析 → TanStack Query；一个屏幕读自己的数据且在写后要刷新 → `useAsyncData`。**
+  | 层 | 适用 | 为什么必须用它 |
+  |---|---|---|
+  | TanStack Query（`components/business-ui/api/*/queries.ts`） | 共享只读**实体解析**：userId → 姓名/头像（`UserDisplay`、`UserSelect`） | 同一 userId 出现在几十个组件里，缓存与**请求去重**消除 N+1；表格每行一个 `UserDisplay` 时去重是硬需求 |
+  | `useAsyncData`（`hooks/useAsyncData.ts`） | **业务屏数据**：列表/详情/报表 | 每屏自管 `loading`/`error`/写后重取；**写后必须拿到新数据**，缓存的陈旧读在这里是 bug 而非优化 |
+  ⚠️ **不要"统一掉"其中一套**：审计曾建议删除 `QueryClientProvider` 与 4 个 `useQuery`，实测该建议会**运行时崩溃** —— `useUsersByIds` 有 5 个真实调用方，消费链通到应用顶栏（`Layout.tsx` → `<UserDisplay>`）。判据"4 处 useQuery"数的是 hook **定义处**而非调用方。详见 `platform/AppContainer.tsx`。
+  缓存策略：`staleTime` 5 分钟 + `gcTime` 10 分钟 + `retry: false`；若某业务确实需要"改名立即可见"，用 `clearUserCache` **显式失效**，不要把全局 `staleTime` 调成 0 去惩罚所有读取点。
 
 ## 架构约定
 
@@ -36,6 +51,18 @@
 - 自动化任务总开关：`comp_automation_config` 表（task_key 主键 + enabled），行政页「自动化任务」（/admin-automation）可视化管理；`AutomationConfigService.isEnabled(taskKey)` 60s 内存缓存，6 个 cron handler（ar_due_reminder_daily / delivery_warning_weekly / project_drive_sync_daily / feishu_daily_sync / customer_credit_alert / admin_rent_expiry_remind）开头检查开关，停用则直接跳过；GET 公开登录态，PUT 仅 admin。
 - 项目状态流转与结项闭环在 `projects-status.service.ts`（`projects.transform.ts` 提供 toProject/状态机表）；周报纪要在 `minutes.service.ts`；主 service 只剩查询/建改/合同链路。
 - 聚合文件 `server/app.module.ts` / `client/src/app.tsx` / `client/src/api/index.ts` 由主 agent 维护，业务模块禁止改。
+- **页面拆分（§5.9 / F8，全项目规则）**：页面主文件**只做布局编排与筛选区**，区块/表格/导出/表单一律拆到同目录 `components/` 或独立模块。原先是"仅 `ProjectDetailPage` 这么做"的局部约定，审计确认团队知道怎么拆、只是没在所有域执行，故升级为全项目规则。
+  - **拆分判据**（按收益排序，都不要求"重写页面"）：
+    1. **零耦合的纯函数先搬**：导出列定义、格式化、校验 —— 它们与组件状态无关，搬走后立刻变成**可单测**的（这是最大收益：`ledger-export-columns.spec.ts` 10 条断言原本无法存在）。
+    2. **列定义单独成文件**：`TableColumnsType` 常有上百行，且"漏一列/列序错/`value` 取错字段"在界面上完全看不出来（导出照样成功，只是数字错位），必须能逐列断言。
+    3. **每个 Tab / Section 一个组件**：统一 props，数据内部自取（`useAsyncData`），写成功后回调 `onChanged` 联动。
+    4. 主文件保留：`PageShell`、筛选区、Tab 切换、跨 Tab 的导出按钮。
+  - 参考实现：`pages/finance/ledgers/LedgersPage.tsx` + `ledger-exports.ts` + `ledger-export-columns.ts`（拆分后 1242 → 1193 行，且导出列定义获得 10 条单测）；`pages/projects/ProjectDetailPage.tsx` + `components/*Section.tsx`。
+  - 单测落点：`jest.config.cjs` 的 `roots` 已含 `client/`。**前端纯逻辑模块（不依赖 React/DOM）必须配 spec** —— 依赖 React 的组件拆出来的纯逻辑模块正是最该测的部分。
+  - ⚠️ 拆分时**不要改动行为**：一次只搬一个模块、搬完立刻跑 `type:check` + `lint` + `test`。按**行号**切割文件在插入代码后整体位移 —— 用**文本锚点**并先断言锚点唯一。
+  - **豁免：`client/src/components/ui/` 不适用 500 行门槛**（`sidebar.tsx` 673 行是唯一超标者）。理由三条，都可核验：① 整目录由 shadcn CLI 管理（见 `components.json` 的 `aliases.ui`），`sidebar.tsx` 保留上游笔迹（`"use client"`、双引号 + 无分号），拆它 = fork 上游，下次 `npx shadcn add` 会冲突；② 它是**一组同主题原子组件**（24 个导出 + `useSidebar`），拆开只把同一套语境切碎，**不产生任何可单测的纯逻辑**，即 §5.9 的收益判据一条都不成立；③ `Layout.tsx` 自己手写了左侧栏（`localStorage['erp-sidebar-collapsed']` + `bg-sidebar` 自绘），与 `ui/sidebar.tsx` 的 `SidebarProvider`/cookie 方案无关 —— 实测**全仓 0 引用**。
+    **判据**：§5.9 的 500 行门槛针对**业务代码**（`pages/`、`components/` 下非 `ui/` 的部分）。
+  - ⚠️ **不要用审计报告的行数表格当清单** —— 它是时点快照，会同时**漏报**后来长大的文件与**误报**已拆掉的文件。用 `git ls-tree` + 当前源码现算，并**同时检查两个方向**：HEAD 超标而现在达标的、HEAD 未超标而现在超标的（本会话实测有 3 个文件属后者：`TaxDeclarationPage` 489→663、`TaxEntities` 380→527、`ReportsPage` 493→505）。收尾明细见 `docs/F8巨型组件拆分收尾说明-2026-10-16.md`。
 - 前后端契约唯一权威：`shared/api.interface.ts`，属性一律 camelCase；请求参数类型（各 ListParams/Payload）也统一定义在 shared，`client/src/api/` 不得再本地定义 interface/type。
 - 业务编号：`generateBizCode(db, table, table.code, 'PREFIX', now?, { bizType })`，编号结构与前缀/位数/重置策略由 `sys_code_rule` 配置（B-08）；规则缺失时按传入前缀与 `前缀+YYYYMM+4位流水` 回落（如 CTR2026100001）。**作废不重用**（B-09）：回退路径用 `MAX(seq)+1` 而非 `count()+1`，财务类单据（凭证/发票/收付款/工资单/应付/应收）禁止开启 `allow_reuse`。
 - 期间/日期：业务时区 Asia/Shanghai，月份用 `YYYY-MM` 字符串；时间字段传输 ISO 字符串；新增日期逻辑必须用 `server/common/utils/biz-date.ts`。
@@ -48,5 +75,8 @@
 - **上传安全（B-06）**：`server/common/security/upload-policy.ts` 校验扩展名 + 大小 + **内容魔数**（改名伪装被拒），SVG 额外拦截脚本/事件；扫描结论落 `comp_stored_file.scan_status`，`none` 记为 `skipped` 而非 `clean`。附件版本链见 `FilesService.save({ parentFileId })` 与 `GET /api/files/:id/versions`。
 - 状态机变更在 service 校验前置状态，非法流转抛 `BadRequestException`（消息必须为可读中文，CI 由 `node ./scripts/audit-error-messages.mjs` 审计）。
 - 数据库表前缀：`md_`（主数据）、`crm_`（前端业务）、`erp_`（核算/合同/项目/财务）、`fin_`（账务/报表）、`hr_`（人事）、`sys_`（系统配置与安全）、`comp_`（合规）。
+- **已由业务确认「不适用」的三项税务口径（2026-10-16，勿再作为未决项提出）**：① 小规模 1% 征收率的政策到期调整；② 差额征税 / 免税是否需独立档位；③ 跨主体交易是否视同销售。公司当前**没有**对应业务，故**不改代码**。若将来开展相关业务，需回到 `docs/待确认口径清单-2026-10-16.md` 第六节重新评估。
+  - 同批确认的另两项：**票据贴现息 360 天基准**（无贴现业务，保持不动）、**销售退货不自动红冲成本**（保持现状，退货商品成本由业务手工调整 —— 分析毛利时须知此前提）。
+- **数据资产能力码已与审计分离**：`/data-asset` 用 `data_asset`（不再沿用 `audit`），**仍仅 admin**。⚠️ **不要直接给 `data_asset` 加角色** —— `da_dataset` 虽关联 `contract_id`，但该模块**尚无 SQL 层行级过滤**，加角色即等于跨合同可见。要放开必须先实现行级收窄（`server/common/auth/data-scope.service.ts`）。
 - 测试/演示数据：一律以 `[API_TEST]` 前缀命名；接口自测数据用后即删，删除前留档至 `docs/api-test-data-archive/`；生产库不保留演示数据。
 - 运维与进度台账：`docs/RUNBOOK.md`（健康检查/账务核对/迁移回滚/备份演练/定时任务）、`docs/升级落地状态台账-2026-10-15.md`（逐条需求落地状态与遗留清单）、`docs/B14-error-message-audit.md`。

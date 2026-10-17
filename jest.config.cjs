@@ -1,7 +1,7 @@
 /** @type {import('jest').Config} */
 module.exports = {
   testEnvironment: 'node',
-  roots: ['<rootDir>/server'],
+  roots: ['<rootDir>/server', '<rootDir>/client'],
   testMatch: ['**/*.spec.ts'],
   /**
    * 默认超时从 jest 的 5000ms 提高到 30000ms。
@@ -22,7 +22,18 @@ module.exports = {
    */
   testTimeout: 30000,
   transform: {
+    // 服务端与 shared：用 node 目标的 tsconfig（无 JSX）
     '^.+\\.ts$': ['ts-jest', { tsconfig: 'tsconfig.test.json' }],
+    /*
+     * 客户端：.tsx 需要 jsx: react-jsx，而 	sconfig.test.json 继承的是
+     * node 目标且 exclude 了 client —— 直接用它会报
+     * "Module '...badge.tsx' was resolved ... but '--jsx' is not set"。
+     *
+     * 因此为客户端单独建 	sconfig.test-client.json（继承 tsconfig.app.json）。
+     * 顺序上 .tsx 必须排在 .ts 之前 —— 后面的规则若也匹配会覆盖前面的
+     * （jest 按 transform 键的书写顺序取第一个匹配，不按具体度）。
+     */
+    '^.+\\.tsx$': ['ts-jest', { tsconfig: 'tsconfig.test-client.json' }],
     // @electric-sql/pglite 产物内部用真实动态 import 加载内置模块，jest 的 CJS VM 不支持，
     // 故单独挂 transform 做等价改写（详见 scripts/jest-pglite-transform.cjs）
     '@electric-sql[\\\\/]pglite[\\\\/].+\\.cjs$':
@@ -36,6 +47,14 @@ module.exports = {
     // B-05：前端纯逻辑模块（不依赖 React/DOM）也纳入单测范围。
     // 否则「字典标签静默退化成英文 key」这类问题只能靠人工发现。
     '^@client/(.*)$': '<rootDir>/client/$1',
+    /*
+     * shadcn 生成物（`client/src/components/ui/*`）内部用 `@/lib/utils`
+     * 这种别名，不是 `@client/...`。jest 不做 tsconfig paths 解析，
+     * 缺这条映射时任何**间接**依赖 UI 原子的纯逻辑模块都加载不了 ——
+     * 例如 `hr/components/employee-import.ts` → `HrStatusBadge` → `badge.tsx`。
+     * 这类间接依赖会随拆分推进（§5.9 / F8）越来越常见。
+     */
+    '^@/(.*)$': '<rootDir>/client/src/$1',
   },
   /**
    * 覆盖率统计范围（B-11）：只统计「确有测试覆盖」的模块。

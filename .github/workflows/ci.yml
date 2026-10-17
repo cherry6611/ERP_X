@@ -14,7 +14,14 @@ jobs:
           node-version-file: .nvmrc
           cache: npm
       - run: npm ci
+      # §6.4 补漏（2026-10-17）：`type:check` 现在含 `type:check:specs`。
+      # 规范文件此前**不被任何门禁类型检查**（`tsconfig.node.json` 的 exclude 含 **/*.spec.ts），
+      # 实测在 spec 里写 `const x = thisSymbolDoesNotExist;` 时 type:check 退出码为 0，
+      # 只有 jest 会失败 —— 于是"spec 写错了"要到跑测试才暴露。
       - run: npm run type:check
+      # 2026-10-17：防止某个 tsconfig 的 exclude 悄悄把一批文件排除掉 ——
+      # 实测 spec 文件曾不被任何门禁检查（在 spec 里写未定义标识符 type:check 仍退出 0）。
+      - run: npm run check:typecheck-coverage
       - run: npm run lint
       - run: npm run check:need-login
       - run: npm run check:contract
@@ -28,10 +35,117 @@ jobs:
       # 字符串都能通过，因此必须用运行时清单核对。
       - name: frontend rbac consistency
         run: npm run check:rbac:frontend
+      # 枚举白名单一致性：契约类型（shared/api.interface.ts 的字符串联合类型）
+      # 与后端 @IsIn([...]) 运行时白名单必须同步。
+      #
+      # 不同步的症状是"类型对、service 分支写好、前端按钮也渲染了，
+      # 点下去返回 400「xxx 不合法」" —— 而 `tsc --noEmit` 与 `npm test`
+      # **都发现不了**（类型是对的，测试也没覆盖那条 HTTP 路径）。
+      #
+      # 本次修复里这个缺陷**实际发生了两次**（B6 项目状态 cancel/reopen、
+      # B12 工资单 pay/void），所以补一道静态门禁而不是靠人记住。
+      # 检查器同时覆盖两种白名单写法：内联字面量与 `...CONST` 引用。
+      - name: enum whitelist consistency
+        run: npm run check:enum-whitelist
+      # §6.4 numeric 精度：所有 numeric 列必须声明 precision/scale。
+      #
+      # 裸 numeric 等价于"131072 位整数、16383 位小数"——库层完全失去约束，
+      # 而全仓 `round2` 只是**应用层**约定：修数脚本/导入/手工 SQL 都能落 3 位小数，
+      # 于是凭证借贷差 1 厘、应收与回款差 1 厘，对账时表现为"永远差一点点"。
+      #
+      # 这条门禁同时钉住**分档**：实测 `0.0015::numeric(18,2)` = 0.00，
+      # 若把单价列也砍成 (18,2)，成本分摊会整体归零且不报错。
+      # 因此检查失败时会打印五档建议（金额/单价/计量/百分数/评分）。
+      - name: numeric precision
+        run: npm run check:numeric-precision
+      # 业务时区：客户端不得用浏览器本地时区解释"此刻"。
+      #
+      # 服务端的期间闸门（assertPeriodOpen / assertFiscalYearOpen）与全部报表
+      # 口径都按 Asia/Shanghai。客户端用本地时区会在元旦/月初/月末的时间窗内
+      # 落在不同期间 —— 本仓**实际发生过三次**：
+      #   · ApTab「近 12 个月」→ 当前月不在下拉选项里，无法做本月外协结算；
+      #   · AttendancePanel 年假初始化 → 给错的年份建 hr_leave_balance 行，
+      #     正确年份仍为空 → 员工请假报「余额记录不存在」，脏行需人工清理；
+      #   · FullBudgetPanel 默认预算年 → 查不到数据。
+      # 三者都只在跨时区 + 特定时刻出现，人工测试覆盖不到，必须静态拦。
+      #
+      # 检查器按"有无参数"区分：`new Date().getFullYear()`（此刻，须拦）
+      # 与 `date.getFullYear()`（用户选的那天，本地时区才是对的，须放行）。
+      - name: business timezone
+        run: npm run check:biz-timezone
+      # §5.8 标签字典一致性：契约里的每个状态值都必须在展示标签表里有键。
+      #
+      # 新增一个状态值需要同步三处：契约联合类型（shared/api.interface.ts）、
+      # 兜底标签表（client/src/utils/biz-labels.ts）、sys_dict 种子迁移。
+      # 三者不会自动同步，漏了标签表的后果是**可见的功能缺陷**：
+      #   · `StatusBadge` 是 `labels[status] ?? status` → 显示英文码；
+      #   · 更严重的是筛选下拉 —— `ArTab`/`ApTab` 用
+      #     `Object.entries(标签表)` 渲染选项，漏键意味着使用者**连筛出该状态
+      #     都做不到**（下拉里没有那一项）。
+      #
+      # 本仓实际发生过（B1 给应收/应付加作废路径时）：服务端写 `status='voided'`、
+      # 契约也含它，但 `AR_STATUS_LABELS`/`AP_STATUS_LABELS` 没跟上；同批还发现
+      # `ap_status` 缺 `approved`、`ASSET_DISPOSAL_STATUS_LABELS` 的键整套都是错的
+      # （写的是审批流的键，契约里一个都没有）、`NOTE_STATUS_LABELS` 缺 3 个多 3 个。
+      - name: label dictionary consistency
+        run: npm run check:label-dict
+      # 可选字段守卫：`?:` 声明的 DTO 字段必须带 `@IsOptional()`（或等价守卫）。
+      #
+      # `server/main.ts` 的 ValidationPipe **没有开** `skipMissingProperties`，
+      # 所以 class-validator 会拿 `undefined` 去过校验器 —— 少了 `@IsOptional()`
+      # 的字段就变成「声明可选、实际必填」：不传该字段的请求一律 400，
+      # 报错是 `xxx must be a string`，使用者完全看不出根因。
+      #
+      # 本仓实际发生过：`UpdateDatasetDto.status` 缺守卫，而前端编辑数据集
+      # **从来不传 `status`**（状态流转走独立的 actions 接口）→
+      # **「编辑数据集」保存 100% 失败**。
+      #
+      # 这个缺陷 **tsc 与单测都看不见**（`?:` 是类型层、装饰器是运行时元数据，
+      # 互不校验；纯逻辑单测不碰装饰器），所以只能靠扫源码兜住。
+      - name: optional field guards
+        run: npm run check:optional-fields
+      # §5.10 / P2-3 表单标签关联：<Label> 必须真的关联到控件。
+      #
+      # 审计原文「37 处 <Label> 无 htmlFor、控件无 id」—— 实测审计当时
+      # （HEAD 9549ca2）全仓 <Label> 170 个、其中无 htmlFor 的是 31 个，
+      # 多出来的 6 个是原生小写 <label> 与注释里的 <Label>（grep -i 不区分
+      # 大小写与注释）。两者后果相同，但数字以 AST 实测口径为准。
+      #
+      # 后果（WCAG 1.3.1 信息与关系 / 3.3.2 标签或说明）全部是静默的：
+      #   · 读屏器只念"组合框""编辑框"而**不念字段名** —— 表单对读屏用户
+      #     等于一串无名输入框，只能靠 Tab 逐个试；
+      #   · 点击标签不会把焦点移到控件上，鼠标用户的可点击区域白白变小。
+      # `tsc --noEmit` / eslint / jest 三样**都看不见**这类缺陷（DOM 里
+      # 只是少一个属性，不报错），因此必须静态门禁。
+      #
+      # 检查器按控件类型分流（乱加 htmlFor 比不关联更糟）：
+      #   · 原生控件 → htmlFor + 控件 id（并核对 id 在本文件内真的存在）；
+      #   · 复合控件（Radix SelectTrigger 是 <button>）→ aria-labelledby
+      #     或控件自带 aria-label；
+      #   · 分组标题（"明细行"盖住一张表）→ role="group" + aria-labelledby，
+      #     不适用 htmlFor。
+      # 需要例外时用 `{/* a11y-ok: 理由 */}`，脚本会打印豁免条数防止其悄悄堆积。
+      - name: label a11y association
+        run: npm run check:label-a11y
       # B-10/B-11：无真实数据库时用 pglite（WASM PostgreSQL）验证迁移链；
       # 任一条迁移失败即退出码 1（白名单为空，不存在静默跳过）
       - name: migrate dryrun (pglite)
         run: npm run migrate:dryrun
+      # §6.10 (12)：迁移文件头必须声明 `-- requires:`（AGENTS.md 明文要求）。
+      # 迁移按**文件名排序**执行，依赖写错的后果是"全新建库失败、本地库正常"
+      # ——最难排查的一类故障（本仓已真实发生过，见 batch3z 的文件头自陈）。
+      # 本步骤只做静态断言：缺头 / requires 引用了不存在的文件即失败。
+      - name: migration headers
+        run: npm run check:migration-headers
+      # §2.4 覆盖率口径诚实化：不再用收窄的 collectCoverageFrom 假装达标，
+      # 而是把"真实业务代码覆盖"作为**可见信息**打印出来（棘轮基线的第一部分）。
+      - name: coverage honesty report
+        run: node ./scripts/coverage-honesty.mjs
+      # §5.4 / F3：语义色 token 的 WCAG AA 对比度（小字需 ≥ 4.5:1）。
+      # 修复前 text-warning on bg-warning/10 只有 1.98:1，而 12 个"进行中"状态
+      # 全部使用它 —— 这类缺陷不会报错、typecheck/lint 都看不见，只能算颜色。
+      - name: color contrast (WCAG AA)
+        run: npm run check:contrast
       # B-14：后端业务失败必须返回可读中文原因（API-5）；确属内部/第三方消息需在脚本白名单登记
       - name: audit error messages
         run: node ./scripts/audit-error-messages.mjs
@@ -41,6 +155,21 @@ jobs:
       - name: coverage gate
         run: npm run test:cov
       - run: npm run build
+      # §5.10 / P2-10 前端产物体积棘轮：**必须紧跟在 build 之后**（它读 dist/）。
+      #
+      # 审计指出「无 bundle 体积基线」，`manualChunks` 也未为大包划分，
+      # 因此体积回归**无法被发现**。而体积是唯一能拦住"某次改动静态引入了
+      # 一个大依赖"的信号 —— typecheck、lint 与 1000+ 单测都看不见它。
+      #
+      # 本仓已经吃过一次亏（F10：exceljs 909 KB 被三个高频列表页静态引入，
+      # 打开"客户列表"就要下载整个 Excel 引擎），那次全靠人工审计才抓到。
+      #
+      # 机制是**棘轮**而非绝对阈值：变大超容差即失败；变小则自动收紧基线
+      # （改进被固化，不会"降下去又涨回来"）。体积确实该涨时用
+      # `node scripts/check-bundle-size.mjs --update` 明确更新基线，
+      # 而不是删门禁或调大容差。
+      - name: bundle size ratchet
+        run: npm run check:bundle-size
       - run: npm audit --audit-level=high
       # D-09 / NFR-S8：审计日志只追加约束 + 校验和链。
       # 需要真实 PostgreSQL（触发器/异常码/SET LOCAL 语义与 pglite 不完全一致，

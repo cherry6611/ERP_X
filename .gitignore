@@ -77,3 +77,6 @@ backup-*.sql
 # Agent files
 .agent/
 .npm_cache
+
+# 本地临时目录（构建/基线比对产物，不入库）
+.tmp-*/

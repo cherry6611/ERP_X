@@ -22,6 +22,11 @@ services:
       postgres:
         condition: service_healthy
     environment:
+      # 显式声明生产环境。注意：`runtime-env.ts` 是 fail-safe 的 ——
+      # 除显式 `development` 外一律按生产标准执行（密钥强度、Cookie Secure、
+      # 异常不回显堆栈、飞书事件校验不可逃逸），因此漏设也是安全的；
+      # 这里显式写出来是为了让"当前是生产"这件事可读、可审计。
+      NODE_ENV: production
       # 修复 P0-1（部署）：容器内 127.0.0.1 指容器自身，透传宿主机的 DATABASE_URL
       # 会让 db-migrate 连不上库 → command 短路 → 容器启动失败。
       # 默认走 compose 自带的 postgres 服务名；如需连外部库，用 DATABASE_URL 覆盖即可。
