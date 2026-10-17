@@ -100,6 +100,14 @@ export class DeliveryWarningAutomationTasksService {
     const overdueLines: string[] = [];
     const dueSoonLines: string[] = [];
     const evmWarnLines: string[] = [];
+    /**
+     * B3：里程碑权重未配平单独成区。
+     *
+     * 它既不是逾期、也不是绩效不达标，而是**进度基准不可信** ——
+     * 混进绩效预警会稀释两类信息的含义（收到告警的人会以为工期出问题，
+     * 实际是权重没填对）。
+     */
+    const weightWarnLines: string[] = [];
 
     for (const project of projects) {
       const pmLabel: string = project.pm ? `（PM：${project.pm}）` : '';
@@ -136,6 +144,19 @@ export class DeliveryWarningAutomationTasksService {
           `- ${project.code} ${project.name}${pmLabel}：${warnParts.join('、')}，进度/成本绩效低于 0.9，请评估交付风险`
         );
       }
+      // B3：权重未配平必须**单独告警**。
+      //
+      // 原实现在权重和 ≠ 100 时用硬编码分母 100 计算 EV/PV，SPI 会显示成
+      // 1.00（"双达标"），上面的 < 0.9 门限因此永远打不到 —— 周预警对这类项目
+      // 完全失明。归一化后 SPI 恢复有效，但仍要让 PM 知道"进度基准本身没配平"：
+      // 否则同一份 SPI=0.95 背后可能是"权重 30 的项目完成 95%"，也可能是
+      // "权重 100 的项目完成 28.5%"，管理含义完全不同。
+      if (!evm.balanced && evm.totalWeight > 0) {
+        weightWarnLines.push(
+          `- ${project.code} ${project.name}${pmLabel}：里程碑权重合计 ${evm.totalWeight}%（应为 100%），` +
+            `SPI/CPI 已按实际权重归一化，但进度基准未配平，请修正权重后复核交付预测`
+        );
+      }
     }
 
     const sections: string[] = [];
@@ -152,8 +173,16 @@ export class DeliveryWarningAutomationTasksService {
         `**进度/成本绩效预警（${evmWarnLines.length}）**\n${evmWarnLines.join('\n')}`
       );
     }
+    if (weightWarnLines.length > 0) {
+      sections.push(
+        `**里程碑权重未配平（${weightWarnLines.length}）**\n${weightWarnLines.join('\n')}`
+      );
+    }
     const hitCount: number =
-      overdueLines.length + dueSoonLines.length + evmWarnLines.length;
+      overdueLines.length +
+      dueSoonLines.length +
+      evmWarnLines.length +
+      weightWarnLines.length;
     if (hitCount === 0) {
       this.logger.log('项目交付周预警扫描结束：无命中预警');
       return;

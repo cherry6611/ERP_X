@@ -2,13 +2,18 @@ import {
   BadRequestException,
   Inject,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import {
   DRIZZLE_DATABASE,
   type PostgresJsDatabase,
 } from '@server/platform';
-import { and, count, desc, eq, ilike, or, sql, sum } from 'drizzle-orm';
+import { and, count, desc, eq, or, sql, sum } from 'drizzle-orm';
+import {
+  ilikeEscaped,
+  likeContains,
+} from '@server/common/utils/sql-like';
 import {
   erpCalloff,
   erpContract,
@@ -19,12 +24,29 @@ import {
   erpInvoice,
   erpProject,
   mdCustomer,
+  mdTaxEntity,
 } from '@server/database/schema';
 import { generateBizCode } from '@server/common/utils/biz-code';
 import { TaxEntityService } from '@server/modules/tax/tax-entity.service';
+import { VoucherHookService } from '@server/modules/voucher/voucher-hook.service';
+import {
+  DEFAULT_STAMP_DUTY_ITEM,
+  STAMP_DUTY_ITEM_LABELS,
+  computeStampDuty,
+  resolveStampDutyHalved,
+} from '@server/common/tax/stamp-duty';
+import { stampDutyAccrualLines } from '@server/common/tax/stamp-duty-posting';
 import { TaxResolverService } from '@server/modules/tax/tax-resolver.service';
 import { isVatRate, lineAmount, splitTax } from '@shared/tax';
 import { todayInShanghai } from '@server/common/utils/biz-date';
+import { round2 } from '@server/common/utils/number';
+import { contractUpdateBlockReason } from './contract-update-guard';
+/*
+ * 税额重算时「旧税率还算不算显式选定」的判据（纯函数，配有规格）。
+ * 不这样抽出来就会出现"税率是客户推导的、rate_source 却写着 explicit"的自相矛盾行 ——
+ * 详见该模块文件头的三步表格。
+ */
+import { explicitRateForRecalc } from './contract-tax-recalc';
 import type {
   BillableSummary,
   Calloff,
@@ -51,14 +73,31 @@ const STATUS_FLOW: Record<ContractStatusAction, { from: ContractStatus[]; to: Co
   terminate: { from: ['active', 'performing'], to: 'terminated' },
 };
 
-const FROZEN_STATUSES = ['closed', 'terminated'];
+/**
+ * 计费模式白名单（`CreateContractDto.billingModel` 的值域）。
+ *
+ * 原先是 `createContract` 函数体里的局部数组；`updateContract` 本轮也要用同一份判据，
+ * 于是提到模块级共用 —— 两处各写一份必然会漂（本项目已多次发生"同一口径两处各写一遍、
+ * 其中一处漏了"）。值域与 `shared/api.interface.ts` 的 `BillingModel`、DTO 的
+ * `@IsIn(BILLING_MODELS)` 一致。
+ */
+const VALID_BILLING_MODELS: ReadonlyArray<string> = [
+  'project',
+  'quantity',
+  'subscription',
+  'framework',
+];
 
 @Injectable()
 export class ContractsService {
+  private readonly logger = new Logger(ContractsService.name);
+
   constructor(
     @Inject(DRIZZLE_DATABASE) private readonly db: PostgresJsDatabase,
     private readonly taxResolver: TaxResolverService,
-    private readonly taxEntities: TaxEntityService
+    private readonly taxEntities: TaxEntityService,
+    /** §4.7(f)：合同生效时计提印花税（原实现完全未实现 —— 全仓零命中） */
+    private readonly voucherHookService: VoucherHookService
   ) {}
 
   private async contractWithCustomerName(row: {
@@ -117,10 +156,13 @@ export class ContractsService {
     if (status) conditions.push(eq(erpContract.status, status));
     if (customerId) conditions.push(eq(erpContract.customerId, customerId));
     if (keyword && keyword.trim() !== '') {
-      const kw = `%${keyword}%`;
-      conditions.push(
-        or(ilike(erpContract.name, kw), ilike(erpContract.code, kw))!
-      );
+      // S4：转义 `%`/`_` 并显式 `ESCAPE`，避免 `keyword=%` 匹配全表
+      const kw = likeContains(keyword);
+      if (kw) {
+        conditions.push(
+          or(ilikeEscaped(erpContract.name, kw), ilikeEscaped(erpContract.code, kw))!
+        );
+      }
     }
     const where = conditions.length > 0 ? and(...conditions) : undefined;
     const totalRows = await this.db
@@ -253,8 +295,7 @@ export class ContractsService {
       .from(mdCustomer)
       .where(eq(mdCustomer.id, dto.customerId));
     if (customer.length === 0) throw new NotFoundException('客户不存在');
-    const validModels = ['project', 'quantity', 'subscription', 'framework'];
-    if (!validModels.includes(dto.billingModel)) {
+    if (!VALID_BILLING_MODELS.includes(dto.billingModel)) {
       throw new BadRequestException('非法的计费模型');
     }
     const resolved = await this.taxResolver.resolve({
@@ -339,32 +380,65 @@ export class ContractsService {
       .where(eq(erpContract.id, id));
     if (existing.length === 0) throw new NotFoundException('合同不存在');
     const status = existing[0].status ?? 'draft';
-    if (FROZEN_STATUSES.includes(status)) {
-      const frozen = ['name', 'taxRate', 'owner', 'startDate', 'endDate', 'remark'] as const;
-      if (frozen.some((field) => dto[field] !== undefined)) {
-        throw new BadRequestException('已关闭或已终止的合同不能修改名称、税率、负责人、日期和备注');
-      }
+    /*
+     * 可改字段判定：**唯一判据**在 `contract-update-guard.ts`（纯函数，配有规格）。
+     * 这里只负责把返回的中文文案抛出去 —— 原先散在本函数里的两条内联守卫
+     * （冻结状态 / 金额限草稿）已并入该模块，文案与判据逐字未放宽。
+     */
+    const blocked = contractUpdateBlockReason(status, dto);
+    if (blocked !== null) throw new BadRequestException(blocked);
+    if (dto.billingModel !== undefined && !VALID_BILLING_MODELS.includes(dto.billingModel)) {
+      throw new BadRequestException('非法的计费模型');
+    }
+    /*
+     * 客户存在性：与 createContract 同一句中文文案。
+     * `erp_contract.customer_id` 在全仓**没有外键约束**（基线表未建 REFERENCES），
+     * 不查库的话一个不存在的 uuid 会被安安静静地写进去，之后合同在列表里就没有客户名。
+     */
+    if (dto.customerId !== undefined) {
+      const customer = await this.db
+        .select({ id: mdCustomer.id })
+        .from(mdCustomer)
+        .where(eq(mdCustomer.id, dto.customerId));
+      if (customer.length === 0) throw new NotFoundException('客户不存在');
     }
     const patch: Record<string, unknown> = { updatedAt: new Date() };
     if (dto.amount !== undefined) {
-      if ((existing[0].status ?? 'draft') !== 'draft') {
-        throw new BadRequestException(
-          '合同已生效，金额变更须走合同变更流程'
-        );
-      }
       patch.amount = String(dto.amount);
     }
     if (dto.name !== undefined) patch.name = dto.name;
-    if (dto.taxRate !== undefined || dto.amount !== undefined || dto.taxEntityId !== undefined) {
+    if (dto.customerId !== undefined) patch.customerId = dto.customerId;
+    if (dto.billingModel !== undefined) patch.billingModel = dto.billingModel;
+    if (dto.signDate !== undefined) patch.signDate = dto.signDate;
+    if (dto.taxRate !== undefined || dto.amount !== undefined || dto.taxEntityId !== undefined || dto.customerId !== undefined) {
       const amount = dto.amount ?? Number(existing[0].amount ?? 0);
-      // 修复 P1-11：此处原为 `dto.taxRate ?? Number(existing[0].taxRate ?? 6)`，
-      // 合同未填税率时会把 6 当成"显式税率"塞进解析器，导致 rateSource 永远是 explicit，
-      // 客户/纳税主体的默认税率永远不会被继承。改为空值时传 null，交解析器按优先级推导。
-      const existingRate =
-        existing[0].taxRate != null ? Number(existing[0].taxRate) : null;
+      /*
+       * 修复 P1-11：此处原为 `dto.taxRate ?? Number(existing[0].taxRate ?? 6)`，
+       * 合同未填税率时会把 6 当成"显式税率"塞进解析器，导致 rateSource 永远是 explicit，
+       * 客户/纳税主体的默认税率永远不会被继承。改为空值时传 null，交解析器按优先级推导。
+       *
+       * ⚠️ 仅"空值 → null"还不够（本轮补齐的另一半）：
+       * `existing[0].taxRate` 里存的可能是**上一次由客户推导出来**的税率
+       * （`rate_source = counterparty`）。把它当显式税率传进去，
+       * 再改客户时新客户的税率就被忽略了 —— 而且 `rate_source` 会被"洗"成 explicit，
+       * 从此永远不再跟随客户。判据抽到 `./contract-tax-recalc`（见其文件头表格）。
+       */
+      const existingRate = explicitRateForRecalc(
+        existing[0].taxRate,
+        existing[0].rateSource
+      );
+      /*
+       * ⚠️ 换客户必须按**新客户**解析税率：`taxResolver.resolve` 用 `customerId`
+       * 取客户默认税率（`counterpartyRate`）与该客户绑定的纳税主体（`resolveEntity`）。
+       * 这里原先写的是 `existing[0].customerId`（改客户前唯一可能的取值），
+       * 一旦放开 customerId 就会"客户已换、税率仍按旧客户推导"——
+       * 客户主体类型不同时（一般纳税人 13% / 小规模 3%）会直接落一个错档税率。
+       * `billingModel` 不在 resolve 的入参里，改计费模式不触发重算。
+       */
+      const effectiveCustomerId = dto.customerId ?? existing[0].customerId;
       const resolved = await this.taxResolver.resolve({
         explicit: dto.taxRate ?? existingRate,
-        customerId: existing[0].customerId,
+        customerId: effectiveCustomerId,
         taxEntityId: dto.taxEntityId ?? existing[0].taxEntityId,
         side: 'output',
       });
@@ -412,7 +486,27 @@ export class ContractsService {
       if (!existing[0].taxEntityId) {
         throw new BadRequestException('请先选择纳税主体');
       }
-      await this.assertItemSum(id, Number(existing[0].amount ?? 0));
+      /*
+       * T10：把合同头的税额与不含税额一并传入，让校验覆盖"明细用错税率"。
+       *
+       * 只传含税金额是原来的做法，它拦不住"含税额相同、税额不同"的构造
+       * （如头 113,000@13% vs 明细 113,000@6%）—— 而项目预算取的是
+       * `split.net`，于是同一份合同在系统里出现两个净额。
+       *
+       * 头的税额/不含税额可能为 NULL（历史数据或未回填），此时跳过这两条
+       * 校验而不是猜一个值：`splitTax(amount, headerTaxRate)` 依赖税率，
+       * 而税率本身也可能为空 —— 猜出来的期望值只会制造假失败。
+       */
+      await this.assertItemSum(
+        id,
+        Number(existing[0].amount ?? 0),
+        existing[0].taxAmount === null || existing[0].taxAmount === undefined
+          ? null
+          : Number(existing[0].taxAmount),
+        existing[0].netAmount === null || existing[0].netAmount === undefined
+          ? null
+          : Number(existing[0].netAmount)
+      );
     }
     if (action === 'approve') {
       const requiredFields = ['name', 'customerId', 'amount'] as const;
@@ -438,6 +532,26 @@ export class ContractsService {
           .where(eq(erpContract.id, id));
         throw error;
       }
+      /*
+       * §4.7(f)：**印花税计提**（原实现完全未实现 —— 全仓零命中）。
+       *
+       * 合同生效即产生印花税纳税义务（《印花税法》第十五条：书立应税凭证的
+       * 单位和个人为纳税人）。数据服务合同属**技术合同**，税率 0.3‰。
+       *
+       * ## 为什么放在 approve 而不是 submit
+       *
+       * `submit` 只是提交审批，合同尚未生效、可以驳回；印花税的义务在
+       * **书立**时产生，而"书立"在本系统里对应"双方确认生效"，
+       * 即 `approve`。放在 submit 会让被驳回的合同留下一条需要红冲的印花税凭证。
+       *
+       * ## 失败策略：**不阻断生效**
+       *
+       * 与 `maybeAutoCreateProject` 不同（那个失败会回滚状态），
+       * 印花税凭证失败不该让合同无法生效 —— 合同生效是业务事实，
+       * 凭证只是账务反映。这里记 error 并由 `comp_voucher_job` 补偿队列兜底
+       * （`generateVoucherDraft` 内部已做），底稿的漏提可在对账时发现。
+       */
+      await this.accrueStampDuty(row);
     }
     const customer = await this.db
       .select({ name: mdCustomer.name })
@@ -699,7 +813,7 @@ export class ContractsService {
     }
     const orderedAmount =
       dto.quantity != null && dto.unitPrice != null
-        ? Math.round(dto.quantity * dto.unitPrice * 100) / 100
+        ? round2(dto.quantity * dto.unitPrice)
         : dto.amount;
     const calloffRows = await this.db
       .select({ total: sum(erpCalloff.amount), cnt: count() })
@@ -756,9 +870,36 @@ export class ContractsService {
     };
   }
 
-  private async assertItemSum(contractId: string, header: number): Promise<void> {
+  /**
+   * T10（§4.6）：明细与合同头的一致性校验 —— **含税额、税额、不含税额三条都要对**。
+   *
+   * 原实现只比较含税金额合计，于是可以构造"含税额相等但税额差 6,603.77"的合同：
+   *
+   *   | | 含税额 | 税率 | 不含税 | 税额 |
+   *   |---|---|---|---|---|
+   *   | 合同头 | 113,000 | 13% | 100,000 | 13,000 |
+   *   | 明细行 | 113,000 | 6% | 106,603.77 | **6,396.23** |
+   *
+   * 后果不是报表不好看：项目预算取 `split.net`（不含税额），
+   * 于是**项目预算凭空多出 6,603.77**，而开票/收入确认/申报都按明细的税率走
+   * —— 同一份合同在系统里有两个"净额"，且没有任何对账能发现。
+   *
+   * 容差 0.01：逐行 `splitTax` 与整单 `splitTax` 因整数分取整可能差 1 分，
+   * 这是十进制取整的正常结果，不是缺陷。
+   */
+  private async assertItemSum(
+    contractId: string,
+    header: number,
+    headerTaxAmount?: number | null,
+    headerNetAmount?: number | null
+  ): Promise<void> {
     const rows = await this.db
-      .select({ total: sum(erpContractItem.amount), cnt: count() })
+      .select({
+        total: sum(erpContractItem.amount),
+        taxTotal: sum(erpContractItem.taxAmount),
+        netTotal: sum(erpContractItem.netAmount),
+        cnt: count(),
+      })
       .from(erpContractItem)
       .where(
         and(
@@ -780,6 +921,117 @@ export class ContractsService {
     if (Math.abs(total - header) > 0.01) {
       throw new BadRequestException(
         `合同明细合计 ${total} 与合同金额 ${header} 相差超过 0.01`
+      );
+    }
+    if (headerTaxAmount !== undefined && headerTaxAmount !== null) {
+      const taxTotal = Number(rows[0]?.taxTotal ?? 0);
+      /*
+       * 容差计算（**这是本校验能落地的关键**）。
+       *
+       * 合同头的税额来自 `splitTax(整单含税额, 税率)`，而每行税额来自
+       * `splitTax(行含税额, 税率)` —— 同一税率、不同基数，逐行取整后
+       * **Σ行税额与头税额天然可能差几分**（十进制的正常结果，不是缺陷）。
+       *
+       * 例：3 × 29.997 元、6% ⇒ 各行税额各 1.70，Σ = 5.10；
+       *     而头 `splitTax(89.99, 6)` 的税额 = 5.09，差 1 分。
+       *
+       * 若用固定容差，要么把这种正常差异判成错误（大量假失败 → 使用者开始
+       * 习惯性忽略这道校验），要么放宽到掩盖真实的税率错配。两者都不可接受。
+       *
+       * 因此容差随**行数**放大：每行最多贡献 1 分取整差，再留 1 分余量。
+       * 而被审计点名的真实缺陷（头 113,000@13% vs 明细 113,000@6%）
+       * 税额差是 **6,603.77** —— 高出该容差三个数量级，必然被拦住。
+       */
+      const itemCount = Number(rows[0]?.cnt ?? 0);
+      const tolerance = 0.01 * (itemCount + 1);
+      if (Math.abs(taxTotal - headerTaxAmount) > tolerance) {
+        throw new BadRequestException(
+          `合同明细税额合计 ${taxTotal} 与合同税额 ${headerTaxAmount} 相差 ${round2(
+            Math.abs(taxTotal - headerTaxAmount)
+          )}，超出逐行取整的正常范围（容差 ${round2(tolerance)}）：` +
+            `明细行使用了与合同头不同的税率。含税金额相同不代表税额相同 —— ` +
+            `请在明细中统一税率，或修正合同头税率`
+        );
+      }
+    }
+    if (headerNetAmount !== undefined && headerNetAmount !== null) {
+      const netTotal = Number(rows[0]?.netTotal ?? 0);
+      const itemCount = Number(rows[0]?.cnt ?? 0);
+      const tolerance = 0.01 * (itemCount + 1);
+      if (Math.abs(netTotal - headerNetAmount) > tolerance) {
+        throw new BadRequestException(
+          `合同明细不含税合计 ${netTotal} 与合同不含税额 ${headerNetAmount} 相差 ${round2(
+            Math.abs(netTotal - headerNetAmount)
+          )}，超出逐行取整的正常范围（容差 ${round2(tolerance)}）：` +
+            `明细行税率与合同头税率不同。项目预算按不含税额取数，` +
+            `两者不一致会让同一份合同出现两个净额`
+        );
+      }
+    }
+  }
+
+  /**
+   * §4.7(f)：合同生效时计提印花税。
+   *
+   * ## 口径
+   *
+   * · **税目**：数据服务公司的主合同是技术合同 → `technology`（0.3‰）。
+   *   本仓合同模型没有"合同类型"字段（只有 `billingModel`：project/…），
+   *   因此**不猜** —— 统一按技术合同这一主力档位计税，
+   *   并在凭证摘要与 notes 里写明税目，便于财务复核后调整。
+   *   若将来合同模型引入税目字段，改这里的入参即可。
+   * · **计税依据**：优先 `net_amount`（合同已分别列明增值税，
+   *   依财政部 税务总局公告 2022 年第 22 号按不含税计税）；
+   *   为 null（历史数据未拆税）时退化为含税金额 —— 方向是**多缴**，安全侧。
+   * · **减半**：小规模纳税人适用「六税两费」减半（2023 年第 12 号）。
+   *
+   * ## 幂等
+   *
+   * `sourceRef = stamp-duty:<合同号>` —— 凭证钩子按 `(sourceType, sourceRef)`
+   * 去重，因此重复 approve（反结项后重新生效）不会重复计提。
+   *
+   * ## 失败不阻断
+   *
+   * 见调用点注释。这里只记 error 并返回，不向上抛。
+   */
+  private async accrueStampDuty(
+    contract: typeof erpContract.$inferSelect
+  ): Promise<void> {
+    try {
+      if (!contract.taxEntityId) return;
+      const entity = await this.db
+        .select({ taxpayerType: mdTaxEntity.taxpayerType })
+        .from(mdTaxEntity)
+        .where(eq(mdTaxEntity.id, contract.taxEntityId))
+        .limit(1);
+      const result = computeStampDuty({
+        amount: Number(contract.amount ?? 0),
+        netAmount:
+          contract.netAmount === null || contract.netAmount === undefined
+            ? null
+            : Number(contract.netAmount),
+        item: DEFAULT_STAMP_DUTY_ITEM,
+        halved: resolveStampDutyHalved(entity[0]?.taxpayerType),
+      });
+      const lines = stampDutyAccrualLines(result);
+      if (lines.length === 0) {
+        // 0 元合同 / 不足 1 角：法定不计，不出凭证（不出 0 元分录）
+        return;
+      }
+      await this.voucherHookService.generateVoucherDraft({
+        sourceType: 'contract',
+        sourceRef: `stamp-duty:${contract.code}`,
+        voucherDate: contract.signDate ?? todayInShanghai(),
+        summary: `印花税计提 ${contract.code}（${STAMP_DUTY_ITEM_LABELS[result.item]} ${result.rate}‰）`,
+        lines,
+        taxEntityId: contract.taxEntityId,
+      });
+    } catch (error: unknown) {
+      // 印花税金额小、但不计提是明确的漏缴；失败必须留痕而不是静默
+      this.logger.error(
+        `合同 ${contract.code} 印花税计提失败（合同仍生效，请核查后补提）：${
+          error instanceof Error ? error.message : String(error)
+        }`
       );
     }
   }

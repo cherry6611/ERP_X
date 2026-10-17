@@ -66,17 +66,27 @@ const ProjectOverviewSection: React.FC<ProjectOverviewSectionProps> = ({
   }
 
   const quotations = chain?.quotations ?? [];
-  const revenueTotal = (chain?.revenueByPeriod ?? []).reduce(
+  /**
+   * 收入口径统一为**不含税净额**（后端 `revenueNetTotal`，与顶部
+   * `已确认收入` StatCard 及 accounting 的毛利/毛利率同源）。
+   *
+   * 修复前这里用 `revenueByPeriod` 的 `amount` 求和 —— 那是 `erp_project_revenue.amount`
+   * 的**价税合计**，于是同一个项目同屏出现两个同名的"已确认收入"
+   * （顶部 30,000 不含税 vs 本卡 31,800 含税），毛利率也分别显示 60% 与 62.26%，
+   * 财务无法判断该采信哪个。现统一走不含税净额，并降级兼容旧后端（缺字段时回退求和）。
+   */
+  const revenueGrossFallback = (chain?.revenueByPeriod ?? []).reduce(
     (sum: number, item: ChainRevenuePeriod) => sum + item.amount,
     0,
   );
+  const revenueNet =
+    chain?.revenueNetTotal ?? revenueGrossFallback;
   const costTotal = (chain?.costByType ?? []).reduce(
     (sum: number, item: ChainCostTypeItem) => sum + item.amount,
     0,
   );
-  const marginAmount = revenueTotal - costTotal;
-  const marginRate =
-    revenueTotal > 0 ? (marginAmount / revenueTotal) * 100 : null;
+  const marginAmount = revenueNet - costTotal;
+  const marginRate = revenueNet > 0 ? (marginAmount / revenueNet) * 100 : null;
   const milestones = chain?.milestones ?? [];
   const reachedCount = milestones.filter(
     (m: ChainMilestoneItem) => m.status === 'reached',
@@ -103,10 +113,17 @@ const ProjectOverviewSection: React.FC<ProjectOverviewSectionProps> = ({
             </div>
             <div className="min-w-[200px] flex-1">
               <StatCard
-                label="已确认收入合计"
-                value={formatMoney(revenueTotal)}
+                label="已确认收入（不含税）"
+                value={formatMoney(revenueNet)}
                 tone="primary"
                 icon={Wallet}
+                hint={
+                  // 含税合计与不含税净额不同，必须显式说明差额来源（销项税），
+                  // 否则用户会以为少算了钱。
+                  chain && chain.revenueGrossTotal !== revenueNet
+                    ? `价税合计 ${formatMoney(chain.revenueGrossTotal)}，差额为销项税额`
+                    : undefined
+                }
               />
             </div>
             <div className="min-w-[200px] flex-1">

@@ -23,6 +23,7 @@ import type {
   UpdateContractDto as IUpdateContractDto,
   UpdateMilestoneDto as IUpdateMilestoneDto,
 } from '@shared/api.interface';
+import { VAT_RATES as SHARED_VAT_RATES } from '@shared/tax';
 
 /**
  * 合同模块请求体 DTO（API-1 / NFR-M3）。
@@ -33,7 +34,14 @@ import type {
  * shared 中的契约类型，保证前后端字段同源。
  */
 
-const VAT_RATES = [0, 1, 3, 6, 9, 13] as const;
+/*
+ * ⚠️ **不要在这里重新定义 VAT_RATES**（原实现是 `[0, 1, 3, 6, 9, 13]`，
+ * 缺 5% 简易计税档），理由同 `master-data.dto.ts`：唯一权威是
+ * `shared/tax.ts`（含 5%），数据库 CHECK 亦已放宽。
+ * 合同/报价表单的税率下拉同样读该权威，因此这里维持本地副本会让
+ * 「5% 能选不能存」。改为引用共享常量。
+ */
+const VAT_RATES = SHARED_VAT_RATES;
 const BILLING_MODELS = [
   'project',
   'quantity',
@@ -211,6 +219,20 @@ export class UpdateContractDto implements IUpdateContractDto {
   @IsUUID()
   taxEntityId?: string;
 
+  /**
+   * 客户（仅 `draft` 可改，服务层守卫见 `contract-update-guard.ts`）。
+   * `@IsUUID()` 与 `CreateContractDto` 一致：非 uuid 的字符串不该进 SQL 比较。
+   */
+  @IsOptional()
+  @IsUUID()
+  customerId?: string;
+
+  /** 计费模式（已关闭/已终止的合同冻结） */
+  @IsOptional()
+  @IsString()
+  @IsIn([...BILLING_MODELS])
+  billingModel?: IUpdateContractDto['billingModel'];
+
   @IsOptional()
   @IsString()
   owner?: string;
@@ -219,13 +241,22 @@ export class UpdateContractDto implements IUpdateContractDto {
   @IsString()
   paymentTerms?: string;
 
+  /*
+   * 三个日期字段是 `string | null`：`null` 表示**清空**（PATCH 语义），
+   * `undefined` 表示不改。`@IsOptional()` 会跳过 `null` 的其余校验，
+   * 因此清空不会被 `@IsDateString()` 拒掉；非空值仍必须是合法日期串。
+   */
   @IsOptional()
   @IsDateString()
-  startDate?: string;
+  signDate?: string | null;
 
   @IsOptional()
   @IsDateString()
-  endDate?: string;
+  startDate?: string | null;
+
+  @IsOptional()
+  @IsDateString()
+  endDate?: string | null;
 
   @IsOptional()
   @IsString()

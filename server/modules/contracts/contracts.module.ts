@@ -1,5 +1,7 @@
 import { Module } from '@nestjs/common';
 import { TaxModule } from '@server/modules/tax/tax.module';
+// §4.7(f)：合同生效时计提印花税需要 VoucherHookService
+import { VoucherModule } from '@server/modules/voucher/voucher.module';
 import { NotificationsModule } from '@server/modules/notifications/notifications.module';
 import { SystemConfigModule } from '@server/modules/system-config/system-config.module';
 import { AutomationConfigModule } from '@server/modules/admin/automation-config.module';
@@ -12,7 +14,13 @@ import {
 } from './contract-expiry-reminder.service';
 
 @Module({
-  imports: [TaxModule, NotificationsModule, SystemConfigModule, AutomationConfigModule],
+  imports: [
+    TaxModule,
+    NotificationsModule,
+    SystemConfigModule,
+    AutomationConfigModule,
+    VoucherModule,
+  ],
   controllers: [ContractsController],
   providers: [
     ContractsService,

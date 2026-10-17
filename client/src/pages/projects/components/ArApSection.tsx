@@ -1,13 +1,7 @@
 import React, { useState } from 'react';
-import { zodResolver } from '@hookform/resolvers/zod';
-import { useForm } from 'react-hook-form';
-import { z } from 'zod';
-import { toast } from 'sonner';
 import { Plus } from 'lucide-react';
-import { Table, TableColumnsType } from 'antd';
+import { Table } from 'antd';
 import { CanCapability, CanCapabilityWrite } from '@client/src/platform/auth';
-import DateField from '@client/src/components/erp/DateField';
-import StatusBadge from '@client/src/components/erp/StatusBadge';
 import { Button } from '@/components/ui/button';
 import {
   Card,
@@ -16,101 +10,51 @@ import {
   CardHeader,
   CardTitle,
 } from '@/components/ui/card';
-import {
-  Dialog,
-  DialogContent,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog';
-import {
-  Form,
-  FormControl,
-  FormField,
-  FormItem,
-  FormLabel,
-  FormMessage,
-} from '@/components/ui/form';
-import { Input } from '@/components/ui/input';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
-import { Textarea } from '@/components/ui/textarea';
-import { UserSelect } from '@client/src/components/business-ui/user-select';
-import { UserDisplay } from '@client/src/components/business-ui/user-display';
 import { financeApi, masterDataApi, projectsApi } from '@client/src/api';
 import { useAsyncData } from '@client/src/hooks/useAsyncData';
 import { formatMoney } from '@client/src/utils/format';
-import { AP_STATUS_LABELS, AR_STATUS_LABELS } from '@client/src/utils/biz-labels';
 import type {
   ChainApItem,
   ChainArItem,
-  CreateApDto,
-  CreateArDto,
-  CreatePaymentDto,
-  CreateReceiptDto,
   PaymentItem,
   ReceiptItem,
   Supplier,
 } from '@shared/api.interface';
+import { openArItems, payableApItems } from './ar-ap-model';
+import { arApColumns } from './ar-ap-columns';
+import ArDialog from './dialogs/ArDialog';
+import ApDialog from './dialogs/ApDialog';
+import PaymentDialog from './dialogs/PaymentDialog';
+import ReceiptDialog from './dialogs/ReceiptDialog';
 
-const RECEIPT_STATUS_LABELS_FALLBACK: Record<string, string> = {
-  matched: '已核销',
-  unmatched: '未核销',
-};
-
-const PAYMENT_STATUS_LABELS: Record<string, string> = {
-  pending: '待审批',
-  approved: '已批准',
-  rejected: '已驳回',
-  paid: '已支付',
-};
-
-const arSchema = z.object({
-  amount: z.coerce.number().min(1, '应收金额必须大于 0'),
-  dueDate: z.string().optional(),
-  ownerUserId: z.string().optional(),
-  remark: z.string(),
-});
-
-type ArFormData = z.output<typeof arSchema>;
-type ArFormInput = z.input<typeof arSchema>;
-
-const receiptSchema = z.object({
-  arId: z.string().min(1, '请选择应收单'),
-  amount: z.coerce.number().min(1, '回款金额必须大于 0'),
-  receiptDate: z.string().optional(),
-  method: z.string(),
-  remark: z.string(),
-});
-
-type ReceiptFormData = z.output<typeof receiptSchema>;
-type ReceiptFormInput = z.input<typeof receiptSchema>;
-
-const apSchema = z.object({
-  supplierId: z.string().min(1, '请选择供应商'),
-  amount: z.coerce.number().min(1, '应付金额必须大于 0'),
-  dueDate: z.string().optional(),
-  remark: z.string(),
-});
-
-type ApFormData = z.output<typeof apSchema>;
-type ApFormInput = z.input<typeof apSchema>;
-
-const paymentSchema = z.object({
-  apId: z.string().min(1, '请选择应付单'),
-  amount: z.coerce.number().min(1, '付款金额必须大于 0'),
-  payDate: z.string().optional(),
-  method: z.string(),
-  remark: z.string(),
-});
-
-type PaymentFormData = z.output<typeof paymentSchema>;
-type PaymentFormInput = z.input<typeof paymentSchema>;
+/*
+ * §5.9（F8）：本文件原先自带的四份表单 schema、四张表的状态标签与四张表的
+ * 列定义（合计约 190 行声明）已移到 `./ar-ap-model`。
+ *
+ * 搬走的原因与收益：
+ *   · 组件文件的开头全是声明，打开文件先看到声明才看到组件；
+ *   · 那一块**零 React 依赖**，搬走后立刻可单测（`ar-ap-model.spec.ts`），
+ *     而它恰恰是"改错了界面上看不出来"的重灾区 —— schema 的金额门槛、
+ *     状态标签有没有漏键、列取错字段（表格照样渲染，只是数字落在错的列里）。
+ *
+ * 但只搬声明不够：文件仍然 886 行 —— 占体量的从来不是声明，而是
+ * **四段 `<Dialog>` JSX（419 行）与四个提交处理器（84 行）**。本轮把它们整体
+ * 搬到 `./dialogs/`（四个弹窗各自持有 `useForm`、提交处理器与渲染），列定义
+ * （含状态 / 责任人的 JSX 渲染）搬到 `./ar-ap-columns`。
+ *
+ *   · 本文件保留：数据查询（`useAsyncData`）、过滤后的候选集（`openArs` /
+ *     `payableAps`）、两张表的分组编排与四段弹窗各自的 `open` state ——
+ *     也就是"区块级编排"；
+ *   · 子组件只拿**数据**与 `onSaved`（写成功后由本文件重取三份数据并回调
+ *     `onChanged` 联动顶部财务卡），不再由本文件传入 setter。
+ *
+ * ⚠️ 三个必须保住的语义（搬迁时逐条核对）：
+ *   ① 四个弹窗**无条件挂载**，不能写成 `{open && <ArDialog />}` —— `useForm`
+ *      状态原先常驻在父组件，条件挂载会让"提交失败后关掉弹窗"丢掉已填内容；
+ *   ② 表单重置时机不变：都在**提交成功之后**（`toast.success` → 关闭 → reset
+ *      → 重取）。原实现**没有** reset-on-open，关闭再打开会保留上次输入；
+ *   ③ JSX 文案、schema、校验消息逐字未动，`ar-ap-model.ts` 仍是唯一定义处。
+ */
 
 interface ArApSectionProps {
   projectId: string;
@@ -148,236 +92,23 @@ const ArApSection: React.FC<ArApSectionProps> = ({ projectId, onChanged }) => {
   const projectPayments: PaymentItem[] = (payments ?? []).filter(
     (p: PaymentItem) => apIds.includes(p.apId),
   );
-  const openArs: ChainArItem[] = arItems.filter(
-    (a: ChainArItem) => a.status !== 'settled',
-  );
-  const payableAps: ChainApItem[] = apItems.filter(
-    (a: ChainApItem) => a.status !== 'paid',
-  );
-
-  const arForm = useForm<ArFormInput, unknown, ArFormData>({
-    resolver: zodResolver(arSchema),
-    defaultValues: { amount: 0, ownerUserId: '', remark: '' },
-  });
-  const receiptForm = useForm<ReceiptFormInput, unknown, ReceiptFormData>({
-    resolver: zodResolver(receiptSchema),
-    defaultValues: { arId: '', amount: 0, method: 'bank', remark: '' },
-  });
-  const apForm = useForm<ApFormInput, unknown, ApFormData>({
-    resolver: zodResolver(apSchema),
-    defaultValues: { supplierId: '', amount: 0, remark: '' },
-  });
-  const paymentForm = useForm<PaymentFormInput, unknown, PaymentFormData>({
-    resolver: zodResolver(paymentSchema),
-    defaultValues: { apId: '', amount: 0, method: 'bank', remark: '' },
-  });
-  const selectedReceiptArId: string = receiptForm.watch('arId');
-  const selectedReceiptAr: ChainArItem | undefined = openArs.find(
-    (a: ChainArItem) => a.id === selectedReceiptArId,
-  );
+  const openArs: ChainArItem[] = openArItems(arItems);
+  const payableAps: ChainApItem[] = payableApItems(apItems);
 
   const refreshAll = async () => {
     await Promise.all([reload(), reloadReceipts(), reloadPayments()]);
     onChanged?.();
   };
 
-  const onCreateAr = arForm.handleSubmit(async (values) => {
-    if (!contractId) {
-      toast.error('项目未关联合同，无法登记应收');
-      return;
-    }
-    const dto: CreateArDto = {
-      contractId,
-      projectId,
-      amount: values.amount,
-      dueDate: values.dueDate,
-      ownerUserId: values.ownerUserId || undefined,
-      remark: values.remark || undefined,
-    };
-    try {
-      await financeApi.createAr(dto);
-      toast.success('应收已登记');
-      setArOpen(false);
-      arForm.reset({ amount: 0, ownerUserId: '', remark: '' });
-      await refreshAll();
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : '登记失败');
-    }
-  });
-
-  const onCreateReceipt = receiptForm.handleSubmit(async (values) => {
-    if (!customerId) {
-      toast.error('项目未关联客户，无法登记回款');
-      return;
-    }
-    const dto: CreateReceiptDto = {
-      customerId,
-      amount: values.amount,
-      receiptDate: values.receiptDate,
-      method: values.method,
-      remark: values.remark || undefined,
-    };
-    try {
-      await financeApi.createReceipt(dto);
-      toast.success('回款已登记');
-      setReceiptOpen(false);
-      receiptForm.reset({ arId: '', amount: 0, method: 'bank', remark: '' });
-      await refreshAll();
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : '登记失败');
-    }
-  });
-
-  const onCreateAp = apForm.handleSubmit(async (values) => {
-    const dto: CreateApDto = {
-      supplierId: values.supplierId,
-      projectId,
-      amount: values.amount,
-      dueDate: values.dueDate,
-      remark: values.remark || undefined,
-    };
-    try {
-      await financeApi.createAp(dto);
-      toast.success('应付已登记');
-      setApOpen(false);
-      apForm.reset({ supplierId: '', amount: 0, remark: '' });
-      await refreshAll();
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : '登记失败');
-    }
-  });
-
-  const onCreatePayment = paymentForm.handleSubmit(async (values) => {
-    const dto: CreatePaymentDto = {
-      apId: values.apId,
-      amount: values.amount,
-      payDate: values.payDate,
-      method: values.method,
-      remark: values.remark || undefined,
-    };
-    try {
-      await financeApi.createPayment(dto);
-      toast.success('付款申请已提交，待审批');
-      setPaymentOpen(false);
-      paymentForm.reset({ apId: '', amount: 0, method: 'bank', remark: '' });
-      await refreshAll();
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : '提交失败');
-    }
-  });
-
-  const arColumns: TableColumnsType<ChainArItem> = [
-    { title: '应收编号', dataIndex: 'code', fixed: 'left', width: 150 },
-    {
-      title: '应收金额',
-      dataIndex: 'amount',
-      width: 120,
-      align: 'right',
-      render: (v: number) => formatMoney(v),
-    },
-    {
-      title: '已核销',
-      dataIndex: 'settledAmount',
-      width: 120,
-      align: 'right',
-      render: (v: number) => formatMoney(v),
-    },
-    {
-      title: '未核销',
-      key: 'unsettled',
-      width: 120,
-      align: 'right',
-      render: (_, record) => formatMoney(record.amount - record.settledAmount),
-    },
-    { title: '到期日', dataIndex: 'dueDate', width: 110, render: (v) => v ?? '-' },
-    {
-      title: '责任人',
-      dataIndex: 'ownerUserId',
-      width: 110,
-      render: (v: string | null) =>
-        v ? <UserDisplay value={[v]} size="small" /> : '-',
-    },
-    {
-      title: '状态',
-      dataIndex: 'status',
-      width: 100,
-      render: (s: string) => <StatusBadge status={s} labels={AR_STATUS_LABELS} />,
-    },
-  ];
-
-  const receiptColumns: TableColumnsType<ReceiptItem> = [
-    { title: '回款编号', dataIndex: 'code', fixed: 'left', width: 150 },
-    { title: '客户', dataIndex: 'customerName', width: 140 },
-    {
-      title: '金额',
-      dataIndex: 'amount',
-      width: 120,
-      align: 'right',
-      render: (v: number) => formatMoney(v),
-    },
-    { title: '回款日期', dataIndex: 'receiptDate', width: 110, render: (v) => v ?? '-' },
-    { title: '方式', dataIndex: 'method', width: 90, render: (v) => v ?? '-' },
-    {
-      title: '状态',
-      dataIndex: 'status',
-      width: 90,
-      render: (s: string) => (
-        <StatusBadge status={s} labels={RECEIPT_STATUS_LABELS_FALLBACK} />
-      ),
-    },
-  ];
-
-  const apColumns: TableColumnsType<ChainApItem> = [
-    { title: '应付编号', dataIndex: 'code', fixed: 'left', width: 150 },
-    { title: '供应商', dataIndex: 'supplierName', width: 150, render: (v) => v ?? '-' },
-    {
-      title: '应付金额',
-      dataIndex: 'amount',
-      width: 120,
-      align: 'right',
-      render: (v: number) => formatMoney(v),
-    },
-    {
-      title: '已付',
-      dataIndex: 'paidAmount',
-      width: 110,
-      align: 'right',
-      render: (v: number) => formatMoney(v),
-    },
-    {
-      title: '未付',
-      key: 'unpaid',
-      width: 110,
-      align: 'right',
-      render: (_, record) => formatMoney(record.amount - record.paidAmount),
-    },
-    { title: '到期日', dataIndex: 'dueDate', width: 110, render: (v) => v ?? '-' },
-    {
-      title: '状态',
-      dataIndex: 'status',
-      width: 100,
-      render: (s: string) => <StatusBadge status={s} labels={AP_STATUS_LABELS} />,
-    },
-  ];
-
-  const paymentColumns: TableColumnsType<PaymentItem> = [
-    { title: '付款编号', dataIndex: 'code', fixed: 'left', width: 150 },
-    { title: '供应商', dataIndex: 'supplierName', width: 150 },
-    {
-      title: '金额',
-      dataIndex: 'amount',
-      width: 120,
-      align: 'right',
-      render: (v: number) => formatMoney(v),
-    },
-    { title: '付款日期', dataIndex: 'payDate', width: 110, render: (v) => v ?? '-' },
-    {
-      title: '状态',
-      dataIndex: 'status',
-      width: 90,
-      render: (s: string) => <StatusBadge status={s} labels={PAYMENT_STATUS_LABELS} />,
-    },
-  ];
+  /*
+   * 四张表的列定义（结构 / 取值 / JSX 渲染）在 `./ar-ap-columns`：
+   * 结构取自 `./ar-ap-model` 的 `*TableMeta`，取值取自 `AR_AP_COLUMN_VALUES`
+   * （规格读的是同一份），列头、列序、列宽、对齐、固定列与原实现逐字一致。
+   *
+   * 这里每次渲染现算一次（与原先"每次渲染现算四个常量数组"完全一致）——
+   * 刻意不加 `useMemo`：那会改变列的引用稳定性，属于拆分之外的行为改动。
+   */
+  const { arColumns, receiptColumns, apColumns, paymentColumns } = arApColumns();
 
   return (
     <Card>
@@ -494,434 +225,37 @@ const ArApSection: React.FC<ArApSectionProps> = ({ projectId, onChanged }) => {
         </div>
       </CardContent>
 
-      <Dialog open={arOpen} onOpenChange={setArOpen}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle>登记应收</DialogTitle>
-          </DialogHeader>
-          <Form {...arForm}>
-            <form onSubmit={onCreateAr} className="space-y-4">
-              <FormItem>
-                <FormLabel>合同 / 客户（自动带入）</FormLabel>
-                <FormControl>
-                  <Input
-                    value={
-                      chain?.contract && chain?.customer
-                        ? `${chain.contract.code} - ${chain.customer.name}`
-                        : chain?.contract
-                          ? chain.contract.code
-                          : '项目未关联合同'
-                    }
-                    readOnly
-                    aria-readonly="true"
-                  />
-                </FormControl>
-              </FormItem>
-              <FormField
-                control={arForm.control}
-                name="amount"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>
-                      应收金额（元）{' '}
-                      <span aria-hidden="true" className="text-destructive">*</span>
-                    </FormLabel>
-                    <FormControl>
-                      <Input
-                        type="number"
-                        min={0}
-                        value={String(field.value ?? '')}
-                        onChange={field.onChange}
-                        onBlur={field.onBlur}
-                        name={field.name}
-                        ref={field.ref}
-                      />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-              <FormField
-                control={arForm.control}
-                name="dueDate"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>到期日</FormLabel>
-                    <DateField value={field.value} onChange={field.onChange} />
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-              <FormField
-                control={arForm.control}
-                name="ownerUserId"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>回款责任人</FormLabel>
-                    <div className="flex items-center gap-2">
-                      <UserSelect
-                        value={field.value || null}
-                        onChange={(v: string | null) => field.onChange(v ?? '')}
-                        placeholder="请选择回款责任人"
-                      />
-                      {field.value ? (
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          aria-label="清除回款责任人"
-                          onClick={() => field.onChange('')}
-                        >
-                          清除
-                        </Button>
-                      ) : null}
-                    </div>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-              <FormField
-                control={arForm.control}
-                name="remark"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>备注</FormLabel>
-                    <FormControl>
-                      <Textarea placeholder="备注" {...field} />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-              <DialogFooter>
-                <Button type="submit">提交登记</Button>
-              </DialogFooter>
-            </form>
-          </Form>
-        </DialogContent>
-      </Dialog>
+      <ArDialog
+        open={arOpen}
+        onOpenChange={setArOpen}
+        projectId={projectId}
+        contractId={contractId}
+        chain={chain}
+        onSaved={refreshAll}
+      />
 
-      <Dialog open={receiptOpen} onOpenChange={setReceiptOpen}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle>登记回款</DialogTitle>
-          </DialogHeader>
-          <Form {...receiptForm}>
-            <form onSubmit={onCreateReceipt} className="space-y-4">
-              <FormField
-                control={receiptForm.control}
-                name="arId"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>
-                      应收单 <span aria-hidden="true" className="text-destructive">*</span>
-                    </FormLabel>
-                    <Select onValueChange={field.onChange} value={field.value}>
-                      <FormControl>
-                        <SelectTrigger>
-                          <SelectValue placeholder="请选择应收单" />
-                        </SelectTrigger>
-                      </FormControl>
-                      <SelectContent>
-                        {openArs.map((a: ChainArItem) => (
-                          <SelectItem key={a.id} value={a.id}>
-                            {a.code} - 未回款 {formatMoney(a.amount - a.settledAmount)}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-              {selectedReceiptAr ? (
-                <p className="text-sm text-muted-foreground">
-                  该应收单未回款 {formatMoney(selectedReceiptAr.amount - selectedReceiptAr.settledAmount)}
-                </p>
-              ) : null}
-              <div className="flex gap-4">
-                <FormField
-                  control={receiptForm.control}
-                  name="amount"
-                  render={({ field }) => (
-                    <FormItem className="flex-1">
-                      <FormLabel>
-                        回款金额（元）{' '}
-                        <span aria-hidden="true" className="text-destructive">*</span>
-                      </FormLabel>
-                      <FormControl>
-                        <Input
-                          type="number"
-                          min={0}
-                          value={String(field.value ?? '')}
-                          onChange={field.onChange}
-                          onBlur={field.onBlur}
-                          name={field.name}
-                          ref={field.ref}
-                        />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-                <FormField
-                  control={receiptForm.control}
-                  name="receiptDate"
-                  render={({ field }) => (
-                    <FormItem className="flex-1">
-                      <FormLabel>回款日期</FormLabel>
-                      <DateField value={field.value} onChange={field.onChange} />
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-              </div>
-              <FormField
-                control={receiptForm.control}
-                name="method"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>回款方式</FormLabel>
-                    <Select onValueChange={field.onChange} value={field.value}>
-                      <FormControl>
-                        <SelectTrigger>
-                          <SelectValue placeholder="请选择方式" />
-                        </SelectTrigger>
-                      </FormControl>
-                      <SelectContent>
-                        <SelectItem value="bank">银行转账</SelectItem>
-                        <SelectItem value="cash">现金</SelectItem>
-                        <SelectItem value="other">其他</SelectItem>
-                      </SelectContent>
-                    </Select>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-              <FormField
-                control={receiptForm.control}
-                name="remark"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>备注</FormLabel>
-                    <FormControl>
-                      <Textarea placeholder="备注" {...field} />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-              <DialogFooter>
-                <Button type="submit">提交登记</Button>
-              </DialogFooter>
-            </form>
-          </Form>
-        </DialogContent>
-      </Dialog>
+      <ReceiptDialog
+        open={receiptOpen}
+        onOpenChange={setReceiptOpen}
+        customerId={customerId}
+        openArs={openArs}
+        onSaved={refreshAll}
+      />
 
-      <Dialog open={apOpen} onOpenChange={setApOpen}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle>登记应付</DialogTitle>
-          </DialogHeader>
-          <Form {...apForm}>
-            <form onSubmit={onCreateAp} className="space-y-4">
-              <FormField
-                control={apForm.control}
-                name="supplierId"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>
-                      供应商 <span aria-hidden="true" className="text-destructive">*</span>
-                    </FormLabel>
-                    <Select onValueChange={field.onChange} value={field.value}>
-                      <FormControl>
-                        <SelectTrigger>
-                          <SelectValue placeholder="请选择供应商" />
-                        </SelectTrigger>
-                      </FormControl>
-                      <SelectContent>
-                        {(suppliers ?? []).map((s: Supplier) => (
-                          <SelectItem key={s.id} value={s.id}>
-                            {s.name}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-              <div className="flex gap-4">
-                <FormField
-                  control={apForm.control}
-                  name="amount"
-                  render={({ field }) => (
-                    <FormItem className="flex-1">
-                      <FormLabel>
-                        应付金额（元）{' '}
-                        <span aria-hidden="true" className="text-destructive">*</span>
-                      </FormLabel>
-                      <FormControl>
-                        <Input
-                          type="number"
-                          min={0}
-                          value={String(field.value ?? '')}
-                          onChange={field.onChange}
-                          onBlur={field.onBlur}
-                          name={field.name}
-                          ref={field.ref}
-                        />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-                <FormField
-                  control={apForm.control}
-                  name="dueDate"
-                  render={({ field }) => (
-                    <FormItem className="flex-1">
-                      <FormLabel>到期日</FormLabel>
-                      <DateField value={field.value} onChange={field.onChange} />
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-              </div>
-              <FormField
-                control={apForm.control}
-                name="remark"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>备注</FormLabel>
-                    <FormControl>
-                      <Textarea placeholder="备注" {...field} />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-              <DialogFooter>
-                <Button type="submit">提交登记</Button>
-              </DialogFooter>
-            </form>
-          </Form>
-        </DialogContent>
-      </Dialog>
+      <ApDialog
+        open={apOpen}
+        onOpenChange={setApOpen}
+        projectId={projectId}
+        suppliers={suppliers}
+        onSaved={refreshAll}
+      />
 
-      <Dialog open={paymentOpen} onOpenChange={setPaymentOpen}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle>登记付款</DialogTitle>
-          </DialogHeader>
-          <Form {...paymentForm}>
-            <form onSubmit={onCreatePayment} className="space-y-4">
-              <FormField
-                control={paymentForm.control}
-                name="apId"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>
-                      应付单 <span aria-hidden="true" className="text-destructive">*</span>
-                    </FormLabel>
-                    <Select onValueChange={field.onChange} value={field.value}>
-                      <FormControl>
-                        <SelectTrigger>
-                          <SelectValue placeholder="请选择应付单" />
-                        </SelectTrigger>
-                      </FormControl>
-                      <SelectContent>
-                        {payableAps.map((a: ChainApItem) => (
-                          <SelectItem key={a.id} value={a.id}>
-                            {a.code} - 未付 {formatMoney(a.amount - a.paidAmount)}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-              <div className="flex gap-4">
-                <FormField
-                  control={paymentForm.control}
-                  name="amount"
-                  render={({ field }) => (
-                    <FormItem className="flex-1">
-                      <FormLabel>
-                        付款金额（元）{' '}
-                        <span aria-hidden="true" className="text-destructive">*</span>
-                      </FormLabel>
-                      <FormControl>
-                        <Input
-                          type="number"
-                          min={0}
-                          value={String(field.value ?? '')}
-                          onChange={field.onChange}
-                          onBlur={field.onBlur}
-                          name={field.name}
-                          ref={field.ref}
-                        />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-                <FormField
-                  control={paymentForm.control}
-                  name="payDate"
-                  render={({ field }) => (
-                    <FormItem className="flex-1">
-                      <FormLabel>付款日期</FormLabel>
-                      <DateField value={field.value} onChange={field.onChange} />
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-              </div>
-              <FormField
-                control={paymentForm.control}
-                name="method"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>付款方式</FormLabel>
-                    <Select onValueChange={field.onChange} value={field.value}>
-                      <FormControl>
-                        <SelectTrigger>
-                          <SelectValue placeholder="请选择方式" />
-                        </SelectTrigger>
-                      </FormControl>
-                      <SelectContent>
-                        <SelectItem value="bank">银行转账</SelectItem>
-                        <SelectItem value="cash">现金</SelectItem>
-                        <SelectItem value="other">其他</SelectItem>
-                      </SelectContent>
-                    </Select>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-              <FormField
-                control={paymentForm.control}
-                name="remark"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>备注</FormLabel>
-                    <FormControl>
-                      <Textarea placeholder="备注" {...field} />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-              <DialogFooter>
-                <Button type="submit">提交申请</Button>
-              </DialogFooter>
-            </form>
-          </Form>
-        </DialogContent>
-      </Dialog>
+      <PaymentDialog
+        open={paymentOpen}
+        onOpenChange={setPaymentOpen}
+        payableAps={payableAps}
+        onSaved={refreshAll}
+      />
     </Card>
   );
 };

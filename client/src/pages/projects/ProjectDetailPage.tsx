@@ -6,6 +6,7 @@ import { CanRole } from '@client/src/platform/auth';
 import { DataState } from '@client/src/components/DataState';
 import { usePageEntityName } from '@client/src/components/page-meta';
 import PageShell from '@client/src/components/PageShell';
+import SectionBoundary from '@client/src/components/erp/SectionBoundary';
 import StatCard from '@client/src/components/erp/StatCard';
 import StatusBadge from '@client/src/components/erp/StatusBadge';
 import { Badge } from '@client/src/components/ui/badge';
@@ -15,6 +16,7 @@ import { Card, CardContent, CardHeader } from '@client/src/components/ui/card';
 import { biApi, projectsApi } from '@client/src/api';
 import { useAsyncData } from '@client/src/hooks/useAsyncData';
 import { formatMoney, formatPercent } from '@client/src/utils/format';
+import { confirmDanger } from '@client/src/utils/confirmDanger';
 import { BILLING_MODEL_LABELS, PROJECT_STATUS_LABELS } from '@client/src/utils/biz-labels';
 import ArApSection from '@client/src/pages/projects/components/ArApSection';
 import ChangeSection from '@client/src/pages/projects/components/ChangeSection';
@@ -38,13 +40,35 @@ import type {
   ProjectStatusAction,
 } from '@shared/api.interface';
 
-// close 动作入口由 CloseProjectSection 的结项表单提供，状态按钮只保留其余流转
+/*
+ * close 动作入口由 CloseProjectSection 的结项表单提供（要填结项摘要），
+ * 状态按钮只保留其余流转。
+ *
+ * B6（§7.2）：补齐两条**退出路径** —— 原表只有正向流转，
+ * 导致项目一进入任一非终态就无法退出，且已结项无法撤回：
+ *   · `cancel`：任意非终态 → 已取消。误建/中途取消的项目必须能退出，
+ *     否则同一合同下"全部项目已结项"永远不成立，合同状态卡在 active。
+ *   · `reopen`：已结项 → 验收中。结项会发结项报告并回写合同，
+ *     结错了必须能撤回，否则项目被彻底锁死。
+ * `accepting` 的入口仍是 CloseProjectSection（要填结项摘要），不是这里的按钮。
+ */
 const STATUS_ACTIONS: Partial<
   Record<string, { action: ProjectStatusAction; label: string }[]>
 > = {
-  initiating: [{ action: 'approve', label: '批准立项' }],
-  executing: [{ action: 'deliver', label: '进入交付' }],
-  delivering: [{ action: 'accept', label: '进入验收' }],
+  initiating: [
+    { action: 'approve', label: '批准立项' },
+    { action: 'cancel', label: '取消项目' },
+  ],
+  executing: [
+    { action: 'deliver', label: '进入交付' },
+    { action: 'cancel', label: '取消项目' },
+  ],
+  delivering: [
+    { action: 'accept', label: '进入验收' },
+    { action: 'cancel', label: '取消项目' },
+  ],
+  // accepting 只允许结项（见上方说明：此时全部交付物已验收，取消会让它们失去归属）
+  closed: [{ action: 'reopen', label: '反结项' }],
 };
 
 interface InfoItem {
@@ -107,6 +131,27 @@ const ProjectDetailPage: React.FC = () => {
 
   const doAction = async (action: ProjectStatusAction) => {
     if (!id) return;
+    /*
+     * B6：`cancel` 与 `reopen` 是**有后果的终态变更**，必须二次确认。
+     *
+     * 尤其 `cancel`：同合同下只要有项目被取消，
+     * `tryCompleteContract` 的"全部项目 closed"就永远不成立，
+     * **合同状态会一直停在 active** —— 这不是一个能随手点的按钮。
+     * `reopen` 同样会把已发出的结项报告变成与系统状态不一致。
+     *
+     * 用 `confirmDanger` 而不是 `window.confirm`：本仓既有约定
+     * （`utils/confirmDanger.ts`），且它统一处理了"确认按钮用危险色"。
+     */
+    if (action === 'cancel' || action === 'reopen') {
+      const message =
+        action === 'cancel'
+          ? '取消后项目进入终态，且同合同下只要有项目被取消，合同状态将永远无法自动回写为「已完成」。确认取消？'
+          : '反结项会把项目退回「验收中」。若结项报告已发出，报告将与系统状态不一致。确认反结项？';
+      const ok = await confirmDanger(message, {
+        title: action === 'cancel' ? '确认取消项目' : '确认反结项',
+      });
+      if (!ok) return;
+    }
     setActing(true);
     try {
       await projectsApi.changeProjectStatus(id, action);
@@ -350,9 +395,13 @@ const ProjectDetailPage: React.FC = () => {
         </CardContent>
       </Card>
 
-      <ProjectOverviewSection projectId={projectId} />
+      <SectionBoundary title="项目概览">
+        <ProjectOverviewSection projectId={projectId} />
+      </SectionBoundary>
 
-      <ProjectDocSection projectId={projectId} onChanged={reloadAll} />
+      <SectionBoundary title="项目文档">
+        <ProjectDocSection projectId={projectId} onChanged={reloadAll} />
+      </SectionBoundary>
 
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
         <Card>
@@ -385,27 +434,49 @@ const ProjectDetailPage: React.FC = () => {
         </Card>
       </div>
 
-      <QuotationSection projectId={projectId} />
+      <SectionBoundary title="报价单">
+        <QuotationSection projectId={projectId} />
+      </SectionBoundary>
 
-      <RevenueSection projectId={projectId} onChanged={reloadAll} />
+      <SectionBoundary title="收入确认">
+        <RevenueSection projectId={projectId} onChanged={reloadAll} />
+      </SectionBoundary>
 
-      <CostSection projectId={projectId} onChanged={reloadAll} />
+      <SectionBoundary title="成本">
+        <CostSection projectId={projectId} onChanged={reloadAll} />
+      </SectionBoundary>
 
-      <InvoiceSection projectId={projectId} onChanged={reloadAll} />
+      <SectionBoundary title="发票">
+        <InvoiceSection projectId={projectId} onChanged={reloadAll} />
+      </SectionBoundary>
 
-      <ArApSection projectId={projectId} onChanged={reloadAll} />
+      <SectionBoundary title="应收应付">
+        <ArApSection projectId={projectId} onChanged={reloadAll} />
+      </SectionBoundary>
 
-      <TimesheetSection projectId={projectId} onChanged={reloadAll} />
+      <SectionBoundary title="工时">
+        <TimesheetSection projectId={projectId} onChanged={reloadAll} />
+      </SectionBoundary>
 
-      <MilestoneSection projectId={projectId} onChanged={reloadAll} />
+      <SectionBoundary title="里程碑">
+        <MilestoneSection projectId={projectId} onChanged={reloadAll} />
+      </SectionBoundary>
 
-      <DeliverableSection projectId={projectId} onChanged={reloadAll} />
+      <SectionBoundary title="交付物">
+        <DeliverableSection projectId={projectId} onChanged={reloadAll} />
+      </SectionBoundary>
 
-      <ChangeSection projectId={projectId} onChanged={reloadAll} />
+      <SectionBoundary title="变更">
+        <ChangeSection projectId={projectId} onChanged={reloadAll} />
+      </SectionBoundary>
 
-      <MinutesSection projectId={projectId} onChanged={reloadAll} />
+      <SectionBoundary title="周报与纪要">
+        <MinutesSection projectId={projectId} onChanged={reloadAll} />
+      </SectionBoundary>
 
-      <CloseProjectSection projectId={projectId} onChanged={reloadAll} />
+      <SectionBoundary title="结项">
+        <CloseProjectSection projectId={projectId} onChanged={reloadAll} />
+      </SectionBoundary>
     </PageShell>
   );
 };

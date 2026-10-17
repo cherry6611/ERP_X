@@ -182,30 +182,15 @@ export class ContractItemsService {
     return this.list(contractId);
   }
 
-  async assertMatchesHeader(contractId: string, headerAmount: number): Promise<void> {
-    const rows = await this.db
-      .select({
-        total: sql<string>`coalesce(sum(${erpContractItem.amount}), 0)`,
-        cnt: sql<string>`count(*)`,
-      })
-      .from(erpContractItem)
-      .where(
-        and(
-          eq(erpContractItem.contractId, contractId),
-          eq(erpContractItem.isCurrent, 1)
-        )
-      );
-    const countItems = Number(rows[0]?.cnt ?? 0);
-    if (countItems === 0) {
-      throw new BadRequestException('合同至少需要一条明细才能提交/生效');
-    }
-    const total = Number(rows[0]?.total ?? 0);
-    if (Math.abs(total - headerAmount) > 0.01) {
-      throw new BadRequestException(
-        `合同明细合计 ${total} 与合同金额 ${headerAmount} 相差超过 0.01`
-      );
-    }
-  }
+  /*
+   * T10：明细与合同头的一致性校验**只有一处实现** —— 见
+   * contracts.service.ts 的 assertItemSum（私有方法，在 submit/approve 时调用）。
+   *
+   * 本文件原先另有一份 assertMatchesHeader，全仓**零调用方**。
+   * 两份实现做同一件事的必然结果是口径分叉（同一次收紧只落到其中一处，
+   * 另一处静默保持旧口径）—— 那正是"改了一处、漏了另一处"这类缺陷的成因。
+   * 因此删除重复实现，只保留活着的那一处。
+   */
 
   private async requireDraft(
     contractId: string,

@@ -18,7 +18,11 @@ import {
   erpRevenueAdjust,
 } from '@server/database/schema';
 import { generateBizCode } from '@server/common/utils/biz-code';
+import { unwrapRows } from '@server/common/utils/rows';
 import { ArService } from '@server/modules/finance/ar.service';
+import { InvoiceService } from '@server/modules/finance/invoice.service';
+import { DataScopeService } from '@server/common/auth/data-scope.service';
+import type { RequestActor } from '@server/common/auth/actor';
 import { TaxResolverService } from '@server/modules/tax/tax-resolver.service';
 import { VoucherHookService } from '@server/modules/voucher/voucher-hook.service';
 import { outputIssueLines, outputVoidLines } from '@server/common/tax/posting';
@@ -33,6 +37,9 @@ import type {
   CreateRevenueAdjustDto,
   CreateRevenueDto,
   RevenueAdjust,
+  RevenueChainGap,
+  RevenueChainGapKind,
+  RevenueChainReconcileResult,
   RevenueItem,
   RevenueMethod,
   UnbilledItem,
@@ -46,8 +53,51 @@ export class RevenuesService {
     @Inject(DRIZZLE_DATABASE) private readonly db: PostgresJsDatabase,
     private readonly arService: ArService,
     private readonly voucherHookService: VoucherHookService,
-    private readonly taxResolver: TaxResolverService
+    private readonly taxResolver: TaxResolverService,
+    private readonly dataScope: DataScopeService,
+    // P0-D：收入冲回/调整同步登记红字发票（增值税申报口径随账务一并冲减）
+    private readonly invoiceService: InvoiceService
   ) {}
+
+  /**
+   * P0-D（T4）：登记收入侧红字发票的**唯一入口**。
+   *
+   * 抽成方法而不是在两处各写一遍 `createRedLetterInvoice(...)` 调用：
+   * 冲回与调整两处的税率来源、幂等键命名、失败策略必须完全一致，
+   * 分开写就是下一次"两处口径分叉"的起点（B5 期初现金的遗漏正是这么来的）。
+   *
+   * 失败**不阻断**：凭证已出、应收已冲，业务不应被发票登记卡住。
+   * 但必须留痕 —— 这是"账表差异"的来源，底稿的 `output_mismatch` 会再次暴露它。
+   */
+  private async registerRevenueRedLetterInvoice(input: {
+    sourceRef: string;
+    amount: number;
+    taxRate: number;
+    contractId: string | null;
+    projectId: string | null;
+    remark: string;
+    taxEntityId: string | null;
+  }): Promise<void> {
+    if (!(input.amount > 0)) return;
+    try {
+      await this.invoiceService.createRedLetterInvoice({
+        direction: 'sales',
+        amount: input.amount,
+        taxRate: input.taxRate,
+        sourceRef: input.sourceRef,
+        contractId: input.contractId ?? null,
+        projectId: input.projectId ?? null,
+        taxEntityId: input.taxEntityId,
+        remark: input.remark,
+      });
+    } catch (error: unknown) {
+      this.logger.error(
+        `红字发票登记失败 source=${input.sourceRef}：${
+          error instanceof Error ? error.message : String(error)
+        }（增值税底稿将报 output_mismatch，请核对后补录）`
+      );
+    }
+  }
 
   /**
    * 修复 P1-10：收入凭证的税率此前直接读 erp_contract.tax_rate 并在为空时硬编码 6，
@@ -82,13 +132,26 @@ export class RevenuesService {
     return { rate: resolved.rate, taxEntityId: resolved.taxEntityId ?? null };
   }
 
+  /**
+   * B-2：项目收入的可见范围（口径 = 项目）。
+   *
+   * 不传 `actor` 表示**系统内部调用**（如对账自检）；
+   * HTTP 边界（`revenues.controller`）必须传，否则项目级隔离对这个列表就不生效。
+   */
   async listRevenues(
     projectId?: string,
-    period?: string
+    period?: string,
+    actor?: RequestActor
   ): Promise<RevenueItem[]> {
     const conditions = [];
     if (projectId) conditions.push(eq(erpProjectRevenue.projectId, projectId));
     if (period) conditions.push(eq(erpProjectRevenue.period, period));
+    if (actor) {
+      const scope = await this.dataScope.conditionFor('revenue', actor, {
+        primary: erpProjectRevenue.projectId,
+      });
+      if (scope) conditions.push(scope);
+    }
     const rows = await this.db
       .select({ revenue: erpProjectRevenue, projectName: erpProject.name })
       .from(erpProjectRevenue)
@@ -128,46 +191,55 @@ export class RevenuesService {
     // 形成"有收入无凭证"的静默不一致。
     await assertPeriodOpen(this.db, dto.period, '确认收入');
     await assertFiscalYearOpen(this.db, dto.period);
+    const contractId = project[0].contractId ?? null;
+    // N-3/B-4②：销项税率与纳税主体的解析**前置于插入**。
+    // 原实现在插入之后调用：解析一旦抛错，收入已落库、应收与凭证都没生成，
+    // 形成"有收入、无应收、无凭证"且无任何台账的静默缺口。
+    const outputTax = await this.resolveOutputTax(contractId);
+    const taxRate = outputTax.rate;
     const code = await generateBizCode(
       this.db,
       erpProjectRevenue,
       erpProjectRevenue.code,
       'REV'
     );
-    const rows = await this.db
-      .insert(erpProjectRevenue)
-      .values({
-        code,
-        projectId: dto.projectId,
-        contractId: project[0].contractId,
-        period: dto.period,
-        method: dto.method,
-        amount: String(dto.amount),
-        basis: dto.basis,
-        status: 'recognized',
-        remark: dto.remark,
-      })
-      .returning();
-    const row = rows[0];
-
-    /* 收入确认成功 → 自动生成应收单，失败不阻塞收入登记本身 */
-    const outputTax = await this.resolveOutputTax(row.contractId);
-    const taxRate = outputTax.rate;
-    if (row.contractId) {
-      try {
-        await this.arService.createAr({
-          contractId: row.contractId,
+    // N-3/B-4①：收入主表与应收纳入**同一事务边界**。
+    // 原实现把 `createAr` 放在 try/catch 里只记日志（"失败不阻塞收入登记"），
+    // 补偿队列只兜凭证、不兜应收 → 应收缺口无台账、无重试入口。
+    // 现在两者同生共死：应收登记失败即整体回滚，调用方可直接重试，绝不静默。
+    // 凭证仍留在事务外：它由 VoucherHookService 自带 comp_voucher_job 补偿队列，
+    // 且需要读合同/纳税主体（跨连接读，放进事务无增益）。
+    const row = await this.db.transaction(async (tx) => {
+      const rows = await tx
+        .insert(erpProjectRevenue)
+        .values({
+          code,
           projectId: dto.projectId,
-          amount: dto.amount,
-          source: 'revenue',
-          sourceRef: `revenue:${code}`,
-          remark: `收入确认 ${code}`,
-        });
-      } catch (error) {
-        const reason = error instanceof Error ? error.message : String(error);
-        this.logger.error(`收入确认生成应收失败：${code} ${reason}`);
+          contractId,
+          period: dto.period,
+          method: dto.method,
+          amount: String(dto.amount),
+          basis: dto.basis,
+          status: 'recognized',
+          remark: dto.remark,
+        })
+        .returning();
+      if (contractId) {
+        await this.arService.createArInTransaction(
+          tx as unknown as PostgresJsDatabase,
+          {
+            contractId,
+            projectId: dto.projectId,
+            amount: dto.amount,
+            source: 'revenue',
+            sourceRef: `revenue:${code}`,
+            remark: `收入确认 ${code}`,
+          }
+        );
       }
-    }
+      return rows[0];
+    });
+
     const lines = outputIssueLines(dto.amount, taxRate);
     const voucherResult = await this.voucherHookService.generateVoucherDraft({
       sourceType: 'revenue',
@@ -307,6 +379,24 @@ export class RevenuesService {
       lines: outputVoidLines(amount, taxRate),
       taxEntityId: outputTax.taxEntityId,
     });
+    // P0-D（T4）：**同步登记红字发票**。
+    //
+    // 收入冲回原先只出红字凭证（借 6001 / 借 222101 / 贷 1122），而增值税底稿的
+    // 销项 100% 来自 `erp_invoice` 台账 → 申报口径不冲减（**多缴增值税**），
+    // 且底稿每月必报 `output_mismatch`（长期噪声淹没真实异常）。
+    // 负金额红字发票让底稿的 `sum()` 天然完成冲减，无需在底稿里写特例分支。
+    //
+    // 幂等键 `revenue-reverse:<收入单号>`：与凭证同键，重复冲回不会重复冲减
+    // （收入状态机的 CAS 也保证同一笔只能冲回一次）。
+    await this.registerRevenueRedLetterInvoice({
+      sourceRef: `revenue-reverse:${revenue.code}`,
+      amount,
+      taxRate,
+      contractId: revenue.contractId,
+      projectId: revenue.projectId,
+      remark: `收入冲回红字发票（冲减 ${revenue.code}）`,
+      taxEntityId: outputTax.taxEntityId,
+    });
 
     const items = await this.listRevenues(revenue.projectId ?? undefined);
     const found = items.find((item) => item.id === id);
@@ -355,6 +445,18 @@ export class RevenuesService {
         voucherDate: todayInShanghai(),
         summary: `收入调整冲回 ${row.code}`,
         lines: outputVoidLines(Math.abs(dto.amount), outputTax.rate),
+        taxEntityId: outputTax.taxEntityId,
+      });
+      // P0-D（T4）：收入调整同样要出红字发票，理由与 `reverseRevenue` 完全一致。
+      // 幂等键 `revenue-adjust:<调整单号>` 是**每张调整单独立**的 ——
+      // 同一笔收入可以多次折让，每次都必须各自冲减一次销项。
+      await this.registerRevenueRedLetterInvoice({
+        sourceRef: `revenue-adjust:${row.code}`,
+        amount: Math.abs(dto.amount),
+        taxRate: outputTax.rate,
+        contractId: revenue[0].contractId,
+        projectId: revenue[0].projectId,
+        remark: `收入调整红字发票（${row.code} ${dto.adjustType}）`,
         taxEntityId: outputTax.taxEntityId,
       });
     }
@@ -409,7 +511,21 @@ export class RevenuesService {
         invoiced: sql<number>`coalesce(sum(${erpInvoice.amount}), 0)::float8`,
       })
       .from(erpInvoice)
-      .where(eq(erpInvoice.status, 'issued'))
+      // P1-8：必须限定 `direction = 'sales'`。
+      //
+      // 原实现只按 `status='issued'` 汇总，而**进项发票同样可以带 `project_id`**
+      // （`invoice.service.ts` 的进项开票路径会写入项目归属）。于是项目上登记的
+      // 每一张进项票都会被当作"已开票"，把未开票金额**冲低甚至冲成负数** ——
+      // 财务据此以为"这个项目没什么可开的了"，而实际上一分钱销项票都没开。
+      //
+      // 顺带修正：红字发票（负数金额）现在也会参与汇总，把退货/收入冲回冲减的
+      // 部分还原回"未开票"口径 —— 这与底稿销项的口径一致（见 `createRedLetterInvoice`）。
+      .where(
+        and(
+          eq(erpInvoice.status, 'issued'),
+          eq(erpInvoice.direction, 'sales')
+        )
+      )
       .groupBy(erpInvoice.projectId);
     const adjustMap = new Map<string, number>();
     for (const row of adjustRows) {
@@ -435,5 +551,111 @@ export class RevenuesService {
       });
     }
     return result;
+  }
+
+  /**
+   * N-3/B-4③：收入 → 应收 → 凭证 三方对账自检。
+   *
+   * 为什么必须存在：`createRevenue` 走的是「先落收入、再补应收与凭证」的多步写入
+   * （现在已把收入与应收收进同一事务）。任何一步静默失败都会留下
+   * 「有收入无应收」或「有收入无凭证」的账面缺口，而缺口本身在业务列表里
+   * **完全看不出来**。本方法把缺口显式枚举出来（含补偿队列中待重试的凭证），
+   * 供运维/财务在界面上发现并下钻，而不是靠人肉写 SQL。
+   *
+   * 口径说明：
+   *   - 只检查 `status = 'recognized'` 的收入（已冲回的收入本就不应再有应收/凭证）；
+   *   - 无合同的收入不要求应收（收入侧允许无合同确认，此时不存在债权）；
+   *   - 金额一致性用 0.005 容差（numeric 两位小数）；
+   *   - `voucher_pending` 与 `missing_voucher` 分开：前者可被重试任务自愈，后者必须人工补录。
+   */
+  async reconcileRevenueChain(
+    period?: string
+  ): Promise<RevenueChainReconcileResult> {
+    if (period && !/^\d{4}-\d{2}$/u.test(period)) {
+      throw new BadRequestException('期间格式须为 YYYY-MM');
+    }
+    const rows = unwrapRows<{
+      id: string;
+      code: string;
+      project_id: string | null;
+      project_name: string | null;
+      contract_id: string | null;
+      period: string | null;
+      amount: string | null;
+      ar_id: string | null;
+      ar_amount: string | null;
+      voucher_id: string | null;
+      job_status: string | null;
+    }>(
+      await this.db.execute(sql`
+        SELECT r.id,
+               r.code,
+               r.project_id,
+               p.name AS project_name,
+               r.contract_id,
+               r.period,
+               r.amount,
+               a.id AS ar_id,
+               a.amount AS ar_amount,
+               v.id AS voucher_id,
+               j.status AS job_status
+          FROM erp_project_revenue r
+          LEFT JOIN erp_project p ON p.id = r.project_id
+          LEFT JOIN erp_ar a ON a.source_ref = 'revenue:' || r.code
+          LEFT JOIN fin_voucher v ON v.source_type = 'revenue'
+               AND v.source_ref = 'revenue:' || r.code
+               AND v.status <> 'voided'
+          LEFT JOIN comp_voucher_job j ON j.source_type = 'revenue'
+               AND j.source_ref = 'revenue:' || r.code
+               AND j.status IN ('failed', 'processing')
+         WHERE r.status = 'recognized'
+           AND (${period ?? null}::text IS NULL OR r.period = ${period ?? null})
+         ORDER BY r.code
+      `)
+    );
+
+    const gaps: RevenueChainGap[] = [];
+    for (const row of rows) {
+      const amount = Number(row.amount ?? 0);
+      const base = {
+        revenueId: row.id,
+        code: row.code,
+        projectId: row.project_id ?? '',
+        projectName: row.project_name ?? '',
+        contractId: row.contract_id,
+        period: row.period ?? '',
+        amount,
+      };
+      const push = (gapKind: RevenueChainGapKind, detail: string): void => {
+        gaps.push({ ...base, gapKind, detail });
+      };
+      if (row.contract_id) {
+        if (!row.ar_id) {
+          push('missing_ar', '已确认收入但查不到应收单（应收漏登记）');
+        } else if (Math.abs(Number(row.ar_amount ?? 0) - amount) > 0.005) {
+          push(
+            'ar_amount_mismatch',
+            `应收金额 ${Number(row.ar_amount ?? 0).toFixed(2)} 与收入金额 ${amount.toFixed(2)} 不一致`
+          );
+        }
+      }
+      if (!row.voucher_id) {
+        if (row.job_status) {
+          push(
+            'voucher_pending',
+            `凭证在补偿队列（${row.job_status}），等待重试任务自愈`
+          );
+        } else {
+          push('missing_voucher', '既无凭证也不在补偿队列（凭证缺失，需人工补录）');
+        }
+      }
+    }
+    return {
+      period: period ?? null,
+      checked: rows.length,
+      gapCount: gaps.length,
+      consistent: gaps.length === 0,
+      gaps,
+    };
   }
 }

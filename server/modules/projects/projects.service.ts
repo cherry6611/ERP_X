@@ -49,9 +49,16 @@ import { VoucherHookService } from '@server/modules/voucher/voucher-hook.service
 import { TaxResolverService } from '@server/modules/tax/tax-resolver.service';
 import { ArService } from '@server/modules/finance/ar.service';
 import { toProject, type ProjectQuoteExtra } from './projects.transform';
+/*
+ * 项目主档的"已结项即冻结"判据（纯函数 + 规格）。
+ * 与 `deliverable.service.ts` 的 `assertProjectNotClosed` 是同一条业务规则的
+ * 两个写路径 —— 原先只有交付物那条有，项目主档这条完全没有。
+ */
+import { projectClosedWriteBlockReason } from './project-close-gate';
 import { ProjectAclService } from './project-acl.service';
 import type { RequestActor } from '@server/common/auth/actor';
 import { todayInShanghai } from '@server/common/utils/biz-date';
+import { round2 } from '@server/common/utils/number';
 import { assertPeriodOpen } from '@server/common/utils/period-guard';
 import type {
   CreateProjectChangeDto,
@@ -506,6 +513,42 @@ export class ProjectsService {
       }))
       .sort((a, b) => a.period.localeCompare(b.period));
 
+    /**
+     * 不含税净额合计：与 `accounting.recognizedRevenue`（毛利/毛利率口径）**必须一致**。
+     *
+     * 为什么单列一个字段而不是让前端算：`erp_project_revenue.amount` 是**价税合计**，
+     * 拆税需要合同税率（含未关联合同的 6% 兜底），这个信息只有服务端有。
+     * 原先 `ProjectOverviewSection` 直接用 `revenueByPeriod` 求和当"已确认收入"，
+     * 而顶部 `StatCard` 用的是不含税净额 —— 同一个项目同屏出现 31,800 与 30,000
+     * 两个同名的"已确认收入"，毛利率也一个 62.26% 一个 60%，财务无法判断该信哪个。
+     *
+     * 拆税公式与 accounting 查询**逐字一致**（100 / (100 + 合同税率)，缺省 6%），
+     * 保证两处永远相等；任一处改动都会被 `project-chain-revenue.spec.ts` 抓住。
+     */
+    const revenueNetRows = await this.db
+      .select({
+        period: erpProjectRevenue.period,
+        total: sql<string>`coalesce(sum(
+          coalesce(${erpProjectRevenue.amount}, 0) * 100.0
+          / (100.0 + coalesce(${erpContract.taxRate}, 6))
+        ), 0)`,
+      })
+      .from(erpProjectRevenue)
+      .leftJoin(erpContract, eq(erpProjectRevenue.contractId, erpContract.id))
+      .where(
+        and(
+          eq(erpProjectRevenue.projectId, projectId),
+          eq(erpProjectRevenue.status, 'recognized')
+        )
+      )
+      .groupBy(erpProjectRevenue.period);
+    const revenueNetTotal = round2(
+      revenueNetRows.reduce((sum, row) => sum + Number(row.total ?? 0), 0)
+    );
+    const revenueGrossTotal = round2(
+      revenueByPeriod.reduce((sum, item) => sum + item.amount, 0)
+    );
+
     const costRows = await this.db
       .select({
         costType: erpProjectCost.costType,
@@ -628,6 +671,8 @@ export class ProjectsService {
       quotations,
       milestones,
       revenueByPeriod,
+      revenueGrossTotal,
+      revenueNetTotal,
       costByType,
       periodExpense,
       invoices,
@@ -702,6 +747,10 @@ export class ProjectsService {
    * 收入确认必须同时产生：①应收（含税）②凭证（借1122／贷6001／贷222101）。
    * 任一步失败只记录补偿，不回滚已确认的收入（与 RevenuesService 行为一致），
    * 避免出现「BI 有收入、总账无凭证、无应收可收」的三口径分裂。
+   *
+   * S4（最终一致设计，非缺陷）：AR 与凭证各自独立事务，凭证失败写入 `comp_voucher_job`
+   * 补偿队列，由定时任务 `reconcile_voucher_ar`（每 15 分钟）重放，缩小不一致窗口。
+   * 强一致（单一编排事务透传 tx）属二期改造。
    */
   private async postRevenueVoucherAndAr(
     row: typeof erpProjectRevenue.$inferSelect,
@@ -876,6 +925,24 @@ export class ProjectsService {
       .from(erpProject)
       .where(eq(erpProject.id, id));
     if (existing.length === 0) throw new NotFoundException('项目不存在');
+    /*
+     * B7 的同一条闸门也必须罩住**项目主档**（本轮补齐）。
+     *
+     * `deliverable.service.ts` 已经把 `assertProjectNotClosed` 抽成共用方法，
+     * 理由是原实现"只有 create 有、其余写动作都能绕过，于是结项后仍能改交付物状态，
+     * 让已发出的结项报告与实际不一致"。**`updateProject` 就是被漏掉的那一处**：
+     * 结项后仍可改项目经理 / 预算 / 进度 / 预计总成本 / 结束日期 / 备注 / 成交报价，
+     * 而 `CloseProjectSection` 对使用者的承诺是「结项后项目进入只读归档状态」。
+     *
+     * 判据与 `deliverable.service` 一致：**不是禁止改动，而是要求先走反结项**
+     * （`reopen` 是仓库既有的一条正式流转，文案里直接指出下一步该做什么）。
+     */
+    if ((existing[0].status ?? '') === 'closed') {
+      throw new BadRequestException(
+        projectClosedWriteBlockReason(existing[0].status) ??
+          '项目已结项，项目主档已冻结；如需调整请先反结项'
+      );
+    }
     const patch: Record<string, unknown> = { updatedAt: new Date() };
     if (dto.progress !== undefined) {
       if (dto.progress < 0 || dto.progress > 100) {
@@ -920,6 +987,59 @@ export class ProjectsService {
     );
   }
 
+  /**
+   * B3：新增里程碑时**校验权重和不超过 100**。
+   *
+   * 里程碑权重是 EVM 的分母口径（`common/utils/evm.ts`）。原实现完全不校验
+   * 求和，于是"只填 1 个里程碑权重 30"的项目会算出一个看起来正常的 SPI，
+   * 周预警与 BI 健康度全部失明；权重和 > 100 时更会出现"挣值超过完工预算"
+   * 这种物理上不可能的结果。
+   *
+   * 校验策略（**有意不强制等于 100**）：
+   *   - **上限硬校验**：Σ > 100 直接拒绝 —— 那是数学上错误的数据，没有正当用法；
+   *   - **不强制补齐到 100**：PM 常常先建里程碑、后分配权重（此时权重全为 0，
+   *     属于"尚未配平"的正常中间态）。强制等于 100 会让建里程碑这一步无法进行，
+   *     反而把用户推向"随便填个 100"的坏习惯。
+   *   - 配平状态由 `computeEvm().balanced` 暴露，BI 健康度与周预警据此单独告警。
+   */
+  private async assertMilestoneWeightFits(
+    projectId: string,
+    newWeight: number,
+    excludeMilestoneId?: string
+  ): Promise<void> {
+    if (newWeight < 0 || newWeight > 100) {
+      throw new BadRequestException('里程碑权重须在 0-100 之间');
+    }
+    const rows = await this.db
+      .select({
+        id: erpProjectMilestone.id,
+        weightPct: erpProjectMilestone.weightPct,
+      })
+      .from(erpProjectMilestone)
+      .where(eq(erpProjectMilestone.projectId, projectId));
+    let total = 0;
+    for (const row of rows) {
+      if (excludeMilestoneId && row.id === excludeMilestoneId) continue;
+      total += Number(row.weightPct ?? 0);
+    }
+    /*
+     * ⚠️ 统一走 `round2`（原为内联 `Math.round(x*100)/100`）。
+     *
+     * 本处有一条**实测出来的边界分叉**，改成 round2 一并修掉：
+     *   取 `total + newWeight = 100.005`（权重列是 numeric(5,2)，求和可能出现第三位）。
+     *   原实现 `Math.round` 得 `next = 100.01`，判据是 `next > 100.001` → 不拒绝；
+     *   而报错文案里那句"当前其它里程碑合计"又是另一套取整。
+     *   两侧同用 `round2` 后判据与文案口径一致，边界不再分叉。
+     */
+    const next = round2(total + newWeight);
+    if (next > 100.001) {
+      throw new BadRequestException(
+        `里程碑权重合计将达 ${next}%，超过 100%（当前其它里程碑合计 ${round2(total)}%）。` +
+          `请先下调其它里程碑的权重；权重是挣值（EVM）的分母口径，超过 100% 会让挣值超过完工预算`
+      );
+    }
+  }
+
   async addMilestone(
     projectId: string,
     dto: CreateProjectMilestoneDto
@@ -929,6 +1049,7 @@ export class ProjectsService {
       .from(erpProject)
       .where(eq(erpProject.id, projectId));
     if (project.length === 0) throw new NotFoundException('项目不存在');
+    await this.assertMilestoneWeightFits(projectId, dto.weightPct ?? 0);
     const rows = await this.db
       .insert(erpProjectMilestone)
       .values({
@@ -970,6 +1091,12 @@ export class ProjectsService {
         if (dto.weightPct < 0 || dto.weightPct > 100) {
           throw new BadRequestException('里程碑权重须在 0-100 之间');
         }
+        // B3：改权重同样要守住「Σ ≤ 100」（排除自身后与其它里程碑求和）
+        await this.assertMilestoneWeightFits(
+          existing[0].projectId ?? '',
+          dto.weightPct,
+          milestoneId
+        );
         patch.weightPct = String(dto.weightPct);
       }
     }

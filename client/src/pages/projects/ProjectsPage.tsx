@@ -154,7 +154,19 @@ const ProjectsPage: React.FC = () => {
   ];
 
   return (
-    <PageShell title="项目管理" description="立项、状态流转、里程碑与成交报价关联（整页）">
+    <PageShell
+      title="项目管理"
+      description="立项、状态流转、里程碑与成交报价关联（整页）"
+      actions={
+        /* 写操作（项目立项）归页头；「导出 Excel」是对当前筛选结果的只读工具，留在筛选行 */
+        <CanCapabilityWrite capability="projects_write">
+          <Button onClick={() => navigate('/projects/new')}>
+            <Plus className="h-4 w-4" />
+            项目立项
+          </Button>
+        </CanCapabilityWrite>
+      }
+    >
       <div className="flex flex-wrap items-center gap-3">
         <div className="flex items-center gap-2">
           <Label htmlFor="project-status-filter">状态</Label>
@@ -182,12 +194,6 @@ const ProjectsPage: React.FC = () => {
         {debouncing ? (
           <span className="text-xs text-muted-foreground">筛选中…</span>
         ) : null}
-        <CanCapabilityWrite capability="projects_write">
-          <Button onClick={() => navigate('/projects/new')}>
-            <Plus className="h-4 w-4" />
-            项目立项
-          </Button>
-        </CanCapabilityWrite>
         <Button variant="outline" onClick={handleExport}>
           <Download className="h-4 w-4" />
           导出 Excel

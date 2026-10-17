@@ -27,6 +27,11 @@ import type {
   ProjectStatusAction,
 } from '@shared/api.interface';
 import { PROJECT_STATUS_FLOW, toProject } from './projects.transform';
+import {
+  CLOSE_SUMMARY_REQUIRED_MESSAGE,
+  hasCloseSummary,
+  normalizeCloseSummary,
+} from './project-close-gate';
 
 @Injectable()
 export class ProjectsStatusService {
@@ -110,8 +115,14 @@ export class ProjectsStatusService {
           `尚有 ${notAccepted.length} 项交付物未通过验收，不允许结项`
         );
       }
-      if (!closeDto?.closeSummary) {
-        throw new BadRequestException('结项须填写结项摘要');
+      if (!hasCloseSummary(closeDto?.closeSummary)) {
+        /*
+         * 判据在 `./project-close-gate`（纯函数，配有规格）。
+         * 这里**不能**退回 `!closeDto?.closeSummary`：一串空格在 JS 里是真值，
+         * 于是"结项摘要必填"会被一个纯空白的摘要满足 —— 库里落下
+         * `close_summary = '   '`，结项报告与归档件上就是一片空白，而没有任何一处报错。
+         */
+        throw new BadRequestException(CLOSE_SUMMARY_REQUIRED_MESSAGE);
       }
     }
     const patch: Partial<typeof erpProject.$inferInsert> = {
@@ -119,7 +130,7 @@ export class ProjectsStatusService {
       updatedAt: new Date(),
     };
     if (action === 'close') {
-      patch.closeSummary = closeDto?.closeSummary ?? null;
+      patch.closeSummary = normalizeCloseSummary(closeDto?.closeSummary);
       patch.satisfaction = closeDto?.satisfaction ?? null;
       patch.retrospective = closeDto?.retrospective ?? null;
       patch.closedAt = todayInShanghai();
@@ -166,16 +177,49 @@ export class ProjectsStatusService {
     }
   }
 
-  /** 结项后：同合同下全部项目已结项时，合同回写为 completed */
+  /**
+   * 结项后：同合同下全部项目已结项时，合同回写为 completed。
+   *
+   * ## B6（§7.2）：被取消的项目会让合同**永远无法回写** —— 必须可观测
+   *
+   * `allClosed` 要求每个兄弟项目都是 `closed`，而取消的项目是 `cancelled`
+   * —— 它永远不满足条件。这在语义上是**对的**（有项目被取消，说明合同
+   * 并未全部履约完成，不该自动标记 completed），但原实现是**静默 return**：
+   * 使用者只看到"合同状态一直是 active"，没有任何线索说明为什么。
+   *
+   * 因此这里在"只差被取消的项目"这一种情况下打一条 warn（含合同 id 与被取消
+   * 的项目 code），让运维/财务在日志里能直接看出原因。
+   *
+   * 有意**不**把 `cancelled` 当成 `closed`：那会让"合同里有一个项目被取消"
+   * 变成"合同标为已完成"，是明显的错误结论。需要人工决定的场景就该留给人。
+   */
   private async tryCompleteContract(contractId: string): Promise<void> {
     const siblings = await this.db
-      .select({ status: erpProject.status })
+      .select({ code: erpProject.code, status: erpProject.status })
       .from(erpProject)
       .where(eq(erpProject.contractId, contractId));
+    if (siblings.length === 0) return;
     const allClosed = siblings.every(
       (s: { status: string | null }) => (s.status ?? '') === 'closed'
     );
-    if (!allClosed || siblings.length === 0) return;
+    if (!allClosed) {
+      const blocking = siblings.filter(
+        (s: { code: string; status: string | null }) => (s.status ?? '') !== 'closed'
+      );
+      const cancelled = blocking.filter(
+        (s: { code: string; status: string | null }) => (s.status ?? '') === 'cancelled'
+      );
+      if (cancelled.length > 0) {
+        this.logger.warn(
+          `合同 ${contractId} 无法回写为 completed：同合同下存在**已取消**的项目 ` +
+            `${cancelled.map((s: { code: string }) => s.code).join('、')}` +
+            `（另有 ${blocking.length - cancelled.length} 个未结项项目）。` +
+            `若该合同实际已履约完成，请人工确认后调整合同状态；` +
+            `若属误取消，可对项目执行"反结项/重新立项"流程。`
+        );
+      }
+      return;
+    }
     const updated = await this.db
       .update(erpContract)
       .set({ status: 'completed', updatedAt: new Date() })

@@ -1,7 +1,44 @@
+/**
+ * 合同表单（**新建** 与 **编辑** 两种模式共用一个组件）。
+ *
+ * ## 编辑模式怎么进来的（行为边界）
+ *
+ * `editTarget` 非空即编辑模式：标题、提交按钮文案、提交接口
+ * （`contractsApi.updateContract` 而非 `createContract`）随之切换，提交内容是
+ * `contract-edit-model.ts` 算出的**只含改动字段**的 PATCH 体。
+ * `editTarget` 为空时走**新建**：`onSubmit` 的新建分支、文案、提交顺序逐字未动。
+ *
+ * ## ⚠️ 表单"播种"时机：由父组件的 `key` 重挂载完成，**本组件不新增任何 reset / useEffect**
+ *
+ * 本组件在编辑模式下必须显示**该行**的值，而 `useForm` 的 `defaultValues` 只在
+ * 首次渲染生效。仓库里同类弹窗（`ProjectEditDialog.tsx`、`QuotationFormDialog.tsx`）
+ * 的做法是 `useEffect(() => { if (open) form.reset(...) }, [open, target])`，
+ * 本组件**刻意不那样做**：
+ *
+ * · `useEffect` 在 **commit 之后**执行，于是"打开编辑"的那一帧画面用的是**上一次的值**
+ *   （点 A 行编辑、闪一下 B 行的数据再跳回来），随后才被 reset 覆盖 —— 使用者看得见；
+ * · 更稳的触发点是**父组件的点击处理器**（`ContractsPage` 的 `openContractEdit`）：
+ *   它在同一个事件里 `setEditTarget(row)` + `setEditSeq(n => n + 1)`，而弹窗上的
+ *   `key={`contract-edit-${editSeq}`}` 随之变化 → React **重新挂载**本组件 →
+ *   `defaultValues` 在**首次渲染**就是这一行的值，不存在"旧值闪帧"这一帧。
+ *
+ * 之所以用"重挂载"而不是"父组件持有 form 实例、点击时 reset"（那是
+ * `components/dialogs/AcceptDeliverableDialog.tsx` 文件头记录的做法）：本弹窗的表单
+ * 与 400 行 JSX 强耦合（`form.watch('customerId')` 参与税率下拉推导），把实例提到页面
+ * 会把 schema 与提交处理器一起撕开；而"重挂载"得到同样的时机保证（首帧即正确值），
+ * 代价只是每次打开多取一次客户/纳税主体下拉数据。
+ *
+ * ⚠️ 因此**不要在父组件去掉那个 `key`**：去掉后编辑同一行两次会显示上次未保存的改动。
+ *
+ * ## 编辑模式下字段的可改性（与《守卫表》一致）
+ *
+ * 客户 / 计费模式 / 签订日期在编辑模式一律**可改**（本轮解锁的就是这三个）；
+ * "金额与客户仅草稿可改"由服务端把关（`server/modules/contracts/contract-update-guard.ts`），
+ * 非草稿时表单顶部给一句说明，失败时展示服务端返回的中文原因。
+ */
 import React from 'react';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useForm } from 'react-hook-form';
-import { z } from 'zod';
 import { toast } from 'sonner';
 import DateField from '@client/src/components/erp/DateField';
 import AttachmentHint from '@client/src/components/attachments/AttachmentHint';
@@ -33,49 +70,33 @@ import { contractsApi, masterDataApi } from '@client/src/api';
 import { useAsyncData } from '@client/src/hooks/useAsyncData';
 import { BILLING_MODEL_LABELS } from '@client/src/utils/biz-labels';
 import {
-  coerceTaxRate,
+  resolveFormTaxRate,
   resolveRateOptions,
   resolveTaxEntity,
 } from '@client/src/utils/tax-rate-options';
 import { formatTaxSplitLine } from '@client/src/utils/tax-display';
 import { getApiErrorMessage } from '@client/src/utils/api-error-message';
-import { VAT_RATES } from '@shared/tax';
-import type { CreateContractDto, Customer } from '@shared/api.interface';
+import type { Contract, CreateContractDto, Customer } from '@shared/api.interface';
+import { submitContractEdit } from './contract-edit-model';
 
-const contractSchema = z.object({
-  name: z.string().min(1, '合同名称不能为空'),
-  customerId: z.string().min(1, '请选择客户'),
-  billingModel: z.string().min(1, '请选择计费模式'),
-  amount: z.coerce.number().min(1, '合同金额必须大于 0'),
-  taxRate: z.coerce
-    .number()
-    .refine((value) => (VAT_RATES as readonly number[]).includes(value), '请选择合法税率'),
-  taxEntityId: z.string().optional(),
-  signDate: z.string().optional(),
-  startDate: z.string().optional(),
-  endDate: z.string().optional(),
-  owner: z.string(),
-  paymentTerms: z.string(),
-  remark: z.string(),
-});
-
-type ContractFormData = z.output<typeof contractSchema>;
-type ContractFormInput = z.input<typeof contractSchema>;
-
-interface ContractFormDialogProps {
-  open?: boolean;
-  onOpenChange?: (open: boolean) => void;
-  onCreated: (id: string) => void;
-  asPage?: boolean;
-  onCancel?: () => void;
-}
+import {
+  contractSchema,
+  editContractSchema,
+  editFormDefaults,
+  CREATE_FORM_DEFAULTS,
+  type ContractFormData,
+  type ContractFormInput,
+  type ContractFormDialogProps,
+} from './contract-form-model';
 
 const ContractFormDialog: React.FC<ContractFormDialogProps> = ({
   open = false,
   onOpenChange,
   onCreated,
+  onUpdated,
   asPage = false,
   onCancel,
+  editTarget = null,
 }) => {
   const { data: customers } = useAsyncData<Customer[]>(() => masterDataApi.listCustomers(), []);
   const { data: taxEntities } = useAsyncData(
@@ -84,21 +105,36 @@ const ContractFormDialog: React.FC<ContractFormDialogProps> = ({
   );
 
   const form = useForm<ContractFormInput, unknown, ContractFormData>({
-    resolver: zodResolver(contractSchema),
-    defaultValues: {
-      name: '',
-      customerId: '',
-      billingModel: 'project',
-      amount: 0,
-      taxRate: 6,
-      taxEntityId: '',
-      owner: '',
-      paymentTerms: '',
-      remark: '',
-    },
+    resolver: zodResolver(editTarget ? editContractSchema : contractSchema),
+    defaultValues: editTarget
+      ? editFormDefaults(editTarget)
+      : /* 新建：逐字沿用原初值 */ CREATE_FORM_DEFAULTS,
   });
 
   const onSubmit = form.handleSubmit(async (values) => {
+    if (editTarget) {
+      /*
+       * 编辑：只下发**改动过**的字段（PATCH 语义）。
+       * 为什么不能把整份表单发上去：服务端对 amount / customerId 是"字段出现即拒"
+       * （非 draft 一律 400），整份下发会让"改个名称"也被拒 —— 详见
+       * `contract-edit-model.ts` 的「为什么编辑不能复用新建那份 DTO 构造」。
+       */
+      try {
+        const result = await submitContractEdit(
+          { createContract: contractsApi.createContract, updateContract: contractsApi.updateContract },
+          editTarget,
+          values,
+        );
+        toast.success(
+          result.status === 'unchanged' ? '合同无改动' : '合同已更新',
+        );
+        onOpenChange?.(false);
+        onUpdated?.(result.contract);
+      } catch (err) {
+        toast.error(getApiErrorMessage(err, '更新失败'));
+      }
+      return;
+    }
     const dto: CreateContractDto = {
       name: values.name,
       customerId: values.customerId,
@@ -118,7 +154,7 @@ const ContractFormDialog: React.FC<ContractFormDialogProps> = ({
       toast.success('合同已登记');
       onOpenChange?.(false);
       form.reset();
-      onCreated(created.id);
+      onCreated?.(created.id);
     } catch (err) {
       toast.error(getApiErrorMessage(err, '登记失败'));
     }
@@ -127,6 +163,17 @@ const ContractFormDialog: React.FC<ContractFormDialogProps> = ({
   const formInner = (
         <Form {...form}>
           <form onSubmit={onSubmit} className="space-y-4">
+            {editTarget && editTarget.status !== 'draft' ? (
+              /*
+               * 非草稿合同的额外限制**不在前端禁用控件**：服务端才是判据
+               * （`contract-update-guard.ts`），这里只提前说明，避免使用者
+               * 反复调整客户后拿到一句看不懂的报错。
+               */
+              <p className="text-xs text-muted-foreground">
+                该合同已非草稿：金额与客户仅在草稿状态可改（已开具的发票与已登记的应收挂在原客户上）；
+                名称、计费模式、负责人、日期与备注可直接修改。
+              </p>
+            ) : null}
             <FormField
               control={form.control}
               name="name"
@@ -166,7 +213,7 @@ const ContractFormDialog: React.FC<ContractFormDialogProps> = ({
                         });
                         form.setValue(
                           'taxRate',
-                          coerceTaxRate(
+                          resolveFormTaxRate(
                             Number(form.getValues('taxRate') ?? 6),
                             entity
                           )
@@ -257,7 +304,7 @@ const ContractFormDialog: React.FC<ContractFormDialogProps> = ({
                           (row) => row.id === nextId
                         );
                         const current = Number(form.getValues('taxRate') ?? 6);
-                        form.setValue('taxRate', coerceTaxRate(current, entity));
+                        form.setValue('taxRate', resolveFormTaxRate(current, entity));
                       }}
                     >
                       <FormControl>
@@ -403,14 +450,20 @@ const ContractFormDialog: React.FC<ContractFormDialogProps> = ({
                 </FormItem>
               )}
             />
-            <AttachmentHint text="保存后将自动打开详情，可在其中上传合同扫描件、补充协议等附件" />
+            <AttachmentHint
+              text={
+                editTarget
+                  ? '保存后返回列表，可在合同详情中上传合同扫描件、补充协议等附件'
+                  : '保存后将自动打开详情，可在其中上传合同扫描件、补充协议等附件'
+              }
+            />
             <div className="flex justify-end gap-2 border-t pt-3">
               {asPage && onCancel ? (
                 <Button type="button" variant="outline" onClick={onCancel}>
                   取消
                 </Button>
               ) : null}
-              <Button type="submit">保存</Button>
+              <Button type="submit">{editTarget ? '保存修改' : '保存'}</Button>
             </div>
           </form>
         </Form>
@@ -424,7 +477,7 @@ const ContractFormDialog: React.FC<ContractFormDialogProps> = ({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-xl">
         <DialogHeader>
-          <DialogTitle>登记合同</DialogTitle>
+          <DialogTitle>{editTarget ? '编辑合同' : '登记合同'}</DialogTitle>
         </DialogHeader>
         {formInner}
       </DialogContent>

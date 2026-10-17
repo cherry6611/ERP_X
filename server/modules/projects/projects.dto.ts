@@ -54,11 +54,24 @@ const DELIVERABLE_TYPES = [
 // 与 shared MINUTES_TYPES 逐字一致（值有出入会直接导致 tsc 拒绝赋值）
 const MINUTES_TYPES = ['weekly_report', 'meeting'] as const;
 
+/*
+ * B6（§7.2）：白名单必须与 `ProjectStatusAction` 联合类型**同步**。
+ *
+ * 这个 `@IsIn` 是一道真实闸门 —— 只加类型、漏了这里，
+ * 前端点「取消项目」会得到 400「项目状态操作不合法」，
+ * 而后端 service 里明明已经写好分支、UI 上按钮也渲染了。
+ *
+ * `cancel` / `reopen` 是本轮新增的**退出路径**：原表只有 4 条正向流转，
+ * 导致项目一进入非终态就无法退出（同合同下"全部项目已结项"永不成立，
+ * 合同状态卡在 active），且已结项无法撤回。
+ */
 const PROJECT_STATUS_ACTIONS = [
   'approve',
   'deliver',
   'accept',
   'close',
+  'cancel',
+  'reopen',
 ] as const;
 
 const PERIOD_RE = /^\d{4}-(0[1-9]|1[0-2])$/u;

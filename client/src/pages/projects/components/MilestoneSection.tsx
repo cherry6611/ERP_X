@@ -150,10 +150,18 @@ const MilestoneSection: React.FC<MilestoneSectionProps> = ({ projectId, onChange
   const onEditMilestone = editMilestoneForm.handleSubmit(async (values) => {
     if (!editTarget) return;
     try {
+      /*
+       * ⚠️ 空串必须原样发出（不能 `|| undefined`）。
+       *
+       * 服务端 `updateMilestone` 以 `!== undefined` 为 patch 判据，
+       * 而 `|| undefined` 会让空串在 JSON 序列化时**丢掉整个键** →
+       * 服务端判为"未提供" → **清空「预测日期」/「备注」被静默丢弃**，
+       * 而界面已提示更新成功。契约里两者都是可选 string，空串合法。
+       */
       await projectsApi.updateProjectMilestone(editTarget.id, {
-        forecastDate: values.forecastDate || undefined,
+        forecastDate: values.forecastDate,
         weightPct: values.weightPct,
-        remark: values.remark || undefined,
+        remark: values.remark,
       });
       toast.success('里程碑已更新');
       setEditOpen(false);

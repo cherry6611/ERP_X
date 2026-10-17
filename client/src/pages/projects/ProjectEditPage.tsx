@@ -30,7 +30,8 @@ import { crmApi, projectsApi } from '@client/src/api';
 import { useAsyncData } from '@client/src/hooks/useAsyncData';
 import { formatMoney } from '@client/src/utils/format';
 import { getApiErrorMessage } from '@client/src/utils/api-error-message';
-import type { ProjectDetail, Quotation, UpdateProjectDto } from '@shared/api.interface';
+import { submitProjectEdit } from './project-edit-model';
+import type { ProjectDetail, Quotation } from '@shared/api.interface';
 
 const editProjectSchema = z.object({
   pm: z.string(),
@@ -101,18 +102,17 @@ const ProjectEditPage: React.FC = () => {
 
   const onSubmit = form.handleSubmit(async (values) => {
     if (!project) return;
-    const dto: UpdateProjectDto = {
-      pm: values.pm || undefined,
-      budget: values.budget || undefined,
-      estimatedTotalCost: values.estimatedTotalCost,
-      progress: values.progress,
-      endDate: values.endDate,
-      remark: values.remark || undefined,
-      wonQuotationId: values.wonQuotationId ? values.wonQuotationId : null,
-    };
+    /*
+     * DTO 构造移到 `./project-edit-model`（纯逻辑 + 规格）。
+     *
+     * 原实现是内联的 `pm: values.pm || undefined` / `budget: … || undefined` /
+     * `remark: … || undefined` —— 在 PATCH 语义下，`|| undefined` 会把"清空"
+     * 变成"字段缺失"，服务端于是跳过它：界面报成功、**库里一个字符没变**。
+     * 判据与逐字段规则见该模块文件头。
+     */
     setSaving(true);
     try {
-      await projectsApi.updateProject(project.id, dto);
+      await submitProjectEdit(projectsApi, project.id, values, project);
       toast.success('项目信息已更新');
       navigate(`/projects/${project.id}`, { replace: true });
     } catch (err) {

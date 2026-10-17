@@ -2,25 +2,15 @@ import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useForm } from 'react-hook-form';
-import { z } from 'zod';
 import { toast } from 'sonner';
-import { Download, History, MoreHorizontal, Plus, Upload } from 'lucide-react';
-import { Table, TableColumnsType } from 'antd';
-import { CanCapability, CanCapabilityWrite } from '@client/src/platform/auth';
+import { Download, History, Plus, Upload } from 'lucide-react';
+import { Table } from 'antd';
+import { CanCapabilityWrite } from '@client/src/platform/auth';
 import PageShell from '@client/src/components/PageShell';
 import { DataState } from '@client/src/components/DataState';
-import StatusBadge from '@client/src/components/erp/StatusBadge';
 import DateField from '@client/src/components/erp/DateField';
 import TaxEntityBanner from '@client/src/components/erp/TaxEntityBanner';
-import { formatTaxSplitLine } from '@client/src/utils/tax-display';
-import { Badge } from '@client/src/components/ui/badge';
 import { Button } from '@client/src/components/ui/button';
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from '@client/src/components/ui/dropdown-menu';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -60,72 +50,31 @@ import {
   SelectValue,
 } from '@client/src/components/ui/select';
 import { Textarea } from '@client/src/components/ui/textarea';
-import {
-  exportRowsToXlsx,
-  type ExcelSheetColumn,
-} from '@client/src/components/excel/excel-utils';
+import { exportRowsToXlsx } from '@client/src/components/excel/excel-utils';
 import { contractsApi, feishuSyncApi, projectsApi } from '@client/src/api';
 import FeishuSyncRecordsDialog from '@client/src/components/erp/FeishuSyncRecordsDialog';
 import SimilarItemsDialog, {
   type SimilarTarget,
 } from '@client/src/components/SimilarItemsDialog';
 import { useAsyncData } from '@client/src/hooks/useAsyncData';
-import { formatMoney } from '@client/src/utils/format';
 import { getApiErrorMessage } from '@client/src/utils/api-error-message';
-import {
-  BILLING_MODEL_LABELS,
-  CONTRACT_STATUS_LABELS,
-} from '@client/src/utils/biz-labels';
+import { CONTRACT_STATUS_LABELS } from '@client/src/utils/biz-labels';
 import type {
   Contract,
   CreateProjectDto,
   PagedResult,
 } from '@shared/api.interface';
+import { contractListColumns } from './components/contract-list-columns';
+import ContractFormDialog from './ContractFormDialog';
+/* §5.9：导出行定义与转项目表单模型已拆到独立模块（可单测） */
+import { CONTRACT_EXPORT_COLUMNS } from './contract-export-columns';
+import {
+  EMPTY_TRANSFER_FORM,
+  transferSchema,
+  type TransferFormData,
+} from './contract-transfer-form';
 
 const PAGE_SIZE = 20;
-
-const TRANSFERABLE_STATUSES = ['active', 'performing', 'completed'];
-
-const CONTRACT_EXPORT_COLUMNS: ExcelSheetColumn<Contract>[] = [
-  { header: '合同编号', value: (row: Contract) => row.code },
-  { header: '客户名称', value: (row: Contract) => row.customerName },
-  { header: '合同名称', value: (row: Contract) => row.name },
-  {
-    header: '计费模式',
-    value: (row: Contract) => BILLING_MODEL_LABELS[row.billingModel] ?? row.billingModel,
-  },
-  { header: '金额（含税）', value: (row: Contract) => row.amount },
-  {
-    header: '状态',
-    value: (row: Contract) => CONTRACT_STATUS_LABELS[row.status] ?? row.status,
-  },
-  { header: '签订日期', value: (row: Contract) => row.signDate ?? '' },
-  { header: '开始日期', value: (row: Contract) => row.startDate ?? '' },
-  { header: '结束日期', value: (row: Contract) => row.endDate ?? '' },
-  { header: '负责人', value: (row: Contract) => row.owner ?? '' },
-];
-
-const transferSchema = z.object({
-  name: z.string().min(1, '请输入项目名称'),
-  budget: z.string(),
-  startDate: z.string(),
-  endDate: z.string(),
-  pm: z.string(),
-  deptName: z.string(),
-  remark: z.string(),
-});
-
-type TransferFormData = z.infer<typeof transferSchema>;
-
-const EMPTY_TRANSFER_FORM: TransferFormData = {
-  name: '',
-  budget: '',
-  startDate: '',
-  endDate: '',
-  pm: '',
-  deptName: '',
-  remark: '',
-};
 
 const ContractsPage: React.FC = () => {
   const navigate = useNavigate();
@@ -138,6 +87,27 @@ const ContractsPage: React.FC = () => {
   const [syncConfirm, setSyncConfirm] = useState(false);
   const [recordsOpen, setRecordsOpen] = useState(false);
   const [similarTarget, setSimilarTarget] = useState<SimilarTarget | null>(null);
+  /*
+   * 「编辑合同」弹窗状态。
+   *
+   * `editTarget` 与 `editOpen` 分开（而不是只用 `editTarget !== null` 当开关）：
+   * 关闭时**保留** editTarget，弹窗的 `key` 才不变，Radix 的退场动画（`data-[state=closed]:animate-out`）
+   * 才有机会播完；若关闭即清空目标，组件会在同一帧被卸载，弹窗是"啪"地消失的。
+   *
+   * `editSeq` 每次打开自增并参与 `key`：**连点同一行的「编辑」也会重新挂载弹窗**，
+   * 于是表单在该行现值上重新播种，而不是留着上次没保存的改动。
+   * 详见 `ContractFormDialog.tsx` 文件头的「表单播种时机」。
+   */
+  const [editTarget, setEditTarget] = useState<Contract | null>(null);
+  const [editOpen, setEditOpen] = useState(false);
+  const [editSeq, setEditSeq] = useState(0);
+
+  /** 行内「编辑」的触发点：同一事件里写目标 + 递增 key + 打开，故首帧就是该行的值 */
+  const openContractEdit = (record: Contract) => {
+    setEditTarget(record);
+    setEditSeq((n) => n + 1);
+    setEditOpen(true);
+  };
 
   const { data, loading, error, reload } = useAsyncData<PagedResult<Contract>>(
     () =>
@@ -222,81 +192,59 @@ const ContractsPage: React.FC = () => {
     exportRowsToXlsx('合同列表.xlsx', '合同', CONTRACT_EXPORT_COLUMNS, items);
   };
 
-  const columns: TableColumnsType<Contract> = [
-    { title: '合同编号', dataIndex: 'code', fixed: 'left', width: 150 },
-    { title: '名称', dataIndex: 'name', width: 220 },
-    { title: '客户', dataIndex: 'customerName', width: 160 },
-    {
-      title: '计费模式',
-      dataIndex: 'billingModel',
-      width: 110,
-      render: (m: string) => (
-        <Badge variant="secondary">{BILLING_MODEL_LABELS[m] ?? m}</Badge>
-      ),
-    },
-    {
-      title: '金额（含税）',
-      dataIndex: 'amount',
-      width: 200,
-      align: 'right',
-      render: (v: number, record) => (
-        <div className="text-right">
-          <div>{formatMoney(v)}</div>
-          <div className="text-xs text-muted-foreground">
-            {formatTaxSplitLine(v, record.taxRate)}
-          </div>
-        </div>
-      ),
-    },
-    { title: '税率', dataIndex: 'taxRate', width: 80, render: (v: number) => `${v}%` },
-    {
-      title: '状态',
-      dataIndex: 'status',
-      width: 100,
-      render: (s: string) => <StatusBadge status={s} labels={CONTRACT_STATUS_LABELS} />,
-    },
-    { title: '负责人', dataIndex: 'owner', width: 100, render: (v) => v ?? '-' },
-    { title: '签订日期', dataIndex: 'signDate', width: 110, render: (v) => v ?? '-' },
-    {
-      title: '操作',
-      key: 'action',
-      fixed: 'right',
-      width: 200,
-      render: (_, record) => (
-        <div className="flex gap-1">
-          <Button size="sm" onClick={() => navigate(`/contracts/${record.id}`)}>
-            详情
-          </Button>
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="ghost" size="icon" aria-label={`${record.name} 的更多操作`}>
-                <MoreHorizontal className="size-4" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
-              <DropdownMenuItem
-                onClick={() =>
-                  setSimilarTarget({ id: record.id, code: record.code, name: record.name })
-                }
-              >
-                找相似
-              </DropdownMenuItem>
-              {TRANSFERABLE_STATUSES.includes(record.status) ? (
-                <CanCapabilityWrite capability="projects_write">
-                  <DropdownMenuItem onClick={() => setTransferTarget(record)}>
-                    转项目
-                  </DropdownMenuItem>
-                </CanCapabilityWrite>
-              ) : null}
-            </DropdownMenuContent>
-          </DropdownMenu>
-        </div>
-      ),
-    },
-  ];
+  /*
+   * §5.9（F8）：列定义已移到 `./components/contract-list-columns.tsx`（`render` 里是 JSX，
+   * 故不能进零 React 依赖的模型模块）。`navigate`、两个 setter 与 `onEdit` 以**同名入参**
+   * 传入，`render` 体除新增的「编辑」按钮外逐字未动。
+   */
+  const columns = contractListColumns({
+    navigate,
+    setSimilarTarget,
+    setTransferTarget,
+    onEdit: openContractEdit,
+  });
 
   return (
-    <PageShell title="合同管理" description="合同登记、审批状态机、里程碑、Call-off 下单与变更留痕">
+    <PageShell
+      title="合同管理"
+      description="合同登记、审批状态机、里程碑、Call-off 下单与变更留痕"
+      actions={
+        /*
+         * 三个会改变数据的动作归页头 `actions`：
+         *   · 登记合同     —— 新建流程入口
+         *   · 同步到多维表格 —— 写外部系统（飞书多维表格）
+         *   · 同步记录     —— 同步动作的配套查看入口
+         * 「导出 Excel」是对当前筛选结果的只读工具，留在筛选行。
+         */
+        <>
+          <CanCapabilityWrite capability="projects_write">
+            <Button onClick={() => navigate('/contracts/new')}>
+              <Plus className="h-4 w-4" />
+              登记合同
+            </Button>
+          </CanCapabilityWrite>
+          <CanCapabilityWrite capability="projects_write">
+            <Button
+              variant="outline"
+              disabled={syncing}
+              onClick={() => setSyncConfirm(true)}
+              aria-label="同步合同到多维表格"
+            >
+              <Upload className="h-4 w-4" />
+              {syncing ? '同步中…' : '同步到多维表格'}
+            </Button>
+          </CanCapabilityWrite>
+          <Button
+            variant="outline"
+            onClick={() => setRecordsOpen(true)}
+            aria-label="查看同步记录"
+          >
+            <History className="h-4 w-4" />
+            同步记录
+          </Button>
+        </>
+      }
+    >
       <TaxEntityBanner />
       <div className="flex flex-wrap items-center gap-3">
         <div className="flex items-center gap-2">
@@ -335,31 +283,6 @@ const ContractsPage: React.FC = () => {
           <Download className="h-4 w-4" />
           导出 Excel
         </Button>
-        <CanCapabilityWrite capability="projects_write">
-          <Button
-            variant="outline"
-            disabled={syncing}
-            onClick={() => setSyncConfirm(true)}
-            aria-label="同步合同到多维表格"
-          >
-            <Upload className="h-4 w-4" />
-            {syncing ? '同步中…' : '同步到多维表格'}
-          </Button>
-        </CanCapabilityWrite>
-        <Button
-          variant="outline"
-          onClick={() => setRecordsOpen(true)}
-          aria-label="查看同步记录"
-        >
-          <History className="h-4 w-4" />
-          同步记录
-        </Button>
-        <CanCapabilityWrite capability="projects_write">
-          <Button onClick={() => navigate('/contracts/new')}>
-            <Plus className="h-4 w-4" />
-            登记合同
-          </Button>
-        </CanCapabilityWrite>
       </div>
       <DataState
         loading={loading}
@@ -539,6 +462,22 @@ const ContractsPage: React.FC = () => {
         onPick={(item) => {
           setSimilarTarget(null);
           navigate(`/contracts/${item.id}`);
+        }}
+      />
+      {/*
+        * 「编辑合同」：`key` 里的 `editSeq` 保证每次打开都重新挂载并**按该行现值播种**表单
+        * （不要删这个 key —— 否则编辑同一行两次会留着上次未保存的改动；理由见
+        * `ContractFormDialog.tsx` 文件头）。
+        * 新建仍走独立路由 `/contracts/new`（`ContractCreatePage`），此处只服务编辑。
+        */}
+      <ContractFormDialog
+        key={`contract-edit-${editSeq}`}
+        open={editOpen}
+        editTarget={editTarget}
+        onOpenChange={setEditOpen}
+        onUpdated={() => {
+          setEditOpen(false);
+          void reload();
         }}
       />
     </PageShell>

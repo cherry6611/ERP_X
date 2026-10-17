@@ -54,7 +54,7 @@ import type {
   Supplier,
 } from '@shared/api.interface';
 import {
-  coerceTaxRate,
+  resolveFormTaxRate,
   resolveRateOptions,
   resolveTaxEntity,
 } from '@client/src/utils/tax-rate-options';
@@ -229,7 +229,7 @@ const InvoiceSection: React.FC<InvoiceSectionProps> = ({ projectId, onChanged })
               });
               form.reset({
                 ...FORM_DEFAULTS,
-                taxRate: coerceTaxRate(Number(FORM_DEFAULTS.taxRate ?? 6), entity),
+                taxRate: resolveFormTaxRate(Number(FORM_DEFAULTS.taxRate ?? 6), entity),
               });
               setCreateOpen(true);
             }}
