@@ -80,3 +80,6 @@ backup-*.sql
 
 # 本地临时目录（构建/基线比对产物，不入库）
 .tmp-*/
+
+# 浏览器走查产物（日志/截图/JSON 报告，15MB+，不入库）
+scripts/browser-walkthrough/out/
