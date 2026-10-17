@@ -55,7 +55,12 @@ export const VAT_LINE_EXPORT_COLUMNS: VatExportColumn<VatDeclarationLine>[] = [
   { header: '项目', value: (row) => row.rowName },
   { header: '类别', value: (row) => VAT_CATEGORY_LABELS[row.category] ?? row.category },
   { header: '申报表金额', value: (row) => row.amount },
-  { header: '总账口径金额', value: (row) => row.ledgerAmount },
-  { header: '差异', value: (row) => row.difference },
+  /*
+   * ⚠️ `comparable === false` 的行（第 1 行「净销售额 vs 销项税额」、
+   * 第 1-1 / 25 行无账簿对应）两列**不同量纲**。导出成数字会让拿到 Excel 的人
+   * 误以为"申报数与账簿数相差这么多"，所以导出 `—`（与页面表格一致）。
+   */
+  { header: '总账口径金额', value: (row) => (row.comparable === false ? '—' : row.ledgerAmount) },
+  { header: '差异', value: (row) => (row.comparable === false ? '—' : row.difference) },
   { header: '已说明', value: (row) => (row.explained ? '是' : '否') },
 ];

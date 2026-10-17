@@ -875,3 +875,60 @@ describe('VatDeclarationService confirm() 转出未交增值税接线（T-S3）'
     }
   });
 });
+
+/*
+ * `comparable` 标记：申报数与总账口径金额**是否同一个维度**。
+ *
+ * 用户已确认采用"标记为不可比"（而非改造总账取数口径）：第 1 行是「不含税销售额」
+ * 而账簿列取的是「销项税额」，第 1-1 / 25 行账簿侧没有对应科目 —— 三者的
+ * `difference` 恒为 0 只是"不比较"的占位，界面与导出据 `comparable` 渲染 `—`。
+ */
+describe('VatDeclarationService comparable 标记（不同维度不可比）', () => {
+  const NON_COMPARABLE = ['1', '1-1', '25'];
+
+  it('第 1 / 1-1 / 25 行标记为不可比，其余行可比', async () => {
+    const result = await makeService(reconciledOptions(ENTITY_GENERAL)).generate({
+      period: PERIOD,
+      taxEntityId: ENTITY_ID,
+    });
+    const nonComparable = new Set(NON_COMPARABLE);
+    for (const line of result.lines) {
+      expect({ row: line.rowNo, comparable: line.comparable }).toEqual({
+        row: line.rowNo,
+        comparable: !nonComparable.has(line.rowNo),
+      });
+    }
+    const rowNos = new Set(result.lines.map((l) => l.rowNo));
+    expect(rowNos.has('1')).toBe(true);
+    expect(rowNos.has('25')).toBe(true);
+  });
+
+  it('不可比行的 difference 恒为 0（占位语义）', async () => {
+    const result = await makeService(reconciledOptions(ENTITY_GENERAL)).generate({
+      period: PERIOD,
+      taxEntityId: ENTITY_ID,
+    });
+    const list = result.lines.filter((l) => l.comparable === false);
+    expect(list.length).toBeGreaterThan(0);
+    for (const line of list) {
+      expect({ row: line.rowNo, difference: line.difference }).toEqual({
+        row: line.rowNo,
+        difference: 0,
+      });
+    }
+  });
+
+  it('amount−ledger 不变量只看可比行（不可比行是不同量纲）', async () => {
+    const result = await makeService(reconciledOptions(ENTITY_GENERAL)).generate({
+      period: PERIOD,
+      taxEntityId: ENTITY_ID,
+    });
+    for (const line of result.lines.filter((l) => l.comparable !== false)) {
+      const diff = Math.round((line.amount - line.ledgerAmount) * 100) / 100;
+      expect({ row: line.rowNo, difference: line.difference }).toEqual({
+        row: line.rowNo,
+        difference: diff,
+      });
+    }
+  });
+});

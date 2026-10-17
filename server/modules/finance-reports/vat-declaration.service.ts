@@ -707,6 +707,7 @@ export class VatDeclarationService {
         difference: 0,
         explained: true,
         summable: true,
+        comparable: false,
       },
       {
         rowNo: '11',
@@ -717,6 +718,7 @@ export class VatDeclarationService {
         difference: outputDifference,
         explained: outputDifference === 0 || Boolean(saved[0]?.differenceReason),
         summable: true,
+        comparable: true,
       },
       {
         rowNo: '12',
@@ -734,6 +736,7 @@ export class VatDeclarationService {
           creditableInputDifference === 0 ||
           Boolean(saved[0]?.differenceReason),
         summable: true,
+        comparable: true,
       },
       {
         // P0-A：申报表的"待认证进项税额"行次（对应 222105 待认证进项税额科目口径）。
@@ -747,6 +750,7 @@ export class VatDeclarationService {
         difference: 0,
         explained: true,
         summable: false,
+        comparable: false,
       },
       {
         rowNo: '13',
@@ -757,6 +761,7 @@ export class VatDeclarationService {
         difference: 0,
         explained: true,
         summable: true,
+        comparable: true,
       },
       {
         rowNo: '17',
@@ -769,6 +774,7 @@ export class VatDeclarationService {
         explained: true,
         // 留抵是**减项**（余额性质），与销项/进项不同量纲，不得计入小计
         summable: false,
+        comparable: true,
       },
       {
         rowNo: '19',
@@ -781,6 +787,7 @@ export class VatDeclarationService {
         // 第 19 行是本表算出来的**结果**（= 11 − 12 − 13 − 17），
         // 把它再加进小计会与上面的销项/进项重复计算。
         summable: false,
+        comparable: true,
       },
       {
         rowNo: '20',
@@ -792,6 +799,7 @@ export class VatDeclarationService {
         explained: true,
         // 期末留抵是**余额**，不是本期发生额，与其它行不同量纲
         summable: false,
+        comparable: true,
       },
       {
         // T8：未开票收入单列一行。
@@ -806,6 +814,7 @@ export class VatDeclarationService {
         difference: 0,
         explained: true,
         summable: false,
+        comparable: false,
       },
     ];
 

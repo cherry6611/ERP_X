@@ -93,26 +93,42 @@ export const vatLineColumns: TableColumnsType<VatDeclarationLine> = [
     dataIndex: 'ledgerAmount',
     width: 150,
     align: 'right',
-    render: (value: number) => (
-      <span className="tabular-nums">{formatMoney(value)}</span>
-    ),
+    /*
+     * ⚠️ `comparable === false` 的行（第 1 行「不含税销售额」vs「销项税额」、
+     * 第 1-1 / 25 行无账簿对应）两列**不同量纲**，显示数字会被误读成
+     * "申报数与账簿数相差这么多"。渲染 `—` 比渲染一个不同量纲的数更诚实。
+     */
+    render: (value: number, record: VatDeclarationLine) =>
+      record.comparable === false ? (
+        <span className="text-muted-foreground" title="该行申报数与账簿数不同量纲，不作比较">
+          —
+        </span>
+      ) : (
+        <span className="tabular-nums">{formatMoney(value)}</span>
+      ),
   },
   {
     title: '差异',
     dataIndex: 'difference',
     width: 140,
     align: 'right',
-    render: (value: number) => (
-      <span
-        className={
-          value !== 0
-            ? 'tabular-nums font-medium text-warning'
-            : 'tabular-nums text-muted-foreground'
-        }
-      >
-        {formatMoney(value)}
-      </span>
-    ),
+    /* 同「总账口径金额」列：不可比行的差异是"不比较"的占位 0，不能画成绿色对勾 */
+    render: (value: number, record: VatDeclarationLine) =>
+      record.comparable === false ? (
+        <span className="text-muted-foreground" title="该行申报数与账簿数不同量纲，不作比较">
+          —
+        </span>
+      ) : (
+        <span
+          className={
+            value !== 0
+              ? 'tabular-nums font-medium text-warning'
+              : 'tabular-nums text-muted-foreground'
+          }
+        >
+          {formatMoney(value)}
+        </span>
+      ),
     // 默认按差异绝对值倒序的思路：复核者最关心差异最大的行
     sorter: (a, b) =>
       Math.abs(Number(b.difference ?? 0)) - Math.abs(Number(a.difference ?? 0)),
