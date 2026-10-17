@@ -86,3 +86,7 @@ scripts/browser-walkthrough/out/
 
 # 备份演练产物（*.dump 二进制，每次演练都变；只留校验和与报告）
 docs/backup-drill/*.dump
+
+# 性能演练产物（schema dump 二进制与临时日志）
+docs/perf-drill/*.dump
+perf-out.log
