@@ -1450,10 +1450,23 @@ async function main() {
             Math.abs(Number(apiQuote.marginPct) - margin) < 0.005,
             `库算=${margin}% 接口=${apiQuote.marginPct}%`,
           );
+          /*
+           * ⚠️ 2026-10-17 口径变更（用户确认）：**保留现行逐行取整口径**，
+           * 不再要求满足"逐字公式" round2(Σ round2(行金额) × 折扣)。
+           *
+           * 两种算法在特定小数组合下差 0.01~0.03（本例 111.44 vs 111.42）：
+           *   · 逐字口径 = round2(Σ round2(行金额) × (1−折扣))
+           *   · 现行口径 = Σ round2(行金额 × (1−折扣))   ← 与全仓"先 round2 再汇总"一致
+           * 用户决定保留现行口径（与发票/合同侧的取整次序一致，改动面为 0）。
+           *
+           * 因此本断言改为：**落库值必须等于现行逐行取整口径**，
+           * 并把"逐字口径"的偏差作为**参考信息**打印（不再判失败）。
+           * 若将来改成逐字口径，这里会立刻失败 —— 变更点被钉住。
+           */
           record(
             'quotations',
-            '算法④总额 = 行金额合计 × (1 − 整单折扣)：**逐字口径**与落库值比对',
-            Math.abs(dbTotal - totalByFormula) < 0.005,
+            '算法④总额 = Σ round2(行金额 × (1 − 整单折扣))（现行口径，用户已确认）',
+            Math.abs(dbTotal - totalByPerLine) < 0.005,
             `逐字公式=${totalByFormula}（Σ2位行金额 ${grossByFormula} × ${f}）、落库=${dbTotal}、逐行取整口径=${totalByPerLine}` +
               (Math.abs(dbTotal - totalByFormula) < 0.005 ? '' : ` ⇒ 偏差 ${round2(dbTotal - totalByFormula)} 元（取整顺序差异，见报告）`),
           );
