@@ -22,6 +22,7 @@ import {
   type ParsedFormula,
 } from './report-formula';
 import { fiscalYearStart, LedgersService, previousPeriod } from './ledgers.service';
+import { accountAmount } from './report-account-amount';
 import { buildReportCheck } from './report-check';
 import { round2 } from '@server/common/utils/number';
 import type {
@@ -227,33 +228,16 @@ export class ReportsService {
         }
       | undefined
   ): number {
-    if (!values) return 0;
-    if (kind === 'change') {
-      return round2(
-        values.closingDebit -
-          values.closingCredit -
-          (values.openingDebit - values.openingCredit)
-      );
-    }
-    const debit =
-      kind === 'occurrence'
-        ? values.debitOccur
-        : kind === 'opening'
-          ? values.openingDebit
-          : values.closingDebit;
-    const credit =
-      kind === 'occurrence'
-        ? values.creditOccur
-        : kind === 'opening'
-          ? values.openingCredit
-          : values.closingCredit;
-    if (direction === '借' || direction === 'debit') {
-      return Math.max(round2(debit - credit), 0);
-    }
-    if (direction === '贷' || direction === 'credit') {
-      return Math.max(round2(credit - debit), 0);
-    }
-    return round2(debit - credit);
+    /*
+     * 方向口径已抽到 `./report-account-amount`（纯函数 + 24 条断言）：
+     *   · `借`/`debit` → `max(借−贷, 0)`（**钳 0**）；
+     *   · `贷`/`credit` → `max(贷−借, 0)`（钳 0）；
+     *   · 其它（净）→ `借−贷`（**不钳**，可负）；
+     *   · `change` **完全忽略方向**（本身就是带符号的净变动）。
+     * 那个"钳 0"正是迁移 `bs-moneyfunds-net` 修的"货币资金虚增"的机制，
+     * spec 里用 1001 借 100 / 100202 贷 100 的真实场景把两种口径的差值钉住了。
+     */
+    return accountAmount(kind, direction, values);
   }
 
   private findRow(rows: ReportRow[], rowNo: string): number {
