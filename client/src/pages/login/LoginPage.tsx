@@ -323,7 +323,7 @@ export default function LoginPage() {
                   : mfaMode === 'verify'
                     ? '请输入认证器中的 6 位动态验证码。'
                     : mfaMode === 'setup'
-                      ? '当前角色要求启用 MFA。请用认证器扫码/录入密钥，并输入一次动态码完成绑定。'
+                      ? '当前角色要求启用 MFA。请用 Google/Microsoft Authenticator 等 TOTP App「添加账号 → 手动输入密钥」，App 中每 30 秒刷新的 6 位数字就是动态码；系统不发短信/邮件。'
                       : '使用账号登录，或通过飞书免登'}
             </p>
           </div>
