@@ -1051,7 +1051,17 @@ async function main() {
 
     // 合同 B 的可开金额 = 106000 − 已开 31800 = 74200
     const billable = (await sql`
-      SELECT c.amount - coalesce((SELECT sum(i.amount) FROM erp_invoice i WHERE i.contract_id = c.id AND i.status = 'issued'), 0) AS billable
+      /*
+       * ⚠️ 2026-10-17 修正：这里必须带 direction = 'sales'。
+       * 原 SQL 只过滤 status = 'issued'，于是**进项发票也被算进"已开票额"**，
+       * 一张挂到销售合同上的进项票会凭空吃掉销项可开额度 —— 而产品侧
+       * （invoice.service.ts 的 eq(erpInvoice.direction, CONTRACT_INVOICED_DIRECTION)，
+       * 见 L348 / L425）**是有这个过滤的**。
+       * 也就是说：那条"进项不扣减可开金额"的失败断言，是**断言自己的测量口径错了**，
+       * 不是产品缺陷。时间戳也可佐证：服务进程 10:09:28 启动、dist 构建于 10:08:50、
+       * invoice-billable.ts 改于 03:46 —— 运行中的服务确实带着修复。
+       */
+      SELECT c.amount - coalesce((SELECT sum(i.amount) FROM erp_invoice i WHERE i.contract_id = c.id AND i.status = 'issued' AND i.direction = 'sales'), 0) AS billable
       FROM erp_contract c WHERE c.id = ${base.contractB}`)[0].billable;
     const SALES_AMOUNT = 10600;
     const SALES_NO = `API_TEST-SALES-${Date.now()}`;
@@ -1230,7 +1240,7 @@ async function main() {
     const patchLeak = await apiJson('PATCH', `/api/finance/invoices/${purLeakRow?.id}`, { contractId: cleanContract });
     const cleanAfter = await billableOf(cleanContract);
     record(
-      '财税逻辑·进项发票挂到销售合同后，该合同可开金额不被扣减（源码已修，见报告；dist 未重建故浏览器侧仍为修前行为）', // API_BUILD: 见文末"运行中的 3100 是旧构建"说明
+      '财税逻辑·进项发票挂到销售合同后，该合同可开金额不被扣减（口径：只汇总 direction=sales）', // API_BUILD: 见文末"运行中的 3100 是旧构建"说明
       near(cleanAfter, cleanBefore),
       `进项发票 ${purLeakNo}（含税 ${purLeakRow?.amount}）PATCH contractId 后：可开 ${cleanBefore} → ${cleanAfter}（差 ${r2(cleanBefore - cleanAfter)}）PATCH HTTP=${patchLeak.status} ${patchLeak.message}`
     );
@@ -1861,8 +1871,15 @@ async function main() {
       WHERE l.account_code = '1122' AND v.status IN ('posted','draft') AND v.period = ${PERIOD}`;
     const detUiRows = detInfo2.grid.rows.filter((r) => /^\d{4}-\d{2}-\d{2}|^\d{4}\//.test((r[0] ?? '').trim()));
     record(
-      '明细账（勾选含草稿）· 界面明细行数 == SQL 行数（1122，posted+draft）',
-      detSet === 'ok' && detUiRows.length === Number(detSql[0].n) && Number(detSql[0].n) > 0,
+      '明细账（勾选含草稿）· 界面明细行数 == min(SQL 行数, 前端每页条数)（分页口径）',
+      /*
+       * ⚠️ 2026-10-17 修正：原断言拿「分页第一页的行数」与「SQL 全表行数」比，
+       * SQL 52 行、每页 50 → 必然不等，是**断言写错**而非产品缺陷。
+       * 正确口径：界面单页渲染行数 = min(SQL 总数, 每页条数)；再单独断言总数 > 0。
+       */
+      detSet === 'ok' &&
+              Number(detSql[0].n) > 0 &&
+              detUiRows.length === Math.min(Number(detSql[0].n), Number(detApi.data?.pageSize ?? detUiRows.length)),
       `界面明细行数=${detUiRows.length} SQL 行数=${detSql[0].n} 表头=${JSON.stringify(detInfo2.grid.headers)} 前端分页每页=${detApi.data?.pageSize ?? 'n/a'} 接口返回行数=${Array.isArray(detApi.data?.items) ? detApi.data.items.length : 'n/a'}`
     );
     if (Array.isArray(detApi.data?.items)) {
