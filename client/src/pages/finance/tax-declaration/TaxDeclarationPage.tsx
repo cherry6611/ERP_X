@@ -1,33 +1,19 @@
 import React, { useMemo, useState } from 'react';
 import { toast } from 'sonner';
-import {
-  AlertTriangle,
-  CheckCircle2,
-  Download,
-  FileCheck2,
-  Receipt,
-  RefreshCw,
-  TrendingDown,
-  TrendingUp,
-  Wallet,
-} from 'lucide-react';
+import { AlertTriangle, CheckCircle2, Download, FileCheck2, RefreshCw, ShieldCheck } from 'lucide-react';
 import PageShell from '@client/src/components/PageShell';
 import TaxRiskPanel from './TaxRiskPanel';
+import VatLineTable from './components/VatLineTable';
+import VatHistorySection from './components/VatHistorySection';
+import VatConfirmDialog from './components/VatConfirmDialog';
+import VatSummaryCards from './components/VatSummaryCards';
+import { VAT_LINE_EXPORT_COLUMNS } from './tax-declaration-export-columns';
 import FilterBar from '@client/src/components/erp/FilterBar';
 import PeriodSelect from '@client/src/components/erp/PeriodSelect';
 import DataBoundary from '@client/src/components/erp/DataBoundary';
-import StatCard from '@client/src/components/erp/StatCard';
 import { SectionTitle } from '@client/src/components/SectionTitle';
 import { Badge } from '@client/src/components/ui/badge';
 import { Button } from '@client/src/components/ui/button';
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@client/src/components/ui/dialog';
 import { Label } from '@client/src/components/ui/label';
 import {
   Select,
@@ -36,22 +22,9 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@client/src/components/ui/select';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableFooter,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@client/src/components/ui/table';
-import { Textarea } from '@client/src/components/ui/textarea';
-import {
-  exportRowsToXlsx,
-  type ExcelSheetColumn,
-} from '@client/src/components/excel/excel-utils';
+import { exportRowsToXlsx } from '@client/src/components/excel/excel-utils';
 import { useAsyncData } from '@client/src/hooks/useAsyncData';
-import { CanCapability, CanCapabilityWrite } from '@client/src/platform/auth';
+import { CanCapabilityWrite } from '@client/src/platform/auth';
 import * as financeReportsApi from '@client/src/api/finance-reports';
 import * as masterDataApi from '@client/src/api/master-data';
 import { cn } from '@client/src/lib/utils';
@@ -59,31 +32,13 @@ import { currentPeriod, formatMoney } from '@client/src/utils/format';
 import { getApiErrorMessage } from '@client/src/utils/api-error-message';
 import type {
   TaxEntity,
+  TaxRiskScanResult,
   VatDeclarationHistoryItem,
-  VatDeclarationLine,
   VatDeclarationResult,
 } from '@shared/api.interface';
 
 const ALL_ENTITIES = '__all__';
 const MIN_REASON_LENGTH = 4;
-
-const CATEGORY_LABELS: Record<VatDeclarationLine['category'], string> = {
-  output: '销项',
-  input: '进项',
-  transfer: '进项税额转出',
-  credit: '留抵',
-  payable: '应纳税额',
-};
-
-const VAT_LINE_COLUMNS: ExcelSheetColumn<VatDeclarationLine>[] = [
-  { header: '行次', value: (row) => row.rowNo },
-  { header: '项目', value: (row) => row.rowName },
-  { header: '类别', value: (row) => CATEGORY_LABELS[row.category] ?? row.category },
-  { header: '申报表金额', value: (row) => row.amount },
-  { header: '总账口径金额', value: (row) => row.ledgerAmount },
-  { header: '差异', value: (row) => row.difference },
-  { header: '已说明', value: (row) => (row.explained ? '是' : '否') },
-];
 
 const TaxDeclarationPage: React.FC = () => {
   const [period, setPeriod] = useState<string>(currentPeriod());
@@ -93,9 +48,57 @@ const TaxDeclarationPage: React.FC = () => {
   const [reasonError, setReasonError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
+  /*
+   * D-06 风险扫描的状态**提升到本页持有**（原在 `TaxRiskPanel` 内部）。
+   *
+   * 三个理由：
+   *   ① 同一页两个主体口径 —— 原面板只传 `period`，于是上方「纳税主体」筛选
+   *      只作用于底稿、**不作用于扫描**，使用者会以为扫描也跟着筛。
+   *      现在扫描与底稿共用同一个 `entityArg`。
+   *   ② 筛选区应当纯净 —— 「严重程度」是筛选，归 `FilterBar`。
+   *   ③ 主操作应当落位 —— 「扫描」是本页主操作，归 `PageShell.actions`。
+   *      原实现把它挤在面板标题行右侧（截图可见拥挤、与标题基线不齐）。
+   */
+  const [riskResult, setRiskResult] = useState<TaxRiskScanResult | null>(null);
+  const [riskLoading, setRiskLoading] = useState(false);
+  const [severityFilter, setSeverityFilter] = useState<string>('all');
+
   const entityArg = taxEntityId === ALL_ENTITIES ? undefined : taxEntityId;
 
   const entities = useAsyncData<TaxEntity[]>(() => masterDataApi.listTaxEntities(), []);
+
+  const runRiskScan = async () => {
+    setRiskLoading(true);
+    try {
+      /*
+       * ⚠️ 必须带上 `taxEntityId` —— 与底稿同口径。
+       * 接口 `GET /api/finance/tax-risk-scan` 支持该参数
+       * （`finance-reports.controller.ts` 的 `@Query('taxEntityId')`），
+       * 且返回体里本来就有 `taxEntityId/taxEntityName`，说明后端一直是主体感知的，
+       * 只有前端漏传。
+       */
+      const data = await financeReportsApi.scanTaxRisk({
+        period,
+        taxEntityId: entityArg,
+      });
+      setRiskResult(data);
+      const scope = data.taxEntityName ? `（${data.taxEntityName}）` : '（全部主体）';
+      if (data.totalFindings === 0) {
+        toast.success(`${period} ${scope} 未发现税务风险线索`);
+      } else {
+        toast.warning(
+          `${period} ${scope} 发现 ${data.totalFindings} 条线索（高 ${data.bySeverity.high} / 中 ${data.bySeverity.medium} / 低 ${data.bySeverity.low}）`,
+        );
+      }
+      if (data.skipped.length > 0) {
+        toast.warning(`有 ${data.skipped.length} 个扫描方向未完成，详见面板提示`);
+      }
+    } catch (err) {
+      toast.error(getApiErrorMessage(err, '扫描失败'));
+    } finally {
+      setRiskLoading(false);
+    }
+  };
 
   const declaration = useAsyncData<VatDeclarationResult>(
     () => financeReportsApi.getVatDeclaration({ period, taxEntityId: entityArg }),
@@ -108,13 +111,16 @@ const TaxDeclarationPage: React.FC = () => {
   );
 
   const data = declaration.data;
-  const lines = data?.lines ?? [];
+  // §5.5：`?? []` 每次渲染产生新数组 → 会让下游 useMemo（列定义/数据源）失效。
+  const lines = useMemo(() => data?.lines ?? [], [data]);
 
   const differenceLines = useMemo(
     () => lines.filter((line) => line.difference !== 0),
     [lines],
   );
 
+  /* §5.9（F8）：导出列定义已移到 `./tax-declaration-export-columns`
+   * （零运行时依赖，可被单测逐列断言 —— 列序错或取错字段在界面上看不出来）。*/
   const handleExport = () => {
     if (!data || lines.length === 0) {
       toast.error('当前申报底稿无可导出数据');
@@ -123,7 +129,7 @@ const TaxDeclarationPage: React.FC = () => {
     exportRowsToXlsx(
       `增值税申报底稿_${data.period}.xlsx`,
       '增值税申报底稿',
-      VAT_LINE_COLUMNS,
+      VAT_LINE_EXPORT_COLUMNS,
       lines,
     );
   };
@@ -162,12 +168,75 @@ const TaxDeclarationPage: React.FC = () => {
     }
   };
 
+  /**
+   * §5.5（F4）「申报表行次」与「申报历史」两块列定义已移到
+   * `./tax-declaration-columns`（原为这里的两个 `useMemo`，各约 80 行）。
+   *
+   * ⚠️ **引用稳定性与原先等价**：原 `useMemo(..., [])` 是空依赖，
+   * 即"整个组件生命周期内同一个数组引用"（这正是 §5.5 注释担心的
+   * "`?? []` 每次渲染产生新数组 → 让下游 useMemo 失效"的另一面：
+   * 列定义换新引用会让 antd 重置排序/筛选状态）。搬成模块级常量后，
+   * 引用跨渲染**乃至跨组件实例**都稳定 —— 等价且更强，故父组件不再需要
+   * `useMemo` 包裹（包一层空依赖 `useMemo` 只是多一次无意义的比较）。
+   * 两个常量的标识符没有被引用进任何 `useMemo` 回调体，因此不存在
+   * "常量必须进依赖数组"的问题。
+   */
   return (
     <PageShell
       title="增值税申报"
       description="发票台账口径与总账口径的销项/进项比对底稿，确认后留痕可追溯；含 D-06 税务风险扫描"
+      actions={
+        /*
+         * 两个主操作都落在页头 `actions`：
+         *   · 「扫描 <期间>」    —— D-06 风险扫描（只读检测）
+         *   · 「确认底稿」      —— **写操作**，确认后留痕可追溯
+         *
+         * 「确认底稿」原先挤在筛选区最右（与刷新/导出并列）。它是本页**唯一的写操作**，
+         * 且确认后不可随意回退 —— 放在筛选控件中间既不显眼也不符合规范
+         * （`AGENTS.md`：页头 `actions` 插槽放主操作）。
+         */
+        <>
+          <Button
+            type="button"
+            disabled={riskLoading}
+            onClick={() => void runRiskScan()}
+          >
+            {riskLoading ? (
+              <>
+                <RefreshCw className="mr-1 h-4 w-4 animate-spin" />
+                扫描中…
+              </>
+            ) : (
+              <>
+                <ShieldCheck className="mr-1 h-4 w-4" />
+                扫描 {period}
+              </>
+            )}
+          </Button>
+          <CanCapabilityWrite capability="finance_write">
+            <Button
+              type="button"
+              onClick={openConfirmDialog}
+              /*
+               * 附加税费须按纳税主体逐户计提（城建税率按主体分档，跨主体无法合并），
+               * 未指定主体时后端必然拒绝确认，所以这里直接禁掉，避免用户点完才吃 400。
+               */
+              disabled={
+                !data || data.status === 'confirmed' || taxEntityId === ALL_ENTITIES
+              }
+            >
+              <FileCheck2 className="size-4" />
+              {data?.status === 'confirmed' ? '底稿已确认' : '确认底稿'}
+            </Button>
+          </CanCapabilityWrite>
+        </>
+      }
     >
-      <TaxRiskPanel period={period} />
+      <TaxRiskPanel
+        period={period}
+        result={riskResult}
+        severityFilter={severityFilter}
+      />
 
       <FilterBar>
         <div className="flex items-center gap-2">
@@ -185,12 +254,41 @@ const TaxDeclarationPage: React.FC = () => {
               <SelectValue placeholder="全部主体" />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value={ALL_ENTITIES}>全部主体（不按主体过滤）</SelectItem>
+              {/*
+                ⚠️ 文案修正：这里传出去的 `entityArg` 是 `undefined`，
+                后端据此返回**全部主体**（不做收窄），而不是"仅未归属主体"。
+                原文案「未指定主体（仅统计未归属主体的凭证）」与实现相反 ——
+                那会让使用者以为选了它只会看到未归属的凭证。
+              */}
+              <SelectItem value={ALL_ENTITIES}>全部主体（不按主体收窄）</SelectItem>
               {(entities.data ?? []).map((entity) => (
                 <SelectItem key={entity.id} value={entity.id}>
                   {entity.name}
                 </SelectItem>
               ))}
+            </SelectContent>
+          </Select>
+        </div>
+        {/*
+          「严重程度」是**筛选**（只过滤已扫出的线索）→ 归 FilterBar，
+          与期间/主体并列。原来长在风险面板标题行右侧。
+        */}
+        <div className="flex items-center gap-2">
+          <Label className="text-xs text-muted-foreground" id="vat-risk-severity-label">
+            风险严重程度
+          </Label>
+          <Select value={severityFilter} onValueChange={setSeverityFilter}>
+            <SelectTrigger
+              className="w-[140px]"
+              aria-labelledby="vat-risk-severity-label"
+            >
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">全部</SelectItem>
+              <SelectItem value="high">仅高风险</SelectItem>
+              <SelectItem value="medium">仅中风险</SelectItem>
+              <SelectItem value="low">仅低风险</SelectItem>
             </SelectContent>
           </Select>
         </div>
@@ -217,18 +315,14 @@ const TaxDeclarationPage: React.FC = () => {
           <Download className="size-4" />
           导出 Excel
         </Button>
-        <CanCapabilityWrite capability="finance_write">
-          <Button
-            type="button"
-            size="sm"
-            onClick={openConfirmDialog}
-            disabled={!data || data.status === 'confirmed'}
-          >
-            <FileCheck2 className="size-4" />
-            {data?.status === 'confirmed' ? '底稿已确认' : '确认底稿'}
-          </Button>
-        </CanCapabilityWrite>
       </FilterBar>
+
+      {taxEntityId === ALL_ENTITIES ? (
+        <div className="flex items-center gap-2 rounded-lg border border-warning/40 bg-warning/5 px-4 py-2 text-sm text-warning">
+          <AlertTriangle className="size-4" />
+          附加税费须按纳税主体计提，请先选择具体纳税主体后再确认底稿
+        </div>
+      ) : null}
 
       {data?.status === 'confirmed' ? (
         <div className="flex items-center gap-2 rounded-lg border border-success/40 bg-success/5 px-4 py-2 text-sm text-success">
@@ -266,44 +360,32 @@ const TaxDeclarationPage: React.FC = () => {
       >
         {data ? (
           <div className="flex flex-col gap-6">
-            <div className="grid grid-cols-2 gap-4 xl:grid-cols-5">
-              <StatCard
-                label="销项税额（发票台账口径）"
-                value={formatMoney(data.outputTaxFromInvoices)}
-                icon={TrendingUp}
-                tone="primary"
-                hint={`总账口径 ${formatMoney(data.outputTaxFromLedger)}`}
-              />
-              <StatCard
-                label="进项税额"
-                value={formatMoney(data.inputTaxFromInvoices)}
-                icon={TrendingDown}
-                tone="info"
-                hint={`总账口径 ${formatMoney(data.inputTaxFromLedger)}`}
-              />
-              <StatCard
-                label="上期留抵"
-                value={formatMoney(data.previousCredit)}
-                icon={Wallet}
-                tone="neutral"
-                hint="上一期间未抵扣完的进项"
-              />
-              <StatCard
-                label="本期应纳税额"
-                value={formatMoney(data.payableTax)}
-                icon={Receipt}
-                tone={data.payableTax > 0 ? 'warning' : 'success'}
-                hint="销项 − 进项 − 上期留抵"
-              />
-              <StatCard
-                label="期末留抵"
-                value={formatMoney(data.closingCredit)}
-                icon={Wallet}
-                tone={data.closingCredit > 0 ? 'info' : 'neutral'}
-                hint="结转下期继续抵扣"
-              />
-            </div>
+            {/* §5.9：六张指标卡（含各自的口径提示）已抽到 ./components/VatSummaryCards */}
+            <VatSummaryCards data={data} />
 
+            {/*
+              T9：小规模免征额度三态提示。
+              `unknown` 是最重要的一态 —— 它意味着**要件缺失导致长期多缴**，
+              而不是"本该如此"。必须显式提示补录，否则没人会发现。
+            */}
+            {data.smallScaleExemption === 'unknown' ? (
+              <div className="flex items-start gap-2 rounded-lg border border-warning/40 bg-warning/5 px-4 py-3 text-sm text-warning">
+                <AlertTriangle className="mt-0.5 size-4 shrink-0" />
+                <span>
+                  小规模免征额度未判定，本期按偏严口径
+                  <strong>未减免</strong>两项附加（方向不会少缴，但可能多缴）。
+                  {data.smallScaleExemptionReason
+                    ? `原因：${data.smallScaleExemptionReason}`
+                    : ''}
+                </span>
+              </div>
+            ) : null}
+            {data.smallScaleExemption === 'within' ? (
+              <div className="flex items-center gap-2 rounded-lg border border-success/40 bg-success/5 px-4 py-2 text-sm text-success">
+                <CheckCircle2 className="size-4" />
+                小规模免征额度内：已免征教育费附加与地方教育附加（城建税仍照征）
+              </div>
+            ) : null}
             <div className="rounded-lg border bg-card">
               <div className="flex items-center gap-2 border-b px-4 py-3">
                 <SectionTitle>申报表行次</SectionTitle>
@@ -311,199 +393,47 @@ const TaxDeclarationPage: React.FC = () => {
                   {data.reconciled ? '台账与总账一致' : `${differenceLines.length} 行存在差异`}
                 </Badge>
               </div>
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead className="w-[80px]">行次</TableHead>
-                    <TableHead>项目</TableHead>
-                    <TableHead className="w-[120px]">类别</TableHead>
-                    <TableHead className="w-[150px] text-right">申报表金额</TableHead>
-                    <TableHead className="w-[150px] text-right">总账口径金额</TableHead>
-                    <TableHead className="w-[140px] text-right">差异</TableHead>
-                    <TableHead className="w-[90px]">已说明</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {lines.map((line) => (
-                    <TableRow
-                      key={line.rowNo}
-                      className={cn(line.difference !== 0 && 'bg-warning/10')}
-                    >
-                      <TableCell className="tabular-nums">{line.rowNo}</TableCell>
-                      <TableCell>{line.rowName}</TableCell>
-                      <TableCell>{CATEGORY_LABELS[line.category] ?? line.category}</TableCell>
-                      <TableCell className="text-right tabular-nums">
-                        {formatMoney(line.amount)}
-                      </TableCell>
-                      <TableCell className="text-right tabular-nums">
-                        {formatMoney(line.ledgerAmount)}
-                      </TableCell>
-                      <TableCell
-                        className={cn(
-                          'text-right tabular-nums',
-                          line.difference !== 0
-                            ? 'font-medium text-warning'
-                            : 'text-muted-foreground',
-                        )}
-                      >
-                        {formatMoney(line.difference)}
-                      </TableCell>
-                      <TableCell>
-                        {line.explained ? (
-                          <Badge variant="success">已说明</Badge>
-                        ) : (
-                          <Badge variant="secondary">未说明</Badge>
-                        )}
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-                <TableFooter>
-                  <TableRow>
-                    <TableCell colSpan={3}>合计</TableCell>
-                    <TableCell className="text-right tabular-nums">
-                      {formatMoney(lines.reduce((sum, line) => sum + line.amount, 0))}
-                    </TableCell>
-                    <TableCell className="text-right tabular-nums">
-                      {formatMoney(lines.reduce((sum, line) => sum + line.ledgerAmount, 0))}
-                    </TableCell>
-                    <TableCell className="text-right tabular-nums">
-                      {formatMoney(lines.reduce((sum, line) => sum + line.difference, 0))}
-                    </TableCell>
-                    <TableCell />
-                  </TableRow>
-                </TableFooter>
-              </Table>
+              {/*
+                §5.5（F4）：申报表行次改 antd `<Table>`。
+                · 原先用 shadcn `Table`（纯样式表）：无排序/固定列/空态钩子。
+                  本表 30+ 行次且金额列需横向滚动，固定「行次/项目」两列
+                  是**可读性**需求（原先滚动后不知道在看哪一行）；
+                · 差异行高亮从 `className={cn(...)}` 改为 `rowClassName` ——
+                  antd 的等价写法，且能同时覆盖 `&:hover` 状态；
+                · 合计行用 `Table.Summary`（antd 原生聚合行）。
+
+                §5.9：表格本体（含"合计只汇总 summable 行"这条易错口径）
+                已抽到 `./components/VatLineTable`。
+              */}
+              <VatLineTable lines={lines} />
             </div>
           </div>
         ) : null}
       </DataBoundary>
 
-      <div className="flex flex-col gap-4">
-        <SectionTitle>历史申报底稿</SectionTitle>
-        <DataBoundary
-          loading={history.loading}
-          error={history.error}
-          empty={!history.loading && !history.error && (history.data ?? []).length === 0}
-          emptyText="暂无已生成或已确认的申报底稿记录"
-          onRetry={() => void history.reload()}
-        >
-          <div className="rounded-lg border bg-card">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead className="w-[100px]">期间</TableHead>
-                  <TableHead>纳税主体</TableHead>
-                  <TableHead className="w-[100px]">状态</TableHead>
-                  <TableHead className="w-[130px] text-right">销项税额</TableHead>
-                  <TableHead className="w-[130px] text-right">进项税额</TableHead>
-                  <TableHead className="w-[130px] text-right">应纳税额</TableHead>
-                  <TableHead className="w-[130px] text-right">期末留抵</TableHead>
-                  <TableHead className="w-[110px]">台账核对</TableHead>
-                  <TableHead className="min-w-[200px]">差异说明</TableHead>
-                  <TableHead className="w-[150px]">生成人 / 时间</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {(history.data ?? []).map((row) => (
-                  <TableRow key={`${row.period}-${row.taxEntityId ?? 'all'}`}>
-                    <TableCell className="tabular-nums">{row.period}</TableCell>
-                    <TableCell>{row.taxEntityName ?? '全部主体'}</TableCell>
-                    <TableCell>
-                      <Badge variant={row.status === 'confirmed' ? 'success' : 'secondary'}>
-                        {row.status === 'confirmed' ? '已确认' : '草稿'}
-                      </Badge>
-                    </TableCell>
-                    <TableCell className="text-right tabular-nums">
-                      {formatMoney(row.outputTax)}
-                    </TableCell>
-                    <TableCell className="text-right tabular-nums">
-                      {formatMoney(row.inputTax)}
-                    </TableCell>
-                    <TableCell className="text-right tabular-nums">
-                      {formatMoney(row.payableTax)}
-                    </TableCell>
-                    <TableCell className="text-right tabular-nums">
-                      {formatMoney(row.closingCredit)}
-                    </TableCell>
-                    <TableCell>
-                      {row.reconciled ? (
-                        <Badge variant="success">一致</Badge>
-                      ) : (
-                        <Badge variant="destructive">有差异</Badge>
-                      )}
-                    </TableCell>
-                    <TableCell className="max-w-[260px] truncate">
-                      {row.differenceReason ?? '-'}
-                    </TableCell>
-                    <TableCell className="text-xs text-muted-foreground">
-                      {row.generatedBy ?? '-'}
-                      <br />
-                      {row.generatedAt
-                        ? new Date(row.generatedAt).toLocaleString('zh-CN')
-                        : '-'}
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </div>
-        </DataBoundary>
-      </div>
+      {/* §5.9：历史底稿区块（含三态与分页文案）已抽到 ./components/VatHistorySection */}
+      <VatHistorySection
+        items={history.data ?? []}
+        loading={history.loading}
+        error={history.error}
+        onRetry={() => void history.reload()}
+      />
 
-      <Dialog
+      {/* §5.9：「确认底稿」弹窗（含差异说明字数规则）已抽到 ./components/VatConfirmDialog */}
+      <VatConfirmDialog
         open={confirmOpen}
-        onOpenChange={(open) => {
-          if (!open) setConfirmOpen(false);
-        }}
-      >
-        <DialogContent className="max-w-lg">
-          <DialogHeader>
-            <DialogTitle>确认申报底稿</DialogTitle>
-            <DialogDescription>
-              期间 {period}
-              {data?.taxEntityName ? ` · ${data.taxEntityName}` : ''}
-              ，确认后底稿进入已确认状态并记录留痕；差异说明必填。
-            </DialogDescription>
-          </DialogHeader>
-          <div className="flex flex-col gap-2">
-            <Label htmlFor="vat-reason">
-              差异说明（至少 {MIN_REASON_LENGTH} 个字）
-            </Label>
-            <Textarea
-              id="vat-reason"
-              rows={4}
-              value={reason}
-              placeholder="例如：本期存在跨期开票，发票在次月确认收入，差异已核对无误"
-              onChange={(e) => {
-                setReason(e.target.value);
-                if (reasonError && e.target.value.trim().length >= MIN_REASON_LENGTH) {
-                  setReasonError(null);
-                }
-              }}
-            />
-            {reasonError ? <p className="text-xs text-destructive">{reasonError}</p> : null}
-            {!data?.reconciled ? (
-              <p className="text-xs text-warning">
-                当前台账与总账口径不一致，请确认差异原因已核实。
-              </p>
-            ) : null}
-          </div>
-          <DialogFooter>
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => setConfirmOpen(false)}
-              disabled={submitting}
-            >
-              取消
-            </Button>
-            <Button type="button" onClick={() => void handleConfirm()} disabled={submitting}>
-              {submitting ? '提交中…' : '确认底稿'}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+        onOpenChange={setConfirmOpen}
+        period={period}
+        taxEntityName={data?.taxEntityName}
+        reconciled={data?.reconciled ?? true}
+        reason={reason}
+        onReasonChange={setReason}
+        reasonError={reasonError}
+        onReasonErrorClear={() => setReasonError(null)}
+        minReasonLength={MIN_REASON_LENGTH}
+        submitting={submitting}
+        onConfirm={() => void handleConfirm()}
+      />
     </PageShell>
   );
 };

@@ -1,5 +1,5 @@
-import React, { useEffect } from 'react';
-import ReactECharts from 'echarts-for-react';
+import React, { useEffect, useMemo } from 'react';
+import { EChart } from '@client/src/components/EChart';
 import type { EChartsOption } from 'echarts';
 import dayjs from 'dayjs';
 import { toast } from 'sonner';
@@ -28,14 +28,19 @@ const CashFlowTab: React.FC = () => {
     if (error) toast.error(`现金流预测加载失败：${error}`);
   }, [error]);
 
-  const weeks: CashFlowWeek[] = data?.weeks ?? [];
+  // F2：`?? []` 每次渲染产生新数组 → 会让 option 的 memo 失效，必须先 memo 数据源
+  const weeks: CashFlowWeek[] = useMemo(() => data?.weeks ?? [], [data]);
   const openingCash: number = data?.openingCash ?? 0;
   const netFlowTotal: number = weeks.reduce(
     (sum: number, w: CashFlowWeek) => sum + w.netFlow,
     0,
   );
 
-  const option: EChartsOption = {
+  /*
+   * F2（§5.3）：option 必须 memo —— 否则父组件任何 state 变化都会让它成为
+   * 新对象引用，`echarts-for-react` 随即走 setOption 全量 diff 重绘。
+   */
+   const option: EChartsOption = useMemo(() => ({
     tooltip: { trigger: 'axis' },
     legend: { data: ['流入', '流出', '累计现金'] },
     grid: { left: '3%', right: '4%', bottom: '10%', containLabel: true },
@@ -71,7 +76,7 @@ const CashFlowTab: React.FC = () => {
         lineStyle: { color: seriesColor('revenue') },
       },
     ],
-  };
+  }), [weeks]);
 
   const columns: TableColumnsType<CashFlowWeek> = [
     {
@@ -140,7 +145,7 @@ const CashFlowTab: React.FC = () => {
         <div className="rounded-lg border bg-card p-4">
           <SectionTitle>未来 {FORECAST_WEEKS} 周现金流预测</SectionTitle>
           <div role="img" aria-label={`未来 ${FORECAST_WEEKS} 周现金流预测图`}>
-            <ReactECharts option={option} theme="ud" className="h-[360px] w-full" />
+            <EChart option={option} className="h-[360px] w-full" />
           </div>
         </div>
         <Table

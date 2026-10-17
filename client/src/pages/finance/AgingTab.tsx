@@ -1,5 +1,5 @@
-import React from 'react';
-import ReactECharts from 'echarts-for-react';
+import React, { useMemo } from 'react';
+import { EChart } from '@client/src/components/EChart';
 import type { EChartsOption } from 'echarts';
 import { Table, TableColumnsType } from 'antd';
 import { SectionTitle } from '@client/src/components/SectionTitle';
@@ -16,8 +16,13 @@ const AgingTab: React.FC = () => {
     [],
   );
 
-  const buckets = data ?? [];
-  const option: EChartsOption = {
+  // F2：`?? []` 每次渲染产生新数组 → 会让 option 的 memo 失效，必须先 memo 数据源
+  const buckets = useMemo(() => data ?? [], [data]);
+  /*
+   * F2（§5.3）：option 必须 memo —— 否则父组件任何 state 变化都会让它成为
+   * 新对象引用，`echarts-for-react` 随即走 setOption 全量 diff 重绘。
+   */
+   const option: EChartsOption = useMemo(() => ({
     tooltip: { trigger: 'axis' },
     grid: { left: '3%', right: '4%', bottom: '20%', containLabel: true },
     xAxis: {
@@ -34,7 +39,7 @@ const AgingTab: React.FC = () => {
         itemStyle: { color: seriesColor('cost') },
       },
     ],
-  };
+  }), [buckets]);
 
   const columns: TableColumnsType<AgingBucket> = [
     { title: '账龄区间', dataIndex: 'label', fixed: 'left', width: 200 },
@@ -62,7 +67,7 @@ const AgingTab: React.FC = () => {
         <SectionTitle>应收账龄分布</SectionTitle>
         {buckets.length > 0 ? (
           <div role="img" aria-label="应收账龄分布图">
-            <ReactECharts option={option} theme="ud" className="h-[300px] w-full" />
+            <EChart option={option} className="h-[300px] w-full" />
           </div>
         ) : (
           <p className="py-8 text-center text-sm text-muted-foreground">

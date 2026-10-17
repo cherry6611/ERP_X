@@ -1,20 +1,14 @@
-import React, { useState } from 'react';
-import { toast } from 'sonner';
-import { AlertTriangle, RefreshCw, ShieldCheck } from 'lucide-react';
+/*
+ * 本面板现在**只负责展示**：期间 / 纳税主体 / 严重程度三个筛选在父页面的
+ * `FilterBar`，「扫描」按钮在父页面的 `PageShell.actions`。
+ * 因此 `useState` / `toast` / `reportsApi` / `getApiErrorMessage` /
+ * `Button` / `Label` / `Select*` / 按钮图标 都不再需要 —— 留在这里会被 lint 报未使用。
+ */
+import React from 'react';
+import { AlertTriangle } from 'lucide-react';
 import DataBoundary from '@client/src/components/erp/DataBoundary';
 import StatCard from '@client/src/components/erp/StatCard';
 import { Badge } from '@client/src/components/ui/badge';
-import { Button } from '@client/src/components/ui/button';
-import { Label } from '@client/src/components/ui/label';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@client/src/components/ui/select';
-import * as reportsApi from '@client/src/api/finance-reports';
-import { getApiErrorMessage } from '@client/src/utils/api-error-message';
 import { cn } from '@client/src/lib/utils';
 import type {
   TaxRiskCategory,
@@ -48,8 +42,19 @@ function money(value: number): string {
 }
 
 interface Props {
-  /** 期间由父页面（增值税底稿页）控制，保持与底稿同期 */
+  /**
+   * 期间由父页面（增值税底稿页）控制，保持与底稿同期。
+   *
+   * ⚠️ 本面板**不再自己持有** `period` 之外的任何状态，也**不持有操作按钮**：
+   * 期间 / 纳税主体 / 严重程度三个筛选在父页面的 `FilterBar`，
+   * 「扫描」在父页面的 `PageShell.actions`。本面板只消费 `result` 并展示。
+   * 原因见下方组件注释「为什么把扫描状态提升到父页面」。
+   */
   period: string;
+  /** 已扫描的结果；`null` 表示尚未扫描 */
+  result: TaxRiskScanResult | null;
+  /** 严重程度筛选（父页面的 FilterBar 控制，本面板只消费） */
+  severityFilter: string;
 }
 
 /**
@@ -65,78 +70,47 @@ interface Props {
  *
  * 另外必须诚实展示 `skipped`：某个扫描方向取数失败时，报告里要能看到
  * "这一段没跑成功"，而不是让人误以为"没报就是没问题"。
+ *
+ * ## 为什么把扫描状态提升到父页面（2026-10-17 改）
+ *
+ * 原来本面板自带「严重程度」下拉 + 「扫描」按钮，渲染在自己的标题行右侧。
+ * 三个问题：
+ *   ① **同一页两个主体口径**：父页面有「纳税主体」筛选（作用于底稿），
+ *      而扫描只传了 `period` —— 使用者以为扫描也跟着筛，实际扫的是全主体。
+ *   ② **筛选区不纯**：按钮长在筛选控件旁边，与外层 `FilterBar` 的语义冲突。
+ *   ③ **主操作没有落位**：`PageShell` 有 `actions` 插槽（页头右侧主操作位），
+ *      而这里的「扫描」才是本页主操作，却挤在面板标题行里（截图可见拥挤）。
+ *
+ * 现在：`period` / 纳税主体 / 严重程度 三个**筛选**都进 `FilterBar`，
+ * 「扫描」进 `PageShell.actions`，本面板只负责**展示结果**。
  */
-const TaxRiskPanel: React.FC<Props> = ({ period }) => {
-  const [result, setResult] = useState<TaxRiskScanResult | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [severityFilter, setSeverityFilter] = useState<string>('all');
-
-  const runScan = async () => {
-    setLoading(true);
-    try {
-      const data = await reportsApi.scanTaxRisk({ period });
-      setResult(data);
-      if (data.totalFindings === 0) {
-        toast.success(`${period} 未发现税务风险线索`);
-      } else {
-        toast.warning(
-          `${period} 发现 ${data.totalFindings} 条线索（高 ${data.bySeverity.high} / 中 ${data.bySeverity.medium} / 低 ${data.bySeverity.low}）`,
-        );
-      }
-      if (data.skipped.length > 0) {
-        toast.warning(`有 ${data.skipped.length} 个扫描方向未完成，详见面板提示`);
-      }
-    } catch (err) {
-      toast.error(getApiErrorMessage(err, '扫描失败'));
-    } finally {
-      setLoading(false);
-    }
-  };
-
+const TaxRiskPanel: React.FC<Props> = ({
+  period,
+  result,
+  severityFilter,
+}) => {
   const findings = (result?.findings ?? []).filter((item) =>
     severityFilter === 'all' ? true : item.severity === severityFilter,
   );
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <h3 className="text-base font-semibold">税务风险扫描（D-06）</h3>
-          <p className="text-sm text-muted-foreground">
-            扫描三个方向：税负率异常、进销项匹配异常、发票异常。
-            系统只做偏差检测与线索归纳，**不做合规判定** —— 阈值可按贵司行业调整。
-          </p>
-        </div>
-        <div className="flex items-end gap-2">
-          <div className="grid gap-1">
-            <Label className="text-xs">严重程度</Label>
-            <Select value={severityFilter} onValueChange={setSeverityFilter}>
-              <SelectTrigger className="w-28">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">全部</SelectItem>
-                <SelectItem value="high">仅高风险</SelectItem>
-                <SelectItem value="medium">仅中风险</SelectItem>
-                <SelectItem value="low">仅低风险</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-          <Button type="button" disabled={loading} onClick={() => void runScan()}>
-            {loading ? (
-              <>
-                <RefreshCw className="mr-1 h-4 w-4 animate-spin" />
-                扫描中…
-              </>
-            ) : (
-              <>
-                <ShieldCheck className="mr-1 h-4 w-4" />
-                扫描 {period}
-              </>
-            )}
-          </Button>
-        </div>
+      <div>
+        <h3 className="text-base font-semibold">税务风险扫描（D-06）</h3>
+        <p className="text-sm text-muted-foreground">
+          扫描三个方向：税负率异常、进销项匹配异常、发票异常。
+          系统只做偏差检测与线索归纳，
+          {/* ⚠️ 不要写 `**不做合规判定**` —— JSX 不渲染 markdown，
+              星号会**原样显示**给使用者（实测截图可见）。要加粗用 <strong>。 */}
+          <strong>不做合规判定</strong> —— 阈值可按贵司行业调整。
+        </p>
       </div>
+
+      {/*
+        ⚠️ 这里**不要**再加"点击扫描开始检查"的空态框。
+        本文件下方（`{!result && …}`）已有一句同义提示，两处并存会出现
+        **同一句话连显示两遍** —— 实测截图抓到过（提升按钮位置时误加）。
+      */}
 
       {result && (
         <div className="flex flex-col gap-4">

@@ -1,8 +1,5 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { zodResolver } from '@hookform/resolvers/zod';
-import { useForm } from 'react-hook-form';
-import { z } from 'zod';
 import { toast } from 'sonner';
 import { Download, FileInput, FilePlus, Plus } from 'lucide-react';
 import { Table, TableColumnsType } from 'antd';
@@ -10,25 +7,7 @@ import { CanCapability, CanCapabilityWrite } from '@client/src/platform/auth';
 import { DataState } from '@client/src/components/DataState';
 import FilterBar from '@client/src/components/erp/FilterBar';
 import StatCard from '@client/src/components/erp/StatCard';
-import { Badge } from '@client/src/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog';
-import {
-  Form,
-  FormControl,
-  FormField,
-  FormItem,
-  FormLabel,
-  FormMessage,
-} from '@/components/ui/form';
-import { Input } from '@/components/ui/input';
 import {
   Select,
   SelectContent,
@@ -36,107 +15,72 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { Textarea } from '@/components/ui/textarea';
-import { Calendar } from '@/components/ui/calendar';
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from '@/components/ui/popover';
 import { extractErrorMessage } from '@client/src/components/excel/excel-utils';
 import { contractsApi, financeApi, masterDataApi } from '@client/src/api';
 import { useAsyncData } from '@client/src/hooks/useAsyncData';
 import { formatMoney } from '@client/src/utils/format';
-import { STATUS_VARIANTS } from '@client/src/utils/biz-labels';
 import { confirmDanger } from '@client/src/utils/confirmDanger';
-import { getApiErrorMessage } from '@client/src/utils/api-error-message';
-import {
-  coerceTaxRate,
-  resolveRateOptions,
-  resolveTaxEntity,
-} from '@client/src/utils/tax-rate-options';
-import { formatTaxSplitLine } from '@client/src/utils/tax-display';
-import { VAT_RATES } from '@shared/tax';
 import type {
   ArItem,
   Contract,
-  CreateInvoiceDto,
-  InvoiceDirection,
   InvoiceItem,
-  InvoiceType,
   Supplier,
   TaxEntity,
 } from '@shared/api.interface';
+import {
+  VERIFY_STATUS_LABELS,
+  buildInvoiceCsv,
+  filterLinkableArs,
+  isValidTaxPeriod,
+  sumTaxAmountByDirection,
+  type DirectionFilter,
+} from './invoice-schemas';
+import InvoiceFormDialog from './components/InvoiceFormDialog';
+import InvoiceLinkDialog from './components/InvoiceLinkDialog';
+import InvoiceEditDialog from './components/InvoiceEditDialog';
+import { invoiceColumns } from './components/invoice-columns';
 
-const INVOICE_TYPE_LABELS: Record<string, string> = {
-  vat_special: '增值税专用发票',
-  vat_normal: '增值税普通发票',
-  electronic: '电子发票',
-};
-
-const INVOICE_STATUS_LABELS: Record<string, string> = {
-  issued: '已开票',
-  voided: '已作废',
-};
-
-const DIRECTION_LABELS: Record<InvoiceDirection, string> = {
-  sales: '销项',
-  purchase: '进项',
-};
-
-type DirectionFilter = 'all' | InvoiceDirection;
-
-const toLocalDate = (date: Date): string => {
-  const y = date.getFullYear();
-  const m = String(date.getMonth() + 1).padStart(2, '0');
-  const d = String(date.getDate()).padStart(2, '0');
-  return `${y}-${m}-${d}`;
-};
-
-const csvCell = (v: unknown): string => {
-  const s = v === null || v === undefined ? '' : String(v);
-  return `"${s.replace(/"/gu, '""')}"`;
-};
-
-const invoiceSchema = z
-  .object({
-    direction: z.enum(['sales', 'purchase']),
-    contractId: z.string(),
-    supplierId: z.string(),
-    invoiceType: z.string().min(1, '请选择发票类型'),
-    amount: z.coerce.number().min(0.01, '开票金额必须大于 0'),
-    taxRate: z.coerce
-      .number()
-      .refine((value) => (VAT_RATES as readonly number[]).includes(value), '请选择合法税率'),
-    arId: z.string(),
-    invoiceNo: z.string(),
-    invoiceDate: z.string(),
-    remark: z.string(),
-  })
-  .superRefine((val, ctx) => {
-    if (val.direction === 'sales' && !val.contractId) {
-      ctx.addIssue({ code: 'custom', path: ['contractId'], message: '请选择合同' });
-    }
-    if (val.direction === 'purchase' && !val.supplierId) {
-      ctx.addIssue({ code: 'custom', path: ['supplierId'], message: '请选择供应商' });
-    }
-  });
-
-type InvoiceFormData = z.output<typeof invoiceSchema>;
-type InvoiceFormInput = z.input<typeof invoiceSchema>;
-
-const FORM_DEFAULTS: InvoiceFormInput = {
-  direction: 'sales',
-  contractId: '',
-  supplierId: '',
-  invoiceType: 'vat_special',
-  amount: 0,
-  taxRate: 6,
-  arId: 'none',
-  invoiceNo: '',
-  invoiceDate: '',
-  remark: '',
-};
+/*
+ * §5.9（F8）：本文件的**纯逻辑**已移到同目录 `./invoice-schemas`，
+ * 并配有 `invoice-schemas.spec.ts`（37 条用例 / 121 条断言）。
+ * 搬走的是四块零 React 依赖的声明：
+ *
+ *   ① 展示字典：方向 / 发票类型 / 发票状态 / 查验状态 / 认证状态（含 Badge variant）；
+ *   ② 登记表单 `invoiceSchema` 与 `FORM_DEFAULTS`（含 `InvoiceFormData/Input` 别名）；
+ *   ③ 台账 CSV 导出列表头与取值（`buildInvoiceCsv`，DOM 部分仍在本组件）；
+ *   ④ 小工具：`toLocalDate`（用户选的日历日，**不是**时区口径）、
+ *      `isValidTaxPeriod`（勾选认证所属期）、以及两个派生计算
+ *      （可关联应收白名单、按方向汇总税额）。
+ *
+ * 搬走的理由与 `ap-schemas.ts` / `ar-schemas.ts` 相同：留在组件里既看不到组件本身，
+ * 又只能靠人工发现错误 —— 而这几块的错误恰恰**在界面上看不出来**
+ * （导出照样成功，只是「税额」列里放着开票金额；字典漏一个键只是表格里
+ * 冒出一个英文 key；schema 的 min 改错只是放进一条脏数据）。
+ *
+ * ── 第二轮（同一 §5.9 / F8）：**JSX** 也搬走了 ──────────────────────────
+ *
+ * 上一轮只搬纯声明，文件仍有 854 行（审计口径：非空行）—— 占体量的从来不是声明，
+ * 而是三块 JSX：登记弹窗 315 行、台账表格的 `columns` 160 行、关联应收弹窗 42 行。
+ * 本轮按"每个弹窗 / 每张表一个模块"拆开：
+ *
+ *   · `./components/InvoiceFormDialog.tsx`：发票登记弹窗，自带 `useForm`
+ *     （`invoiceSchema`）、合同/供应商 → 纳税主体 → 税率档位的联动与提交流程；
+ *   · `./components/invoice-columns.tsx`：台账表格列定义（工厂函数，注入跳转与
+ *     作废/查验/认证三个动作处理器 —— 与 `pages/hr/components/attendance-columns.tsx` 同形）；
+ *   · `./components/InvoiceLinkDialog.tsx`：关联应收弹窗。
+ *
+ * 主文件保留：数据查询（`useAsyncData`）、两张税额合计卡、方向筛选区、导出按钮、
+ * 表格本身与两个子组件 —— 也就是"页面级编排"。
+ *
+ * ⚠️ 三条必须保住的语义（搬迁时逐条核对过）：
+ *   ① 两个弹窗**无条件挂载**（不能写成 `{open && <XxxDialog/>}`）：关联应收弹窗的
+ *      `linkArId` 是父组件 state，条件挂载会连"打开时带出该发票已关联的应收"
+ *      这一初始化一起丢掉；
+ *   ② 重置时机逐字未变（详见两个子组件各自的文件头）：登记弹窗只在**提交成功之后**
+ *      `form.reset(FORM_DEFAULTS)`（原实现没有"打开即清空"）；关联应收弹窗则是
+ *      **打开时**由 `openLinkDialog` 带出 `record.arId ?? ''`，关闭或提交成功后清空；
+ *   ③ JSX 文案、`invoiceSchema`、校验消息逐字未动，`invoice-schemas.ts` 仍是唯一定义处。
+ */
 
 const InvoicesTab: React.FC = () => {
   const navigate = useNavigate();
@@ -144,7 +88,8 @@ const InvoicesTab: React.FC = () => {
   const [directionFilter, setDirectionFilter] = useState<DirectionFilter>('all');
   const [linkTarget, setLinkTarget] = useState<InvoiceItem | null>(null);
   const [linkArId, setLinkArId] = useState('');
-  const [linking, setLinking] = useState(false);
+  /** 编辑发票的目标；`null` 表示弹窗关闭（与 `linkTarget` 同一约定） */
+  const [editTarget, setEditTarget] = useState<InvoiceItem | null>(null);
 
   const { data, loading, error, reload } = useAsyncData<InvoiceItem[]>(
     () =>
@@ -165,54 +110,10 @@ const InvoicesTab: React.FC = () => {
   );
   const { data: ars } = useAsyncData<ArItem[]>(() => financeApi.listArs(), []);
 
-  const form = useForm<InvoiceFormInput, unknown, InvoiceFormData>({
-    resolver: zodResolver(invoiceSchema),
-    defaultValues: FORM_DEFAULTS,
-  });
-  const formDirection: InvoiceDirection = form.watch('direction');
-  const watchedContractId = form.watch('contractId');
-  const watchedSupplierId = form.watch('supplierId');
-  const watchedAmount = form.watch('amount');
-  const watchedTaxRate = form.watch('taxRate');
-
   const invoices: InvoiceItem[] = data ?? [];
-  const salesTaxTotal: number = invoices
-    .filter((it: InvoiceItem) => it.direction === 'sales')
-    .reduce((sum: number, it: InvoiceItem) => sum + it.taxAmount, 0);
-  const purchaseTaxTotal: number = invoices
-    .filter((it: InvoiceItem) => it.direction === 'purchase')
-    .reduce((sum: number, it: InvoiceItem) => sum + it.taxAmount, 0);
-  const linkableArs: ArItem[] = (ars ?? []).filter(
-    (a: ArItem) => a.status === 'open' || a.status === 'partial',
-  );
-
-  const onSubmit = form.handleSubmit(async (values) => {
-    const dto: CreateInvoiceDto = {
-      direction: values.direction,
-      invoiceType: values.invoiceType as InvoiceType,
-      amount: values.amount,
-      taxRate: values.taxRate,
-      remark: values.remark || undefined,
-    };
-    if (values.direction === 'sales') {
-      dto.contractId = values.contractId;
-      if (values.arId && values.arId !== 'none') dto.arId = values.arId;
-    } else {
-      dto.supplierId = values.supplierId;
-    }
-    const invoiceNoTrim: string = values.invoiceNo.trim();
-    if (invoiceNoTrim) dto.invoiceNo = invoiceNoTrim;
-    if (values.invoiceDate) dto.invoiceDate = values.invoiceDate;
-    try {
-      await financeApi.createInvoice(dto);
-      toast.success(values.direction === 'sales' ? '销项发票登记成功' : '进项发票登记成功');
-      setCreateOpen(false);
-      form.reset(FORM_DEFAULTS);
-      await reload();
-    } catch (err) {
-      toast.error(getApiErrorMessage(err, '发票登记失败'));
-    }
-  });
+  const salesTaxTotal: number = sumTaxAmountByDirection(invoices, 'sales');
+  const purchaseTaxTotal: number = sumTaxAmountByDirection(invoices, 'purchase');
+  const linkableArs: ArItem[] = filterLinkableArs(ars);
 
   const handleVoid = async (invoice: InvoiceItem) => {
     const ok = await confirmDanger(
@@ -261,7 +162,7 @@ const InvoicesTab: React.FC = () => {
     const input = window.prompt('请输入勾选所属税款所属期（YYYY-MM，如 2026-03）', '');
     if (input === null) return;
     const period = input.trim();
-    if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(period)) {
+    if (!isValidTaxPeriod(period)) {
       toast.error('税款所属期格式必须为 YYYY-MM');
       return;
     }
@@ -279,43 +180,8 @@ const InvoicesTab: React.FC = () => {
       toast.error('当前列表为空，无可导出数据');
       return;
     }
-    const header: string = [
-      '申请编号',
-      '方向',
-      '往来方',
-      '合同',
-      '发票类型',
-      '发票号码',
-      '关联应收',
-      '开票金额（含税）',
-      '税率',
-      '税额',
-      '开票日期',
-      '状态',
-      '备注',
-    ]
-      .map(csvCell)
-      .join(',');
-    const body: string[] = invoices.map((it: InvoiceItem) =>
-      [
-        it.code,
-        DIRECTION_LABELS[it.direction] ?? it.direction,
-        it.direction === 'sales' ? it.customerName : (it.supplierName ?? ''),
-        it.contractName ?? '',
-        INVOICE_TYPE_LABELS[it.invoiceType] ?? it.invoiceType,
-        it.invoiceNo ?? '',
-        it.arCode ?? '',
-        it.amount,
-        it.taxRate,
-        it.taxAmount,
-        it.invoiceDate ?? '',
-        INVOICE_STATUS_LABELS[it.status] ?? it.status,
-        it.remark ?? '',
-      ]
-        .map(csvCell)
-        .join(','),
-    );
-    const blob = new Blob([`\uFEFF${[header, ...body].join('\n')}`], {
+    // 台账文本（表头 + 逐行，含 BOM）由纯模块生成，便于逐列单测；此处只负责落盘
+    const blob = new Blob([buildInvoiceCsv(invoices)], {
       type: 'text/csv;charset=utf-8',
     });
     const url = URL.createObjectURL(blob);
@@ -331,214 +197,21 @@ const InvoicesTab: React.FC = () => {
     setLinkTarget(record);
   };
 
-  const handleLink = async () => {
-    if (!linkTarget || !linkArId) return;
-    setLinking(true);
-    try {
-      await financeApi.updateInvoice(linkTarget.id, { arId: linkArId });
-      toast.success('关联应收成功');
-      setLinkTarget(null);
-      setLinkArId('');
-      await reload();
-    } catch (err) {
-      toast.error(getApiErrorMessage(err, '关联应收失败'));
-    } finally {
-      setLinking(false);
-    }
-  };
+  /*
+   * C-01：查验 / 认证状态展示映射（`BadgeVariant` + `VERIFY_STATUS_*` /
+   * `CERT_STATUS_*` 四张表）已移到 `./invoice-schemas` —— 它们原先是每次 render
+   * 重建的组件内常量，如今是模块常量，并被"每个白名单值都有非空标签 / 颜色"
+   * 的断言钉住。
+   */
 
-  /* C-01：查验 / 认证状态展示映射 */
-  type BadgeVariant =
-    | 'warning'
-    | 'success'
-    | 'secondary'
-    | 'destructive'
-    | 'info'
-    | 'default'
-    | 'outline';
-  const VERIFY_STATUS_LABELS: Record<string, string> = {
-    unverified: '未查验',
-    verifying: '查验中',
-    verified: '已通过',
-    failed: '查验失败',
-  };
-  const VERIFY_STATUS_VARIANTS: Record<string, BadgeVariant> = {
-    unverified: 'secondary',
-    verifying: 'warning',
-    verified: 'success',
-    failed: 'destructive',
-  };
-  const CERT_STATUS_LABELS: Record<string, string> = {
-    uncertified: '未认证',
-    certified: '已认证',
-    deducted: '已抵扣',
-  };
-  const CERT_STATUS_VARIANTS: Record<string, BadgeVariant> = {
-    uncertified: 'secondary',
-    certified: 'info',
-    deducted: 'success',
-  };
-
-  const columns: TableColumnsType<InvoiceItem> = [
-    { title: '申请编号', dataIndex: 'code', fixed: 'left', width: 150 },
-    {
-      title: '方向',
-      dataIndex: 'direction',
-      width: 80,
-      render: (v: InvoiceDirection) => (
-        <Badge variant={v === 'sales' ? 'info' : 'secondary'}>{DIRECTION_LABELS[v] ?? v}</Badge>
-      ),
-    },
-    {
-      title: '往来方',
-      dataIndex: 'customerName',
-      width: 160,
-      render: (v: string, record: InvoiceItem) =>
-        record.direction === 'sales' ? record.customerName : (record.supplierName ?? '-'),
-    },
-    { title: '合同', dataIndex: 'contractName', width: 180, render: (v: string) => v ?? '-' },
-    {
-      title: '发票类型',
-      dataIndex: 'invoiceType',
-      width: 140,
-      render: (t: string) => INVOICE_TYPE_LABELS[t] ?? t,
-    },
-    {
-      title: '发票号码',
-      dataIndex: 'invoiceNo',
-      width: 160,
-      render: (v: string | null, record: InvoiceItem) =>
-        v ? (
-          record.status === 'voided' ? (
-            <span className="text-muted-foreground line-through">{v}</span>
-          ) : (
-            v
-          )
-        ) : (
-          '-'
-        ),
-    },
-    {
-      title: '关联应收',
-      dataIndex: 'arCode',
-      width: 140,
-      render: (v: string | null) => v ?? '-',
-    },
-    {
-      title: '开票金额（含税）',
-      dataIndex: 'amount',
-      width: 180,
-      align: 'right',
-      render: (v: number, record) => (
-        <div className="text-right">
-          <div>{formatMoney(v)}</div>
-          <div className="text-xs text-muted-foreground">
-            {formatTaxSplitLine(v, record.taxRate)}
-          </div>
-        </div>
-      ),
-    },
-    {
-      title: '税额',
-      dataIndex: 'taxAmount',
-      width: 110,
-      align: 'right',
-      render: (v: number) => formatMoney(v),
-    },
-    { title: '开票日期', dataIndex: 'invoiceDate', width: 110, render: (v: string) => v ?? '-' },
-    {
-      title: '状态',
-      dataIndex: 'status',
-      width: 90,
-      render: (s: string) => (
-        <Badge variant={STATUS_VARIANTS[s] ?? 'secondary'}>
-          {INVOICE_STATUS_LABELS[s] ?? s}
-        </Badge>
-      ),
-    },
-    {
-      title: '查验状态',
-      dataIndex: 'verifyStatus',
-      width: 100,
-      render: (v: string, record: InvoiceItem) => (
-        <div className="flex flex-col gap-0.5">
-          <Badge variant={VERIFY_STATUS_VARIANTS[v] ?? 'secondary'}>
-            {VERIFY_STATUS_LABELS[v] ?? v}
-          </Badge>
-          {record.verifyError ? (
-            <span className="text-[11px] text-destructive leading-tight">{record.verifyError}</span>
-          ) : null}
-        </div>
-      ),
-    },
-    {
-      title: '认证状态',
-      dataIndex: 'certificationStatus',
-      width: 110,
-      render: (v: string, record: InvoiceItem) => (
-        <div className="flex flex-col gap-0.5">
-          <Badge variant={CERT_STATUS_VARIANTS[v] ?? 'secondary'}>
-            {CERT_STATUS_LABELS[v] ?? v}
-          </Badge>
-          {record.certificationPeriod ? (
-            <span className="text-[11px] text-muted-foreground leading-tight">
-              {record.certificationPeriod}
-            </span>
-          ) : null}
-        </div>
-      ),
-    },
-    {
-      title: '操作',
-      key: 'actions',
-      width: 220,
-      fixed: 'right',
-      render: (_: unknown, record: InvoiceItem) => (
-        <div className="flex items-center gap-1">
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => navigate(`/finance/invoices/${record.id}`)}
-          >
-            详情
-          </Button>
-          {record.direction === 'sales' ? (
-            <CanCapabilityWrite capability="finance_write">
-              <Button variant="ghost" size="sm" onClick={() => openLinkDialog(record)}>
-                关联应收
-              </Button>
-            </CanCapabilityWrite>
-          ) : null}
-          {record.status === 'issued' ? (
-            <CanCapabilityWrite capability="finance_write">
-              <Button
-                variant="ghost"
-                size="sm"
-                className="text-destructive"
-                onClick={() => void handleVoid(record)}
-              >
-                作废
-              </Button>
-            </CanCapabilityWrite>
-          ) : null}
-          {record.status === 'issued' ? (
-            <CanCapabilityWrite capability="finance_write">
-              <Button variant="ghost" size="sm" onClick={() => void handleVerify(record)}>
-                查验
-              </Button>
-            </CanCapabilityWrite>
-          ) : null}
-          {record.status === 'issued' ? (
-            <CanCapabilityWrite capability="finance_write">
-              <Button variant="ghost" size="sm" onClick={() => void handleCertify(record)}>
-                认证
-              </Button>
-            </CanCapabilityWrite>
-          ) : null}
-        </div>
-      ),
-    },
-  ];
+  const columns: TableColumnsType<InvoiceItem> = invoiceColumns({
+    navigate,
+    openLinkDialog,
+    onEdit: setEditTarget,
+    handleVoid,
+    handleVerify,
+    handleCertify,
+  });
 
   return (
     <div className="flex flex-col gap-4">
@@ -606,364 +279,30 @@ const InvoicesTab: React.FC = () => {
         />
       </DataState>
 
-      <Dialog open={createOpen} onOpenChange={setCreateOpen}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle>发票登记</DialogTitle>
-            <DialogDescription>
-              销项发票需选择合同（客户与项目随合同带出）；进项发票需选择供应商。关联应收时请先开票再回款核销，已核销完毕的应收不可再关联开票。
-            </DialogDescription>
-          </DialogHeader>
-          <Form {...form}>
-            <form onSubmit={onSubmit} className="space-y-4">
-              <FormField
-                control={form.control}
-                name="direction"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>
-                      方向 <span aria-hidden="true" className="text-destructive">*</span>
-                    </FormLabel>
-                    <Select onValueChange={field.onChange} value={field.value}>
-                      <FormControl>
-                        <SelectTrigger>
-                          <SelectValue placeholder="请选择方向" />
-                        </SelectTrigger>
-                      </FormControl>
-                      <SelectContent>
-                        <SelectItem value="sales">销项</SelectItem>
-                        <SelectItem value="purchase">进项</SelectItem>
-                      </SelectContent>
-                    </Select>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-              {formDirection === 'sales' ? (
-                <FormField
-                  control={form.control}
-                  name="contractId"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>
-                        合同 <span aria-hidden="true" className="text-destructive">*</span>
-                      </FormLabel>
-                      <Select
-                        value={field.value}
-                        onValueChange={(value) => {
-                          field.onChange(value);
-                          const contract = (contracts ?? []).find((c) => c.id === value);
-                          const entity = resolveTaxEntity({
-                            taxEntityId: contract?.taxEntityId,
-                            taxEntities: taxEntities ?? [],
-                          });
-                          const nextRate = coerceTaxRate(
-                            Number(contract?.taxRate ?? form.getValues('taxRate') ?? 6),
-                            entity
-                          );
-                          form.setValue('taxRate', nextRate);
-                        }}
-                      >
-                        <FormControl>
-                          <SelectTrigger>
-                            <SelectValue placeholder="请选择合同" />
-                          </SelectTrigger>
-                        </FormControl>
-                        <SelectContent>
-                          {(contracts ?? []).map((c: Contract) => (
-                            <SelectItem key={c.id} value={c.id}>
-                              {c.code} - {c.name}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-              ) : (
-                <FormField
-                  control={form.control}
-                  name="supplierId"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>
-                        供应商 <span aria-hidden="true" className="text-destructive">*</span>
-                      </FormLabel>
-                      <Select
-                        value={field.value}
-                        onValueChange={(value) => {
-                          field.onChange(value);
-                          const supplier = (suppliers ?? []).find((s) => s.id === value);
-                          const entity = resolveTaxEntity({
-                            taxEntityId: supplier?.taxEntityId,
-                            taxEntities: taxEntities ?? [],
-                            supplierTaxEntityId: supplier?.taxEntityId,
-                          });
-                          form.setValue(
-                            'taxRate',
-                            coerceTaxRate(Number(form.getValues('taxRate') ?? 6), entity)
-                          );
-                        }}
-                      >
-                        <FormControl>
-                          <SelectTrigger>
-                            <SelectValue placeholder="请选择供应商" />
-                          </SelectTrigger>
-                        </FormControl>
-                        <SelectContent>
-                          {(suppliers ?? []).map((s: Supplier) => (
-                            <SelectItem key={s.id} value={s.id}>
-                              {s.code} - {s.name}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-              )}
-              {formDirection === 'sales' ? (
-                <FormField
-                  control={form.control}
-                  name="arId"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>关联应收（可选）</FormLabel>
-                      <Select onValueChange={field.onChange} value={field.value}>
-                        <FormControl>
-                          <SelectTrigger>
-                            <SelectValue placeholder="请选择应收单" />
-                          </SelectTrigger>
-                        </FormControl>
-                        <SelectContent>
-                          <SelectItem value="none">不关联</SelectItem>
-                          {linkableArs.map((a: ArItem) => (
-                            <SelectItem key={a.id} value={a.id}>
-                              {a.code} - {a.customerName}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-              ) : null}
-              <div className="flex gap-4">
-                <FormField
-                  control={form.control}
-                  name="invoiceType"
-                  render={({ field }) => (
-                    <FormItem className="flex-1">
-                      <FormLabel>
-                        发票类型 <span aria-hidden="true" className="text-destructive">*</span>
-                      </FormLabel>
-                      <Select onValueChange={field.onChange} value={field.value}>
-                        <FormControl>
-                          <SelectTrigger>
-                            <SelectValue placeholder="请选择" />
-                          </SelectTrigger>
-                        </FormControl>
-                        <SelectContent>
-                          {Object.entries(INVOICE_TYPE_LABELS).map(([value, label]) => (
-                            <SelectItem key={value} value={value}>
-                              {label}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-                <FormField
-                  control={form.control}
-                  name="amount"
-                  render={({ field }) => (
-                    <FormItem className="flex-1">
-                      <FormLabel>
-                        金额（含税）{' '}
-                        <span aria-hidden="true" className="text-destructive">*</span>
-                      </FormLabel>
-                      <FormControl>
-                        <Input
-                          type="number"
-                          min={0}
-                          value={String(field.value ?? '')}
-                          onChange={field.onChange}
-                          onBlur={field.onBlur}
-                          name={field.name}
-                          ref={field.ref}
-                        />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-              </div>
-              <FormField
-                control={form.control}
-                name="taxRate"
-                render={({ field }) => {
-                  const selectedContract = (contracts ?? []).find(
-                    (c) => c.id === watchedContractId
-                  );
-                  const selectedSupplier = (suppliers ?? []).find(
-                    (s) => s.id === watchedSupplierId
-                  );
-                  const entity = resolveTaxEntity({
-                    taxEntityId:
-                      formDirection === 'sales'
-                        ? selectedContract?.taxEntityId
-                        : selectedSupplier?.taxEntityId,
-                    taxEntities: taxEntities ?? [],
-                    customerTaxEntityId: null,
-                    supplierTaxEntityId: selectedSupplier?.taxEntityId,
-                  });
-                  const rates = resolveRateOptions(entity);
-                  return (
-                    <FormItem>
-                      <FormLabel>税率（%）</FormLabel>
-                      <Select
-                        value={String(field.value)}
-                        onValueChange={(value) => field.onChange(Number(value))}
-                      >
-                        <FormControl>
-                          <SelectTrigger>
-                            <SelectValue placeholder="税率" />
-                          </SelectTrigger>
-                        </FormControl>
-                        <SelectContent>
-                          {rates.map((rate) => (
-                            <SelectItem key={rate} value={String(rate)}>
-                              {rate}%
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                      <p className="text-xs text-muted-foreground">
-                        {formatTaxSplitLine(
-                          Number(watchedAmount ?? 0),
-                          Number(watchedTaxRate ?? field.value ?? 0)
-                        )}
-                      </p>
-                      <FormMessage />
-                    </FormItem>
-                  );
-                }}
-              />
-              <div className="flex gap-4">
-                <FormField
-                  control={form.control}
-                  name="invoiceNo"
-                  render={({ field }) => (
-                    <FormItem className="flex-1">
-                      <FormLabel>发票号码（可选）</FormLabel>
-                      <FormControl>
-                        <Input placeholder="不填则使用系统编号" {...field} />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-                <FormField
-                  control={form.control}
-                  name="invoiceDate"
-                  render={({ field }) => (
-                    <FormItem className="flex-1">
-                      <FormLabel>开票日期（可选）</FormLabel>
-                      <Popover>
-                        <PopoverTrigger asChild>
-                          <FormControl>
-                            <Button
-                              variant="outline"
-                              type="button"
-                              className="w-full justify-start font-normal"
-                            >
-                              {field.value || '请选择开票日期'}
-                            </Button>
-                          </FormControl>
-                        </PopoverTrigger>
-                        <PopoverContent className="w-auto p-0" align="start">
-                          <Calendar
-                            mode="single"
-                            selected={field.value ? new Date(`${field.value}T00:00:00`) : undefined}
-                            onSelect={(date: Date | undefined) =>
-                              field.onChange(date ? toLocalDate(date) : '')
-                            }
-                          />
-                        </PopoverContent>
-                      </Popover>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-              </div>
-              <FormField
-                control={form.control}
-                name="remark"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>备注</FormLabel>
-                    <FormControl>
-                      <Textarea placeholder="备注" {...field} />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-              <DialogFooter>
-                <Button type="submit">提交登记</Button>
-              </DialogFooter>
-            </form>
-          </Form>
-        </DialogContent>
-      </Dialog>
+      <InvoiceFormDialog
+        open={createOpen}
+        onOpenChange={setCreateOpen}
+        contracts={contracts}
+        suppliers={suppliers}
+        taxEntities={taxEntities}
+        linkableArs={linkableArs}
+        onSaved={reload}
+      />
 
-      <Dialog open={linkTarget !== null} onOpenChange={(open: boolean) => {
-        if (!open) {
-          setLinkTarget(null);
-          setLinkArId('');
-        }
-      }}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle>关联应收</DialogTitle>
-            <DialogDescription>
-              为发票 {linkTarget?.code} 选择待回款的应收单，提交后完成关联
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4">
-            <Select value={linkArId} onValueChange={setLinkArId}>
-              <SelectTrigger>
-                <SelectValue placeholder="请选择应收单" />
-              </SelectTrigger>
-              <SelectContent>
-                {linkableArs.map((a: ArItem) => (
-                  <SelectItem key={a.id} value={a.id}>
-                    {a.code} - {a.customerName}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            {linkableArs.length === 0 ? (
-              <p className="text-sm text-muted-foreground">
-                暂无可关联的应收单（仅开放中 / 部分回款的应收可关联）
-              </p>
-            ) : null}
-            <DialogFooter>
-              <Button variant="outline" onClick={() => setLinkTarget(null)}>
-                取消
-              </Button>
-              <Button disabled={!linkArId || linking} onClick={() => void handleLink()}>
-                确认关联
-              </Button>
-            </DialogFooter>
-          </div>
-        </DialogContent>
-      </Dialog>
+      <InvoiceEditDialog
+        target={editTarget}
+        setTarget={setEditTarget}
+        onSaved={reload}
+      />
+
+      <InvoiceLinkDialog
+        linkTarget={linkTarget}
+        setLinkTarget={setLinkTarget}
+        linkArId={linkArId}
+        setLinkArId={setLinkArId}
+        linkableArs={linkableArs}
+        onSaved={reload}
+      />
 
     </div>
   );

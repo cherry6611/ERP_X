@@ -29,7 +29,7 @@ import { contractsApi, financeApi, masterDataApi } from '@client/src/api';
 import { useAsyncData } from '@client/src/hooks/useAsyncData';
 import { formatTaxSplitLine } from '@client/src/utils/tax-display';
 import {
-  coerceTaxRate,
+  resolveFormTaxRate,
   resolveRateOptions,
   resolveTaxEntity,
 } from '@client/src/utils/tax-rate-options';
@@ -131,7 +131,7 @@ const InvoiceCreatePage: React.FC = () => {
       taxEntityId: selectedContract.taxEntityId,
       taxEntities: taxEntities ?? [],
     });
-    form.setValue('taxRate', coerceTaxRate(selectedContract.taxRate, entity));
+    form.setValue('taxRate', resolveFormTaxRate(selectedContract.taxRate, entity));
   }, [direction, selectedContract, taxEntities, form]);
 
   const rateOptions = resolveRateOptions(

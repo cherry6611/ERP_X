@@ -164,8 +164,11 @@ const AuxCombinationPanel: React.FC<Props> = ({ period }) => {
 
       <div className="flex flex-wrap items-end gap-3 rounded-md border bg-muted/30 p-3">
         <div className="grid gap-1">
-          <Label className="text-xs">维度（逗号分隔，最多 3 个）</Label>
+          <Label className="text-xs" htmlFor="aux-combination-dimensions">
+            维度（逗号分隔，最多 3 个）
+          </Label>
           <Input
+            id="aux-combination-dimensions"
             className="w-72"
             value={dimensionInput}
             placeholder="department,project"
@@ -173,8 +176,11 @@ const AuxCombinationPanel: React.FC<Props> = ({ period }) => {
           />
         </div>
         <div className="grid gap-1">
-          <Label className="text-xs">科目前缀（可选，如 6602）</Label>
+          <Label className="text-xs" htmlFor="aux-combination-account-prefix">
+            科目前缀（可选，如 6602）
+          </Label>
           <Input
+            id="aux-combination-account-prefix"
             className="w-40"
             value={accountCode}
             placeholder="全部科目"
@@ -367,8 +373,11 @@ const AuxCombinationPanel: React.FC<Props> = ({ period }) => {
         </div>
         <div className="flex flex-wrap items-end gap-3">
           <div className="grid gap-1">
-            <Label className="text-xs">待分摊总额</Label>
+            <Label className="text-xs" htmlFor="aux-allocation-total-amount">
+              待分摊总额
+            </Label>
             <Input
+              id="aux-allocation-total-amount"
               className="w-36"
               inputMode="decimal"
               value={allocAmount}
@@ -376,8 +385,11 @@ const AuxCombinationPanel: React.FC<Props> = ({ period }) => {
             />
           </div>
           <div className="grid gap-1">
-            <Label className="text-xs">权重（逗号分隔）</Label>
+            <Label className="text-xs" htmlFor="aux-allocation-weights">
+              权重（逗号分隔）
+            </Label>
             <Input
+              id="aux-allocation-weights"
               className="w-48"
               value={allocWeights}
               onChange={(event) => setAllocWeights(event.target.value)}

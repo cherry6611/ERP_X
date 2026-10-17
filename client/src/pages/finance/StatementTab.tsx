@@ -1,11 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import ReactECharts from 'echarts-for-react';
 import type { EChartsOption } from 'echarts';
-import { Table, TableColumnsType } from 'antd';
-import { AlertTriangle, Scale } from 'lucide-react';
+import { TableColumnsType } from 'antd';
 import { DataState } from '@client/src/components/DataState';
-import { SectionTitle } from '@client/src/components/SectionTitle';
-import StatCard from '@client/src/components/erp/StatCard';
 import PeriodSelect from '@client/src/components/erp/PeriodSelect';
 import FilterBar from '@client/src/components/erp/FilterBar';
 import {
@@ -26,14 +22,20 @@ import {
 import { financeApi } from '@client/src/api';
 import { useAsyncData } from '@client/src/hooks/useAsyncData';
 import { seriesColor } from '@client/src/theme/tokens';
-import { currentPeriod, formatMoney } from '@client/src/utils/format';
+import { currentPeriod } from '@client/src/utils/format';
 import type {
   StatementCounterpartyOption,
   StatementDirection,
   StatementLineItem,
   StatementResult,
 } from '@shared/api.interface';
+import StatementReport from './components/StatementReport';
 
+/*
+ * 文案/样式表与 `money()` 都留在本文件做**唯一真源**：`DOC_TYPE_LABELS` 同时喂给
+ * `columns`、打印包与结果区（经 `docTypeLabels` prop），`STATUS_LABELS` 喂给
+ * `columns` 与打印包，`STATUS_CLASS` 只喂 `columns` —— 拆到结果区会变成第二份定义。
+ */
 /** 单据类型展示文案 */
 const DOC_TYPE_LABELS: Record<StatementLineItem['docType'], string> = {
   ar: '应收单',
@@ -72,6 +74,22 @@ const money = (value: number, line: StatementLineItem): string =>
  * 与「勾稽中心」的区别：这里是**给对手方寄送/确认**的对账单，
  * 按期列示期初余额、本期逐笔发生与运行余额，末行给出可确认的期末余额。
  * 打印复用 C-06 打印框架（`PrintButton` + `print.css`），单据种类 `statement`。
+ *
+ * §5.9（F8）：文件原先 528 非空行，超出「组件 ≤ 500 行」的门槛。本轮把**结果区**
+ * （原 374–548 行的 `{statement ? … : null}`，共 175 行）整体抽到
+ * `./components/StatementReport`。选它的理由：这一块是**纯展示**（无 state、
+ * 无副作用、无 handler），而本文件里占体量的正是它；抽走后主文件只剩
+ * 「数据查询 + 筛选区 + 列定义/图表 memo + 打印包」这套编排。
+ *
+ * ⚠️ 刻意**没有**搬走的三样（搬了只会把依赖链拉长或多传一层 props）：
+ *   · `columns` 与图表 `option` 的 `useMemo` —— 依赖 `STATUS_CLASS` / `chartData`
+ *     等本文件的东西，且 memo 必须贴着自己的数据源；
+ *   · `buildPack` 打印包 —— `PrintButton` 挂在下方 `FilterBar` 里，与结果区无关；
+ *   · 文案/样式表与 `money()` —— `DOC_TYPE_LABELS` / `STATUS_LABELS` / `STATUS_CLASS`
+ *     屏幕与打印件共用，留在这里做唯一真源，结果区只经 `docTypeLabels` prop 取用。
+ *
+ * 结果区里**没有**任何"打开即重置"的语义（原本也没有 `useState`），
+ * `{statement ? … : null}` 的位置与判据未动。
  */
 const StatementTab: React.FC = () => {
   const [direction, setDirection] = useState<StatementDirection>('customer');
@@ -108,8 +126,15 @@ const StatementTab: React.FC = () => {
     [direction, counterpartyId, period],
   );
 
-  const lines: StatementLineItem[] = statement?.lines ?? [];
-  const counterpartyList = options ?? [];
+  /*
+   * F2：`?? []` 每次渲染产生新数组 → 会让下游 memo（`columns` / ECharts `option`）
+   * 全部失效。必须先 memo 数据源本身，下游的 memo 才有意义。
+   */
+  const lines: StatementLineItem[] = useMemo(
+    () => statement?.lines ?? [],
+    [statement],
+  );
+  const counterpartyList = useMemo(() => options ?? [], [options]);
 
   const columns: TableColumnsType<StatementLineItem> = useMemo(
     () => [
@@ -184,8 +209,16 @@ const StatementTab: React.FC = () => {
     [],
   );
 
-  const chartData = lines.filter((line) => line.runningBalance != null);
-  const option: EChartsOption = {
+  // F2：`filter` 每次渲染产生新数组 → 会让 option 的 memo 失效，必须先 memo
+  const chartData = useMemo(
+    () => lines.filter((line) => line.runningBalance != null),
+    [lines],
+  );
+  /*
+   * F2（§5.3）：option 必须 memo —— 否则父组件任何 state 变化都会让它成为
+   * 新对象引用，`echarts-for-react` 随即走 setOption 全量 diff 重绘。
+   */
+   const option: EChartsOption = useMemo(() => ({
     tooltip: { trigger: 'axis' },
     grid: { left: '3%', right: '4%', bottom: '12%', containLabel: true },
     xAxis: {
@@ -205,7 +238,7 @@ const StatementTab: React.FC = () => {
         areaStyle: { opacity: 0.08 },
       },
     ],
-  };
+  }), [chartData]);
 
   const summary = statement?.reconSummary;
   const excludedCount = statement?.excludedLines.length ?? 0;
@@ -357,179 +390,18 @@ const StatementTab: React.FC = () => {
           skeleton="table"
         >
           {statement ? (
-            <div className="flex flex-col gap-4">
-              <div className="rounded-lg border bg-card p-4">
-                <div className="flex flex-wrap items-baseline justify-between gap-2">
-                  <div>
-                    <p className="text-base font-semibold">
-                      {direction === 'customer' ? '客户对账单' : '供应商对账单'}：
-                      {statement.counterparty.name}
-                    </p>
-                    <p className="text-sm text-muted-foreground">
-                      期间 {statement.period}（{statement.periodRange.start} 至{' '}
-                      {statement.periodRange.monthEnd}） · 单据编号{' '}
-                      {statement.counterparty.code} · 我方抬头{' '}
-                      {statement.org.companyName ?? '未配置纳税主体'}
-                    </p>
-                  </div>
-                  <p className="text-sm text-muted-foreground">
-                    生成时间{' '}
-                    {new Date(statement.generatedAt).toLocaleString('zh-CN')}
-                  </p>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-3 gap-4">
-                <StatCard
-                  label="期初余额"
-                  value={formatMoney(statement.openingBalance)}
-                  icon={Scale}
-                  tone="neutral"
-                  hint={`${statement.periodRange.start} 之前的累计发生额净额`}
-                />
-                <StatCard
-                  label="本期增加 / 减少"
-                  value={`${formatMoney(statement.periodDebit)} / ${formatMoney(statement.periodCredit)}`}
-                  icon={Scale}
-                  tone="info"
-                  hint={`本期发生 ${lines.length} 笔`}
-                />
-                <StatCard
-                  label={direction === 'customer' ? '期末应收余额' : '期末应付余额'}
-                  value={formatMoney(statement.closingBalance)}
-                  icon={Scale}
-                  tone={statement.closingBalance > 0 ? 'warning' : 'success'}
-                  hint={`大写：${statement.closingBalanceInWords}`}
-                />
-              </div>
-
-              {excludedCount > 0 ? (
-                <div className="flex items-start gap-2 rounded-md border border-dashed px-3 py-2 text-sm">
-                  <AlertTriangle
-                    className="mt-0.5 size-4 shrink-0 text-warning"
-                    aria-hidden="true"
-                  />
-                  <span>
-                    本期有 <strong>{excludedCount}</strong> 张已作废单据已被整单剔除（不参与余额）：
-                    {statement.excludedLines
-                      .map((line) => line.docCode)
-                      .join('、')}
-                  </span>
-                </div>
-              ) : null}
-
-              <div className="rounded-lg border bg-card p-4">
-                <SectionTitle>余额走势（含期初）</SectionTitle>
-                {chartData.length > 0 ? (
-                  <div role="img" aria-label="对账单运行余额走势图">
-                    <ReactECharts option={option} theme="ud" className="h-[260px] w-full" />
-                  </div>
-                ) : (
-                  <p className="py-8 text-center text-sm text-muted-foreground">
-                    本期无余额类发生额，仅有期初余额 {formatMoney(statement.openingBalance)}
-                  </p>
-                )}
-              </div>
-
-              <Table
-                columns={columns}
-                dataSource={lines}
-                loading={loading}
-                rowKey={(row: StatementLineItem) =>
-                  `${row.date}-${row.docType}-${row.docCode}`
-                }
-                rowClassName={(row: StatementLineItem) =>
-                  row.affectsBalance ? '' : 'text-muted-foreground'
-                }
-                scroll={{ x: 1100, y: 420 }}
-                pagination={{
-                  pageSize: 50,
-                  showTotal: (t: number) => `共 ${t} 条`,
-                }}
-                locale={{
-                  emptyText:
-                    '本期无发生额；如期末余额≠0，说明余额全部来自期初结转。',
-                }}
-                summary={() => (
-                  <Table.Summary fixed>
-                    <Table.Summary.Row>
-                      <Table.Summary.Cell index={0} colSpan={3}>
-                        <span className="font-medium">
-                          期初 {formatMoney(statement.openingBalance)} · 本期增加{' '}
-                          {formatMoney(statement.periodDebit)} · 本期减少{' '}
-                          {formatMoney(statement.periodCredit)}
-                        </span>
-                      </Table.Summary.Cell>
-                      <Table.Summary.Cell index={3} align="right">
-                        {cellText(statement.periodDebit)}
-                      </Table.Summary.Cell>
-                      <Table.Summary.Cell index={4} align="right">
-                        {cellText(statement.periodCredit)}
-                      </Table.Summary.Cell>
-                      <Table.Summary.Cell index={5} align="right">
-                        <span className="font-semibold">
-                          {cellText(statement.closingBalance)}
-                        </span>
-                      </Table.Summary.Cell>
-                      <Table.Summary.Cell index={6} colSpan={2}>
-                        <span className="text-muted-foreground">
-                          已核销 {summary?.reconciled ?? 0} / 部分 {summary?.partial ?? 0} /
-                          未核销 {summary?.open ?? 0}
-                        </span>
-                      </Table.Summary.Cell>
-                    </Table.Summary.Row>
-                  </Table.Summary>
-                )}
-              />
-
-              {statement.openingLines.length > 0 ? (
-                <div className="rounded-lg border bg-card p-4">
-                  <SectionTitle>
-                    期初构成（{statement.openingLines.length} 笔，
-                    {statement.periodRange.start} 之前）
-                  </SectionTitle>
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-sm">
-                      <thead className="bg-muted/50 text-left">
-                        <tr>
-                          <th className="p-2">日期</th>
-                          <th className="p-2">单据类型</th>
-                          <th className="p-2">单据编号</th>
-                          <th className="p-2 text-right">增加</th>
-                          <th className="p-2 text-right">减少</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {statement.openingLines.map((line) => (
-                          <tr
-                            key={`${line.date}-${line.docType}-${line.docCode}`}
-                            className="border-t"
-                          >
-                            <td className="p-2">{line.date || '—'}</td>
-                            <td className="p-2">{DOC_TYPE_LABELS[line.docType]}</td>
-                            <td className="p-2 font-mono text-xs">{line.docCode}</td>
-                            <td className="p-2 text-right">
-                              {line.affectsBalance ? cellText(line.debit) : '—'}
-                            </td>
-                            <td className="p-2 text-right">
-                              {line.affectsBalance ? cellText(line.credit) : '—'}
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              ) : null}
-
-              <p className="text-sm text-muted-foreground">
-                口径说明（**需财务确认**）：① 期初余额 =
-                期间开始日之前的累计发生额净额（系统无期末余额快照，期末由发生额推导）；
-                ② 期间边界左闭右开，期间开始日当天计入本期、次月 1 日计入下期；
-                ③ 作废的收付款/发票整单剔除；④ 发票行仅为备查，不重复计入余额；
-                ⑤ 未核销回款按实收计入（减少余额），核对状态显示为未核销/部分核销。
-              </p>
-            </div>
+            <StatementReport
+              direction={direction}
+              statement={statement}
+              lines={lines}
+              chartData={chartData}
+              option={option}
+              columns={columns}
+              summary={summary}
+              excludedCount={excludedCount}
+              loading={loading}
+              docTypeLabels={DOC_TYPE_LABELS}
+            />
           ) : null}
         </DataState>
       ) : null}

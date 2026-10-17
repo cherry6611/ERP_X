@@ -1,7 +1,4 @@
 import React, { useState } from 'react';
-import { zodResolver } from '@hookform/resolvers/zod';
-import { useForm } from 'react-hook-form';
-import { z } from 'zod';
 import { toast } from 'sonner';
 import { Download, Plus } from 'lucide-react';
 import { Table, TableColumnsType } from 'antd';
@@ -11,110 +8,80 @@ import { SectionTitle } from '@client/src/components/SectionTitle';
 import StatusBadge from '@client/src/components/erp/StatusBadge';
 import { Button } from '@client/src/components/ui/button';
 import {
-  Dialog,
-  DialogContent,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@client/src/components/ui/dialog';
-import {
-  Form,
-  FormControl,
-  FormField,
-  FormItem,
-  FormLabel,
-  FormMessage,
-} from '@/components/ui/form';
-import { Input } from '@/components/ui/input';
-import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { Textarea } from '@/components/ui/textarea';
 import { contractsApi, financeApi, masterDataApi } from '@client/src/api';
 import { PrintButton } from '@client/src/components/print';
 import { compactFields, metaField } from '@client/src/components/print';
 import { useAsyncData } from '@client/src/hooks/useAsyncData';
 import { confirmDanger } from '@client/src/utils/confirmDanger';
 import { formatMoney } from '@client/src/utils/format';
+import { arExportColumns as AR_EXPORT_COLUMNS } from './ar-schemas';
+import ArFormDialog from './components/ArFormDialog';
+import ReceiptApplyDialog from './components/ReceiptApplyDialog';
+import ArWriteoffDialog from './components/ArWriteoffDialog';
 import {
   exportRowsToXlsx,
-  type ExcelSheetColumn,
 } from '@client/src/components/excel/excel-utils';
 import { getApiErrorMessage } from '@client/src/utils/api-error-message';
 import type {
   ArItem,
-  ArWriteoffDto,
   Contract,
-  CreateArDto,
-  CreateReceiptDto,
   Customer,
   ReceiptItem,
 } from '@shared/api.interface';
 
-const AR_STATUS_LABELS: Record<string, string> = {
-  open: '未核销',
-  partial: '部分核销',
-  settled: '已结清',
-};
+// 修复：这里原先自带 AR_STATUS_LABELS / RECEIPT_STATUS_LABELS 两份**本地**映射，
+// 绕过了 `utils/biz-labels.ts` 的字典版（B-05 字典编辑对本品类页不生效），
+// 且 `receipt_status` 的 `voided` 键在本地缺失 → 作废回款单显示英文状态码。
+// 统一改为引用字典版（唯一真源）。
+import {
+  AR_STATUS_LABELS,
+  RECEIPT_STATUS_LABELS,
+} from '@client/src/utils/biz-labels';
 
-/** C-06 回款单打印用状态文案 */
-const RECEIPT_STATUS_LABELS: Record<string, string> = {
-  unmatched: '未核销',
-  partial: '部分核销',
-  matched: '已核销',
-  voided: '已作废',
-};
+/*
+ * §5.9（F8）：`AR_EXPORT_COLUMNS` 与三个表单 schema 已移到 `./ar-schemas`。
+ *
+ * 与 `ap-schemas.ts` 同一拆分理由：零 React 依赖的纯声明，搬出来后
+ * **可被单测**（`ar-schemas.spec.ts`）。
+ *
+ * 规格里特别钉住了应收与应付的**有意不对称**：
+ *   · 应收单挂**合同**（`contractId`）—— 收入按合同确认，需可追溯；
+ *   · 回款单挂**客户**（`customerId`）—— 一个客户可能一次付多个合同，
+ *     归属由「核销」分摊。
+ * 若有人为了"统一"把它们改成与应付一致，规格会失败。
+ */
 
-const AR_EXPORT_COLUMNS: ExcelSheetColumn<ArItem>[] = [
-  { header: '应收编号', value: (row: ArItem) => row.code },
-  { header: '客户', value: (row: ArItem) => row.customerName },
-  { header: '合同', value: (row: ArItem) => row.contractName },
-  { header: '应收金额（含税）', value: (row: ArItem) => row.amount },
-  { header: '已核销', value: (row: ArItem) => row.settledAmount },
-  {
-    header: '未核销',
-    value: (row: ArItem) => row.amount - row.settledAmount,
-  },
-  { header: '到期日', value: (row: ArItem) => row.dueDate ?? '' },
-  {
-    header: '状态',
-    value: (row: ArItem) => AR_STATUS_LABELS[row.status] ?? row.status,
-  },
-  { header: '逾期', value: (row: ArItem) => (row.overdue ? '是' : '否') },
-];
-
-const arSchema = z.object({
-  contractId: z.string().min(1, '请选择合同'),
-  amount: z.coerce.number().min(1, '应收金额必须大于 0'),
-  dueDate: z.string().optional(),
-  remark: z.string(),
-});
-
-type ArFormData = z.output<typeof arSchema>;
-type ArFormInput = z.input<typeof arSchema>;
-
-const receiptSchema = z.object({
-  customerId: z.string().min(1, '请选择客户'),
-  amount: z.coerce.number().min(1, '回款金额必须大于 0'),
-  method: z.string(),
-  remark: z.string(),
-});
-
-type ReceiptFormData = z.output<typeof receiptSchema>;
-type ReceiptFormInput = z.input<typeof receiptSchema>;
-
-const writeoffSchema = z.object({
-  arId: z.string().min(1, '请选择应收'),
-  receiptId: z.string().min(1, '请选择回款'),
-  amount: z.coerce.number().min(0.01, '核销金额必须大于 0'),
-});
-
-type WriteoffFormData = z.output<typeof writeoffSchema>;
-type WriteoffFormInput = z.input<typeof writeoffSchema>;
+/*
+ * §5.9（F8）：三个弹窗已各自拆成 `./components/` 下的组件。
+ *
+ * 上一轮只搬走了**纯声明**（schema / 导出列），文件仍然 680+ 行 —— 因为占体量的
+ * 从来不是声明，而是本文件末尾 280 余行的三段 `<Dialog>` JSX（登记应收 /
+ * 登记回款 / 回款核销）。本轮把这三段**整体**搬走，每个组件自带 `useForm`
+ * 与提交处理器：
+ *
+ *   · 主文件保留：数据查询（`useAsyncData`）、两个表格的列定义与操作列、
+ *     筛选区与导出按钮、以及两个下拉的**候选过滤** —— 也就是"页面级编排"；
+ *   · 子组件只拿**数据**与 `onSaved`（写成功后由主文件重取列表），不再由主文件
+ *     传入 setter。
+ *
+ * 与应付侧（`ApTab.tsx` + `components/ApFormDialog.tsx` /
+ * `PaymentApplyDialog.tsx` / `WriteoffDialog.tsx`）同一套结构；
+ * 本页的核销弹窗文件名多一个 `Ar` 前缀（`ArWriteoffDialog.tsx`），
+ * 以免与应付的 `WriteoffDialog.tsx` 同名 —— 两者的 DTO 与字段名都不同。
+ *
+ * ⚠️ 三个必须保住的语义（搬迁时逐条核对）：
+ *   ① 三个组件**无条件挂载**，不能写成 `{open && <XxxDialog/>}` ——
+ *      `useForm` 原先是 `ArTab` 函数体里的常驻实例，条件挂载会改变表单状态的
+ *      生命周期（等价于"打开即清空"）；
+ *   ② 表单重置时机不变：都在**提交成功之后**重置（原实现没有"打开即清空"）；
+ *   ③ JSX 文案、schema、校验消息逐字未动，`ar-schemas.ts` 仍是唯一定义处。
+ */
 
 const ArTab: React.FC = () => {
   const [statusFilter, setStatusFilter] = useState('all');
@@ -136,73 +103,21 @@ const ArTab: React.FC = () => {
     [],
   );
 
-  const arForm = useForm<ArFormInput, unknown, ArFormData>({
-    resolver: zodResolver(arSchema),
-    defaultValues: { contractId: '', amount: 0, remark: '' },
-  });
-  const receiptForm = useForm<ReceiptFormInput, unknown, ReceiptFormData>({
-    resolver: zodResolver(receiptSchema),
-    defaultValues: { customerId: '', amount: 0, method: 'bank', remark: '' },
-  });
-  const writeoffForm = useForm<WriteoffFormInput, unknown, WriteoffFormData>({
-    resolver: zodResolver(writeoffSchema),
-    defaultValues: { arId: '', receiptId: '', amount: 0 },
-  });
-
-  const onCreateAr = arForm.handleSubmit(async (values) => {
-    const dto: CreateArDto = {
-      contractId: values.contractId,
-      amount: values.amount,
-      dueDate: values.dueDate,
-      remark: values.remark || undefined,
-    };
-    try {
-      await financeApi.createAr(dto);
-      toast.success('应收已登记');
-      setArOpen(false);
-      arForm.reset({ contractId: '', amount: 0, remark: '' });
-      await reload();
-    } catch (err) {
-      toast.error(getApiErrorMessage(err, '登记失败'));
-    }
-  });
-
-  const onCreateReceipt = receiptForm.handleSubmit(async (values) => {
-    const dto: CreateReceiptDto = {
-      customerId: values.customerId,
-      amount: values.amount,
-      method: values.method,
-      remark: values.remark || undefined,
-    };
-    try {
-      await financeApi.createReceipt(dto);
-      toast.success('回款已登记');
-      setReceiptOpen(false);
-      receiptForm.reset({ customerId: '', amount: 0, method: 'bank', remark: '' });
-      await reload();
-    } catch (err) {
-      toast.error(getApiErrorMessage(err, '登记失败'));
-    }
-  });
-
-  const onWriteoff = writeoffForm.handleSubmit(async (values) => {
-    const dto: ArWriteoffDto = {
-      arId: values.arId,
-      receiptId: values.receiptId,
-      amount: values.amount,
-    };
-    try {
-      await financeApi.arWriteoff(dto);
-      toast.success('核销成功');
-      setWriteoffOpen(false);
-      writeoffForm.reset({ arId: '', receiptId: '', amount: 0 });
-      await reload();
-    } catch (err) {
-      toast.error(getApiErrorMessage(err, '核销失败'));
-    }
-  });
-
-  const openArItems = (ars ?? []).filter((a) => a.status !== 'settled');
+  /*
+   * ⚠️ 必须**同时**排除 `voided`，不能只排 `settled`。
+   *
+   * 作废的应收单 `amount − settledAmount` 通常仍是正数，所以"未核销"这个
+   * 直觉判据会把它当成可核销候选列进下拉。而 `ArStatus` 契约含 `'voided'`、
+   * `voidAr` 会真的写这个值、`listArs()` 在不传 status 时也不过状态 ——
+   * 所以作废单真的会出现在列表与下拉里。选中后核销会被服务端拒绝
+   * （`ArService.writeoff` 新增了守卫），但**让人先选到再报错**是坏体验：
+   * 下拉本该只列可操作的候选。
+   *
+   * 这与 `ApTab` 的 `unpaidAps` 是同一处修复，两边保持一致。
+   */
+  const openArItems = (ars ?? []).filter(
+    (a) => a.status !== 'settled' && a.status !== 'voided',
+  );
 
   const handleExport = () => {
     const rows: ArItem[] = ars ?? [];
@@ -343,7 +258,26 @@ const ArTab: React.FC = () => {
     },
   ];
 
-  const receiptOptions = (receipts ?? []).filter((r) => r.status !== 'matched');
+  /*
+   * ⚠️ 与上面的 `openArItems` 同一处缺陷、同一种修法：候选下拉必须**同时**
+   * 排掉作废件，而不是只排"顺利走完流程"的那个终态。
+   *
+   * 原实现只排 `matched`（已核销完），漏了 `voided`。而 `voided` 是**真的
+   * 会进候选**的：
+   *   · 契约 `ReceiptStatus = 'unmatched' | 'partial' | 'matched' | 'voided'`
+   *     （`shared/api.interface.ts`）；
+   *   · `ArService.listReceipts()` 不按状态过滤，作废回款单照常出现在本页的
+   *     「回款记录」表里；
+   *   · 服务端 `ArService.writeoff` 对 `voided` 回款是**无条件拒绝**的
+   *     （回「回款已作废，不可核销」），也就是说这个候选选了必然失败。
+   *
+   * 判据与 `openArItems`、`ApTab.unpaidAps` / `paidPayments` 保持一致：
+   * 下拉本该只列**可操作**的候选（`paidPayments` 用的是白名单
+   * `status === 'approved'`，所以应付侧本来就不受影响 —— 应收侧这里是漏网的一处）。
+   */
+  const receiptOptions = (receipts ?? []).filter(
+    (r) => r.status !== 'matched' && r.status !== 'voided',
+  );
 
   return (
     <div className="flex flex-col gap-6">
@@ -423,292 +357,29 @@ const ArTab: React.FC = () => {
         </div>
       </DataState>
 
-      <Dialog open={arOpen} onOpenChange={setArOpen}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle>登记应收</DialogTitle>
-          </DialogHeader>
-          <Form {...arForm}>
-            <form onSubmit={onCreateAr} className="space-y-4">
-              <FormField
-                control={arForm.control}
-                name="contractId"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>
-                      合同 <span aria-hidden="true" className="text-destructive">*</span>
-                    </FormLabel>
-                    <Select onValueChange={field.onChange} value={field.value}>
-                      <FormControl>
-                        <SelectTrigger>
-                          <SelectValue placeholder="请选择合同" />
-                        </SelectTrigger>
-                      </FormControl>
-                      <SelectContent>
-                        {(contracts ?? []).map((c) => (
-                          <SelectItem key={c.id} value={c.id}>
-                            {c.code} - {c.name}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-              <div className="flex gap-4">
-                <FormField
-                  control={arForm.control}
-                  name="amount"
-                  render={({ field }) => (
-                    <FormItem className="flex-1">
-                      <FormLabel>
-                        金额（含税）{' '}
-                        <span aria-hidden="true" className="text-destructive">*</span>
-                      </FormLabel>
-                      <FormControl>
-                        <Input
-                          type="number"
-                          min={0}
-                          value={String(field.value ?? '')}
-                          onChange={field.onChange}
-                          onBlur={field.onBlur}
-                          name={field.name}
-                          ref={field.ref}
-                        />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-                <FormField
-                  control={arForm.control}
-                  name="dueDate"
-                  render={({ field }) => (
-                    <FormItem className="flex-1">
-                      <FormLabel>到期日（账期）</FormLabel>
-                      <FormControl>
-                        <Input placeholder="YYYY-MM-DD" {...field} value={field.value ?? ''} />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-              </div>
-              <FormField
-                control={arForm.control}
-                name="remark"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>备注</FormLabel>
-                    <FormControl>
-                      <Textarea placeholder="备注" {...field} />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-              <DialogFooter>
-                <Button type="submit">保存</Button>
-              </DialogFooter>
-            </form>
-          </Form>
-        </DialogContent>
-      </Dialog>
+      {/* ⚠️ 三个弹窗**无条件挂载**，不要改成 `{open && <XxxDialog/>}`：
+          `useForm` 原先是本函数体里的常驻实例，条件挂载会改变其生命周期。 */}
+      <ArFormDialog
+        open={arOpen}
+        onOpenChange={setArOpen}
+        contracts={contracts}
+        onSaved={reload}
+      />
 
-      <Dialog open={receiptOpen} onOpenChange={setReceiptOpen}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle>登记回款</DialogTitle>
-          </DialogHeader>
-          <Form {...receiptForm}>
-            <form onSubmit={onCreateReceipt} className="space-y-4">
-              <FormField
-                control={receiptForm.control}
-                name="customerId"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>
-                      客户 <span aria-hidden="true" className="text-destructive">*</span>
-                    </FormLabel>
-                    <Select onValueChange={field.onChange} value={field.value}>
-                      <FormControl>
-                        <SelectTrigger>
-                          <SelectValue placeholder="请选择客户" />
-                        </SelectTrigger>
-                      </FormControl>
-                      <SelectContent>
-                        {(customers ?? []).map((c) => (
-                          <SelectItem key={c.id} value={c.id}>
-                            {c.name}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-              <div className="flex gap-4">
-                <FormField
-                  control={receiptForm.control}
-                  name="amount"
-                  render={({ field }) => (
-                    <FormItem className="flex-1">
-                      <FormLabel>
-                        回款金额（元）{' '}
-                        <span aria-hidden="true" className="text-destructive">*</span>
-                      </FormLabel>
-                      <FormControl>
-                        <Input
-                          type="number"
-                          min={0}
-                          value={String(field.value ?? '')}
-                          onChange={field.onChange}
-                          onBlur={field.onBlur}
-                          name={field.name}
-                          ref={field.ref}
-                        />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-                <FormField
-                  control={receiptForm.control}
-                  name="method"
-                  render={({ field }) => (
-                    <FormItem className="flex-1">
-                      <FormLabel>回款方式</FormLabel>
-                      <Select onValueChange={field.onChange} value={field.value}>
-                        <FormControl>
-                          <SelectTrigger>
-                            <SelectValue placeholder="请选择" />
-                          </SelectTrigger>
-                        </FormControl>
-                        <SelectContent>
-                          <SelectItem value="bank">银行转账</SelectItem>
-                          <SelectItem value="cash">现金</SelectItem>
-                          <SelectItem value="other">其他</SelectItem>
-                        </SelectContent>
-                      </Select>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-              </div>
-              <FormField
-                control={receiptForm.control}
-                name="remark"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>备注</FormLabel>
-                    <FormControl>
-                      <Input placeholder="备注" {...field} />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-              <DialogFooter>
-                <Button type="submit">保存</Button>
-              </DialogFooter>
-            </form>
-          </Form>
-        </DialogContent>
-      </Dialog>
+      <ReceiptApplyDialog
+        open={receiptOpen}
+        onOpenChange={setReceiptOpen}
+        customers={customers}
+        onSaved={reload}
+      />
 
-      <Dialog open={writeoffOpen} onOpenChange={setWriteoffOpen}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle>回款核销（支持部分核销）</DialogTitle>
-          </DialogHeader>
-          <Form {...writeoffForm}>
-            <form onSubmit={onWriteoff} className="space-y-4">
-              <FormField
-                control={writeoffForm.control}
-                name="arId"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>
-                      应收 <span aria-hidden="true" className="text-destructive">*</span>
-                    </FormLabel>
-                    <Select onValueChange={field.onChange} value={field.value}>
-                      <FormControl>
-                        <SelectTrigger>
-                          <SelectValue placeholder="请选择应收" />
-                        </SelectTrigger>
-                      </FormControl>
-                      <SelectContent>
-                        {openArItems.map((a) => (
-                          <SelectItem key={a.id} value={a.id}>
-                            {a.code} - {a.customerName}（未核销{' '}
-                            {formatMoney(a.amount - a.settledAmount)}）
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-              <FormField
-                control={writeoffForm.control}
-                name="receiptId"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>
-                      回款 <span aria-hidden="true" className="text-destructive">*</span>
-                    </FormLabel>
-                    <Select onValueChange={field.onChange} value={field.value}>
-                      <FormControl>
-                        <SelectTrigger>
-                          <SelectValue placeholder="请选择回款" />
-                        </SelectTrigger>
-                      </FormControl>
-                      <SelectContent>
-                        {receiptOptions.map((r) => (
-                          <SelectItem key={r.id} value={r.id}>
-                            {r.code} - {r.customerName}（{formatMoney(r.amount)}）
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-              <FormField
-                control={writeoffForm.control}
-                name="amount"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>
-                      核销金额（元）{' '}
-                      <span aria-hidden="true" className="text-destructive">*</span>
-                    </FormLabel>
-                    <FormControl>
-                      <Input
-                        type="number"
-                        min={0}
-                        value={String(field.value ?? '')}
-                        onChange={field.onChange}
-                        onBlur={field.onBlur}
-                        name={field.name}
-                        ref={field.ref}
-                      />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-              <DialogFooter>
-                <Button type="submit">核销</Button>
-              </DialogFooter>
-            </form>
-          </Form>
-        </DialogContent>
-      </Dialog>
+      <ArWriteoffDialog
+        open={writeoffOpen}
+        onOpenChange={setWriteoffOpen}
+        openArItems={openArItems}
+        receiptOptions={receiptOptions}
+        onSaved={reload}
+      />
     </div>
   );
 };

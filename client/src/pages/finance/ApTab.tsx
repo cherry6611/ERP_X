@@ -1,32 +1,12 @@
-import React, { useEffect, useState } from 'react';
-import { zodResolver } from '@hookform/resolvers/zod';
-import { useForm } from 'react-hook-form';
-import { z } from 'zod';
+import React, { useState } from 'react';
 import { toast } from 'sonner';
 import { Download, Plus } from 'lucide-react';
 import { Table, TableColumnsType } from 'antd';
 import { CanCapability, CanCapabilityWrite } from '@client/src/platform/auth';
-import DateField from '@client/src/components/erp/DateField';
 import { DataState } from '@client/src/components/DataState';
 import { SectionTitle } from '@client/src/components/SectionTitle';
 import StatusBadge from '@client/src/components/erp/StatusBadge';
 import { Button } from '@client/src/components/ui/button';
-import {
-  Dialog,
-  DialogContent,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog';
-import {
-  Form,
-  FormControl,
-  FormField,
-  FormItem,
-  FormLabel,
-  FormMessage,
-} from '@/components/ui/form';
-import { Input } from '@/components/ui/input';
 import {
   Select,
   SelectContent,
@@ -34,113 +14,71 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { Textarea } from '@/components/ui/textarea';
 import { financeApi, masterDataApi, projectsApi } from '@client/src/api';
 import { PrintButton } from '@client/src/components/print';
 import { compactFields, metaField } from '@client/src/components/print';
 import { useAsyncData } from '@client/src/hooks/useAsyncData';
 import { confirmDanger } from '@client/src/utils/confirmDanger';
 import { formatMoney } from '@client/src/utils/format';
+import { apExportColumns as AP_EXPORT_COLUMNS } from './ap-schemas';
+import ApFormDialog from './components/ApFormDialog';
+import PaymentApplyDialog from './components/PaymentApplyDialog';
+import VendorSettlementDialog from './components/VendorSettlementDialog';
+import WriteoffDialog from './components/WriteoffDialog';
 import {
   exportRowsToXlsx,
-  type ExcelSheetColumn,
 } from '@client/src/components/excel/excel-utils';
 import { getApiErrorMessage } from '@client/src/utils/api-error-message';
 import type {
   ApItem,
-  ApWriteoffDto,
-  CreateApDto,
-  CreatePaymentDto,
-  GenerateVendorSettlementDto,
   PaymentItem,
   Project,
   Supplier,
-  VendorSettlementLine,
-  VendorSettlementPreview,
 } from '@shared/api.interface';
 
-const AP_STATUS_LABELS: Record<string, string> = {
-  pending: '待审批',
-  approved: '已批准',
-  partial: '部分付款',
-  paid: '已付清',
-};
+// 修复：这里原先自带 AP_STATUS_LABELS / PAYMENT_STATUS_LABELS 两份**本地**映射，
+// 与 `utils/biz-labels.ts` 的字典版并存且文案不一致 —— 同一个 `payment_status=paid`
+// 在本页显示「已支付」、在字典里是「已核销」，于是 B-05 字典编辑对这两个主要财务页
+// 完全无效（改字典不生效，且没人看得出来）。统一改为引用字典版（唯一真源）。
+import {
+  AP_STATUS_LABELS,
+  PAYMENT_STATUS_LABELS,
+} from '@client/src/utils/biz-labels';
 
-const PAYMENT_STATUS_LABELS: Record<string, string> = {
-  pending: '待审批',
-  approved: '已批准',
-  rejected: '已驳回',
-  paid: '已支付',
-};
+/*
+ * §5.9（F8）：`AP_EXPORT_COLUMNS` 与四个表单 schema 已移到 `./ap-schemas`。
+ *
+ * 搬走的两块都是**零 React 依赖的纯声明**，合计约 70 行 —— 原先占满了文件
+ * 开头，打开 `ApTab.tsx` 先看到 140 行声明才看到组件。更重要的收益是它们
+ * 现在**可被单测**（`ap-schemas.spec.ts`，17 条断言）：
+ *   · schema 是财务数据的入口闸门，改错一个 `min` 就会放进脏数据；
+ *   · 导出列定义的错误在界面上看不出来（导出照样成功，只是数字落在错的列里）。
+ *
+ * 特别地，`apSchema.amount` 的 `min(1)` 与 `writeoffSchema.amount` 的
+ * `min(0.01)` 是**两个不同的业务门槛**（0 元负债无含义 vs 1 分钱尾差必须能核销），
+ * 规格里各有一条断言防止有人为了"统一"把它们改成同一个数。
+ */
 
-const AP_EXPORT_COLUMNS: ExcelSheetColumn<ApItem>[] = [
-  { header: '应付编号', value: (row: ApItem) => row.code },
-  { header: '供应商', value: (row: ApItem) => row.supplierName },
-  { header: '项目', value: (row: ApItem) => row.projectName ?? '' },
-  { header: '应付金额（含税）', value: (row: ApItem) => row.amount },
-  { header: '已付', value: (row: ApItem) => row.paidAmount },
-  {
-    header: '未付',
-    value: (row: ApItem) => row.amount - row.paidAmount,
-  },
-  { header: '到期日', value: (row: ApItem) => row.dueDate ?? '' },
-  {
-    header: '状态',
-    value: (row: ApItem) => AP_STATUS_LABELS[row.status] ?? row.status,
-  },
-];
-
-const apSchema = z.object({
-  supplierId: z.string().min(1, '请选择供应商'),
-  amount: z.coerce.number().min(1, '应付金额必须大于 0'),
-  dueDate: z.string().optional(),
-  remark: z.string(),
-});
-
-type ApFormData = z.output<typeof apSchema>;
-type ApFormInput = z.input<typeof apSchema>;
-
-const paymentSchema = z.object({
-  apId: z.string().min(1, '请选择应付'),
-  amount: z.coerce.number().min(1, '付款金额必须大于 0'),
-  method: z.string(),
-  remark: z.string(),
-});
-
-type PaymentFormData = z.output<typeof paymentSchema>;
-type PaymentFormInput = z.input<typeof paymentSchema>;
-
-const writeoffSchema = z.object({
-  apId: z.string().min(1, '请选择应付'),
-  paymentId: z.string().min(1, '请选择付款'),
-  amount: z.coerce.number().min(0.01, '核销金额必须大于 0'),
-});
-
-type WriteoffFormData = z.output<typeof writeoffSchema>;
-type WriteoffFormInput = z.input<typeof writeoffSchema>;
-
-const vendorSettlementSchema = z.object({
-  supplierId: z.string().min(1, '请选择供应商'),
-  period: z.string().min(1, '请选择月份'),
-  projectId: z.string().optional(),
-  dueDate: z.string().optional(),
-});
-
-type VendorSettlementFormData = z.output<typeof vendorSettlementSchema>;
-type VendorSettlementFormInput = z.input<typeof vendorSettlementSchema>;
-
-/** 近 12 个月（含当月）的期间选项，格式 YYYY-MM */
-function buildRecentPeriods(count: number): string[] {
-  const periods: string[] = [];
-  const now = new Date();
-  for (let i = 0; i < count; i += 1) {
-    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-    periods.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`);
-  }
-  return periods;
-}
-
-const VENDOR_SETTLEMENT_PERIODS: string[] = buildRecentPeriods(12);
+/*
+ * §5.9（F8）：四个弹窗已各自拆成 `./components/` 下的组件。
+ *
+ * 上一轮只搬走了**纯声明**（schema / 导出列），文件仍然 990 行 —— 因为占体量的
+ * 从来不是声明，而是本文件末尾 441 行的四段 `<Dialog>` JSX（登记应付 /
+ * 付款申请 / 付款核销 / 外协结算）。本轮把这四段**整体**搬走，每个组件自带
+ * `useForm`、`useState` 与提交处理器：
+ *
+ *   · 主文件保留：数据查询（`useAsyncData`）、两个表格的列定义与操作列、
+ *     筛选区与导出按钮 —— 也就是"页面级编排"；
+ *   · 子组件只拿**数据**与 `onSaved`（写成功后由主文件重取列表），不再由主文件
+ *     传入 setter。
+ *
+ * ⚠️ 三个必须保住的语义（搬迁时逐条核对）：
+ *   ① 四个组件**无条件挂载**，不能写成 `{open && <XxxDialog/>}` —— 外协结算弹窗
+ *      的预览 `useEffect` 与三个 state 原先是常驻的，条件挂载会改变副作用触发
+ *      时机并在每次打开时丢掉 `settlementPreview`；
+ *   ② 表单重置时机不变：都在**提交成功之后**重置（原实现没有"打开即清空"）；
+ *   ③ JSX 文案、schema、校验消息逐字未动，`ap-schemas.ts` 仍是唯一定义处。
+ */
 
 const ApTab: React.FC = () => {
   const [statusFilter, setStatusFilter] = useState('all');
@@ -148,9 +86,6 @@ const ApTab: React.FC = () => {
   const [paymentOpen, setPaymentOpen] = useState(false);
   const [writeoffOpen, setWriteoffOpen] = useState(false);
   const [vendorSettlementOpen, setVendorSettlementOpen] = useState(false);
-  const [settlementPreview, setSettlementPreview] = useState<VendorSettlementPreview | null>(null);
-  const [previewLoading, setPreviewLoading] = useState(false);
-  const [generating, setGenerating] = useState(false);
 
   const { data: aps, loading, error, reload } = useAsyncData<ApItem[]>(
     () => financeApi.listAps(undefined, statusFilter !== 'all' ? statusFilter : undefined),
@@ -166,83 +101,6 @@ const ApTab: React.FC = () => {
   );
   const { data: projects } = useAsyncData<Project[]>(() => projectsApi.listProjects(), []);
 
-  const apForm = useForm<ApFormInput, unknown, ApFormData>({
-    resolver: zodResolver(apSchema),
-    defaultValues: { supplierId: '', amount: 0, remark: '' },
-  });
-  const paymentForm = useForm<PaymentFormInput, unknown, PaymentFormData>({
-    resolver: zodResolver(paymentSchema),
-    defaultValues: { apId: '', amount: 0, method: 'bank', remark: '' },
-  });
-  const writeoffForm = useForm<WriteoffFormInput, unknown, WriteoffFormData>({
-    resolver: zodResolver(writeoffSchema),
-    defaultValues: { apId: '', paymentId: '', amount: 0 },
-  });
-  const vendorSettlementForm = useForm<
-    VendorSettlementFormInput,
-    unknown,
-    VendorSettlementFormData
-  >({
-    resolver: zodResolver(vendorSettlementSchema),
-    defaultValues: { supplierId: '', period: '', projectId: '', dueDate: '' },
-  });
-  const vsSupplierId: string = vendorSettlementForm.watch('supplierId');
-  const vsPeriod: string = vendorSettlementForm.watch('period');
-  const vsProjectId: string = vendorSettlementForm.watch('projectId') ?? '';
-
-  const onCreateAp = apForm.handleSubmit(async (values) => {
-    const dto: CreateApDto = {
-      supplierId: values.supplierId,
-      amount: values.amount,
-      dueDate: values.dueDate,
-      remark: values.remark || undefined,
-    };
-    try {
-      await financeApi.createAp(dto);
-      toast.success('应付已登记');
-      setApOpen(false);
-      apForm.reset({ supplierId: '', amount: 0, remark: '' });
-      await reload();
-    } catch (err) {
-      toast.error(getApiErrorMessage(err, '登记失败'));
-    }
-  });
-
-  const onCreatePayment = paymentForm.handleSubmit(async (values) => {
-    const dto: CreatePaymentDto = {
-      apId: values.apId,
-      amount: values.amount,
-      method: values.method,
-      remark: values.remark || undefined,
-    };
-    try {
-      await financeApi.createPayment(dto);
-      toast.success('付款申请已提交，待审批');
-      setPaymentOpen(false);
-      paymentForm.reset({ apId: '', amount: 0, method: 'bank', remark: '' });
-      await reload();
-    } catch (err) {
-      toast.error(getApiErrorMessage(err, '提交失败'));
-    }
-  });
-
-  const onWriteoff = writeoffForm.handleSubmit(async (values) => {
-    const dto: ApWriteoffDto = {
-      apId: values.apId,
-      paymentId: values.paymentId,
-      amount: values.amount,
-    };
-    try {
-      await financeApi.apWriteoff(dto);
-      toast.success('付款核销成功');
-      setWriteoffOpen(false);
-      writeoffForm.reset({ apId: '', paymentId: '', amount: 0 });
-      await reload();
-    } catch (err) {
-      toast.error(getApiErrorMessage(err, '核销失败'));
-    }
-  });
-
   const approvePayment = async (p: PaymentItem, action: 'approve' | 'reject') => {
     try {
       await financeApi.approvePayment(p.id, action);
@@ -253,82 +111,25 @@ const ApTab: React.FC = () => {
     }
   };
 
-  useEffect(() => {
-    if (!vsSupplierId || !vsPeriod) {
-      setSettlementPreview(null);
-      return;
-    }
-    let cancelled = false;
-    setPreviewLoading(true);
-    financeApi
-      .vendorSettlementPreview(vsSupplierId, vsPeriod, vsProjectId || undefined)
-      .then((data: VendorSettlementPreview) => {
-        if (!cancelled) setSettlementPreview(data);
-      })
-      .catch((err: unknown) => {
-        if (!cancelled) {
-          setSettlementPreview(null);
-          toast.error(getApiErrorMessage(err, '获取结算明细失败'));
-        }
-      })
-      .finally(() => {
-        if (!cancelled) setPreviewLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [vsSupplierId, vsPeriod, vsProjectId]);
-
-  const onGenerateVendorSettlement = vendorSettlementForm.handleSubmit(
-    async (values) => {
-      setGenerating(true);
-      try {
-        const dto: GenerateVendorSettlementDto = {
-          supplierId: values.supplierId,
-          period: values.period,
-          projectId: values.projectId || null,
-          dueDate: values.dueDate,
-        };
-        const result = await financeApi.generateVendorSettlement(dto);
-        toast.success(`结算单已生成，应付单号 ${result.code}`);
-        setVendorSettlementOpen(false);
-        vendorSettlementForm.reset({
-          supplierId: '',
-          period: '',
-          projectId: '',
-          dueDate: '',
-        });
-        setSettlementPreview(null);
-        await reload();
-      } catch (err) {
-        toast.error(getApiErrorMessage(err, '生成失败'));
-      } finally {
-        setGenerating(false);
-      }
-    },
+  /*
+   * ⚠️ 必须**同时**排除 `voided`，不能只排 `paid`。
+   *
+   * 作废的应付单 `amount − reserved` 通常仍是正数，所以"未付"这个直觉判据
+   * 会把它当成可付款候选。而 `ApStatus` 契约含 `'voided'`、`voidAp` 会真的写
+   * 它、`listAps()` 在不传 status 时也不过状态 —— 所以作废单真的会出现在
+   * 列表与下拉里。这份数据同时喂给**付款申请**与**核销**两个下拉，且选项文案
+   * （`{code} - {supplier}（未付 …）`）**不显示状态**，因此作废单与正常单
+   * 在下拉里无法区分。
+   *
+   * 服务端也已补上权威守卫（`ApService.createPayment` / `apWriteoff` 拒绝
+   * `voided`），但客户端仍要过滤：下拉本该只列**可操作**的候选，
+   * 让人先选到再报错是坏体验。
+   *
+   * 与 `ArTab` 的 `openArItems` 是同一处修复，两边保持一致。
+   */
+  const unpaidAps = (aps ?? []).filter(
+    (a) => a.status !== 'paid' && a.status !== 'voided',
   );
-
-  const vendorSettlementLineColumns: TableColumnsType<VendorSettlementLine> = [
-    { title: '员工', dataIndex: 'employeeName', width: 120 },
-    { title: '角色', dataIndex: 'roleName', width: 120, render: (v) => v ?? '-' },
-    { title: '工时(h)', dataIndex: 'hours', width: 90, align: 'right' },
-    {
-      title: '单价(元/h)',
-      dataIndex: 'rate',
-      width: 110,
-      align: 'right',
-      render: (v: number) => formatMoney(v),
-    },
-    {
-      title: '金额（不含税）',
-      dataIndex: 'amount',
-      width: 120,
-      align: 'right',
-      render: (v: number) => formatMoney(v),
-    },
-  ];
-
-  const unpaidAps = (aps ?? []).filter((a) => a.status !== 'paid');
   const paidPayments = (payments ?? []).filter((p) => p.status === 'approved');
 
   const handleExport = () => {
@@ -575,448 +376,30 @@ const ApTab: React.FC = () => {
         </div>
       </DataState>
 
-      <Dialog open={apOpen} onOpenChange={setApOpen}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle>登记应付</DialogTitle>
-          </DialogHeader>
-          <Form {...apForm}>
-            <form onSubmit={onCreateAp} className="space-y-4">
-              <FormField
-                control={apForm.control}
-                name="supplierId"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>
-                      供应商 <span aria-hidden="true" className="text-destructive">*</span>
-                    </FormLabel>
-                    <Select onValueChange={field.onChange} value={field.value}>
-                      <FormControl>
-                        <SelectTrigger>
-                          <SelectValue placeholder="请选择供应商" />
-                        </SelectTrigger>
-                      </FormControl>
-                      <SelectContent>
-                        {(suppliers ?? []).map((s) => (
-                          <SelectItem key={s.id} value={s.id}>
-                            {s.name}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-              <div className="flex gap-4">
-                <FormField
-                  control={apForm.control}
-                  name="amount"
-                  render={({ field }) => (
-                    <FormItem className="flex-1">
-                      <FormLabel>
-                        金额（含税）{' '}
-                        <span aria-hidden="true" className="text-destructive">*</span>
-                      </FormLabel>
-                      <FormControl>
-                        <Input
-                          type="number"
-                          min={0}
-                          value={String(field.value ?? '')}
-                          onChange={field.onChange}
-                          onBlur={field.onBlur}
-                          name={field.name}
-                          ref={field.ref}
-                        />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-                <FormField
-                  control={apForm.control}
-                  name="dueDate"
-                  render={({ field }) => (
-                    <FormItem className="flex-1">
-                      <FormLabel>到期日</FormLabel>
-                      <FormControl>
-                        <Input placeholder="YYYY-MM-DD" {...field} value={field.value ?? ''} />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-              </div>
-              <FormField
-                control={apForm.control}
-                name="remark"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>备注</FormLabel>
-                    <FormControl>
-                      <Textarea placeholder="备注" {...field} />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-              <DialogFooter>
-                <Button type="submit">保存</Button>
-              </DialogFooter>
-            </form>
-          </Form>
-        </DialogContent>
-      </Dialog>
+      <ApFormDialog open={apOpen} onOpenChange={setApOpen} suppliers={suppliers} onSaved={reload} />
 
-      <Dialog open={paymentOpen} onOpenChange={setPaymentOpen}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle>付款申请（需审批）</DialogTitle>
-          </DialogHeader>
-          <Form {...paymentForm}>
-            <form onSubmit={onCreatePayment} className="space-y-4">
-              <FormField
-                control={paymentForm.control}
-                name="apId"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>
-                      应付 <span aria-hidden="true" className="text-destructive">*</span>
-                    </FormLabel>
-                    <Select onValueChange={field.onChange} value={field.value}>
-                      <FormControl>
-                        <SelectTrigger>
-                          <SelectValue placeholder="请选择应付" />
-                        </SelectTrigger>
-                      </FormControl>
-                      <SelectContent>
-                        {unpaidAps.map((a) => (
-                          <SelectItem key={a.id} value={a.id}>
-                            {a.code} - {a.supplierName}（未付{' '}
-                            {formatMoney(a.amount - a.paidAmount)}）
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-              <div className="flex gap-4">
-                <FormField
-                  control={paymentForm.control}
-                  name="amount"
-                  render={({ field }) => (
-                    <FormItem className="flex-1">
-                      <FormLabel>
-                        付款金额（元）{' '}
-                        <span aria-hidden="true" className="text-destructive">*</span>
-                      </FormLabel>
-                      <FormControl>
-                        <Input
-                          type="number"
-                          min={0}
-                          value={String(field.value ?? '')}
-                          onChange={field.onChange}
-                          onBlur={field.onBlur}
-                          name={field.name}
-                          ref={field.ref}
-                        />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-                <FormField
-                  control={paymentForm.control}
-                  name="method"
-                  render={({ field }) => (
-                    <FormItem className="flex-1">
-                      <FormLabel>付款方式</FormLabel>
-                      <Select onValueChange={field.onChange} value={field.value}>
-                        <FormControl>
-                          <SelectTrigger>
-                            <SelectValue placeholder="请选择" />
-                          </SelectTrigger>
-                        </FormControl>
-                        <SelectContent>
-                          <SelectItem value="bank">银行转账</SelectItem>
-                          <SelectItem value="cash">现金</SelectItem>
-                          <SelectItem value="other">其他</SelectItem>
-                        </SelectContent>
-                      </Select>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-              </div>
-              <FormField
-                control={paymentForm.control}
-                name="remark"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>备注</FormLabel>
-                    <FormControl>
-                      <Input placeholder="备注" {...field} />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-              <DialogFooter>
-                <Button type="submit">提交</Button>
-              </DialogFooter>
-            </form>
-          </Form>
-        </DialogContent>
-      </Dialog>
+      <PaymentApplyDialog
+        open={paymentOpen}
+        onOpenChange={setPaymentOpen}
+        unpaidAps={unpaidAps}
+        onSaved={reload}
+      />
 
-      <Dialog open={writeoffOpen} onOpenChange={setWriteoffOpen}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle>付款核销（支持部分核销）</DialogTitle>
-          </DialogHeader>
-          <Form {...writeoffForm}>
-            <form onSubmit={onWriteoff} className="space-y-4">
-              <FormField
-                control={writeoffForm.control}
-                name="apId"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>
-                      应付 <span aria-hidden="true" className="text-destructive">*</span>
-                    </FormLabel>
-                    <Select onValueChange={field.onChange} value={field.value}>
-                      <FormControl>
-                        <SelectTrigger>
-                          <SelectValue placeholder="请选择应付" />
-                        </SelectTrigger>
-                      </FormControl>
-                      <SelectContent>
-                        {unpaidAps.map((a) => (
-                          <SelectItem key={a.id} value={a.id}>
-                            {a.code} - {a.supplierName}（未付{' '}
-                            {formatMoney(a.amount - a.paidAmount)}）
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-              <FormField
-                control={writeoffForm.control}
-                name="paymentId"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>
-                      已批准付款 <span aria-hidden="true" className="text-destructive">*</span>
-                    </FormLabel>
-                    <Select onValueChange={field.onChange} value={field.value}>
-                      <FormControl>
-                        <SelectTrigger>
-                          <SelectValue placeholder="请选择付款记录" />
-                        </SelectTrigger>
-                      </FormControl>
-                      <SelectContent>
-                        {paidPayments.map((p) => (
-                          <SelectItem key={p.id} value={p.id}>
-                            {p.code} - {p.supplierName}（{formatMoney(p.amount)}）
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-              <FormField
-                control={writeoffForm.control}
-                name="amount"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>
-                      核销金额（元）{' '}
-                      <span aria-hidden="true" className="text-destructive">*</span>
-                    </FormLabel>
-                    <FormControl>
-                      <Input
-                        type="number"
-                        min={0}
-                        value={String(field.value ?? '')}
-                        onChange={field.onChange}
-                        onBlur={field.onBlur}
-                        name={field.name}
-                        ref={field.ref}
-                      />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-              <DialogFooter>
-                <Button type="submit">核销</Button>
-              </DialogFooter>
-            </form>
-          </Form>
-        </DialogContent>
-      </Dialog>
-      <Dialog open={vendorSettlementOpen} onOpenChange={setVendorSettlementOpen}>
-        <DialogContent className="max-w-2xl">
-          <DialogHeader>
-            <DialogTitle>外协供应商结算</DialogTitle>
-          </DialogHeader>
-          <Form {...vendorSettlementForm}>
-            <form onSubmit={onGenerateVendorSettlement} className="space-y-4">
-              <div className="flex gap-4">
-                <FormField
-                  control={vendorSettlementForm.control}
-                  name="supplierId"
-                  render={({ field }) => (
-                    <FormItem className="flex-1">
-                      <FormLabel>
-                        供应商{' '}
-                        <span aria-hidden="true" className="text-destructive">*</span>
-                      </FormLabel>
-                      <Select onValueChange={field.onChange} value={field.value}>
-                        <FormControl>
-                          <SelectTrigger>
-                            <SelectValue placeholder="请选择供应商" />
-                          </SelectTrigger>
-                        </FormControl>
-                        <SelectContent>
-                          {(suppliers ?? []).map((s) => (
-                            <SelectItem key={s.id} value={s.id}>
-                              {s.name}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-                <FormField
-                  control={vendorSettlementForm.control}
-                  name="period"
-                  render={({ field }) => (
-                    <FormItem className="flex-1">
-                      <FormLabel>
-                        月份{' '}
-                        <span aria-hidden="true" className="text-destructive">*</span>
-                      </FormLabel>
-                      <Select onValueChange={field.onChange} value={field.value}>
-                        <FormControl>
-                          <SelectTrigger>
-                            <SelectValue placeholder="请选择月份" />
-                          </SelectTrigger>
-                        </FormControl>
-                        <SelectContent>
-                          {VENDOR_SETTLEMENT_PERIODS.map((p: string) => (
-                            <SelectItem key={p} value={p}>
-                              {p}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-              </div>
-              <div className="flex gap-4">
-                <FormField
-                  control={vendorSettlementForm.control}
-                  name="projectId"
-                  render={({ field }) => (
-                    <FormItem className="flex-1">
-                      <FormLabel>项目（可选）</FormLabel>
-                      <Select
-                        onValueChange={field.onChange}
-                        value={field.value || undefined}
-                      >
-                        <FormControl>
-                          <SelectTrigger>
-                            <SelectValue placeholder="请选择项目" />
-                          </SelectTrigger>
-                        </FormControl>
-                        <SelectContent>
-                          {(projects ?? []).map((p) => (
-                            <SelectItem key={p.id} value={p.id}>
-                              {p.name}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-                <FormField
-                  control={vendorSettlementForm.control}
-                  name="dueDate"
-                  render={({ field }) => (
-                    <FormItem className="flex-1">
-                      <FormLabel>付款到期日</FormLabel>
-                      <DateField value={field.value} onChange={field.onChange} />
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-              </div>
-              <div className="flex flex-col gap-2">
-                <h4 className="text-sm font-semibold">结算明细</h4>
-                {previewLoading ? (
-                  <DataState loading skeleton="table" />
-                ) : !settlementPreview ? (
-                  <p className="text-sm text-muted-foreground">
-                    请选择供应商与月份后查看结算明细
-                  </p>
-                ) : settlementPreview.lines.length === 0 ? (
-                  <p className="text-sm text-muted-foreground">
-                    该期间无已确认的外协工时
-                  </p>
-                ) : (
-                  <div className="flex flex-col gap-2">
-                    <Table
-                      columns={vendorSettlementLineColumns}
-                      dataSource={settlementPreview.lines}
-                      rowKey="employeeId"
-                      pagination={false}
-                      size="small"
-                      scroll={{ x: 600 }}
-                    />
-                    <div className="flex items-center justify-end gap-8 border-t pt-2 text-sm font-semibold">
-                      <span>合计</span>
-                      <span>{formatMoney(settlementPreview.totalAmount)}</span>
-                    </div>
-                  </div>
-                )}
-                {settlementPreview?.alreadyGenerated ? (
-                  <p className="text-sm text-warning">
-                    该供应商该期间结算单已生成
-                  </p>
-                ) : null}
-              </div>
-              <DialogFooter>
-                <Button
-                  type="submit"
-                  disabled={
-                    generating ||
-                    previewLoading ||
-                    !settlementPreview ||
-                    settlementPreview.alreadyGenerated ||
-                    settlementPreview.lines.length === 0
-                  }
-                >
-                  生成结算单
-                </Button>
-              </DialogFooter>
-            </form>
-          </Form>
-        </DialogContent>
-      </Dialog>
+      <WriteoffDialog
+        open={writeoffOpen}
+        onOpenChange={setWriteoffOpen}
+        unpaidAps={unpaidAps}
+        paidPayments={paidPayments}
+        onSaved={reload}
+      />
+
+      <VendorSettlementDialog
+        open={vendorSettlementOpen}
+        onOpenChange={setVendorSettlementOpen}
+        suppliers={suppliers}
+        projects={projects}
+        onSaved={reload}
+      />
     </div>
   );
 };
