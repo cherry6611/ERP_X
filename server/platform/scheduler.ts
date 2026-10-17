@@ -51,10 +51,18 @@ export class JobScheduler implements OnModuleInit {
         if (typeof method !== 'function') return;
         const meta = this.reflector.get<TriggerMeta | undefined>(BIND_ACTION_METADATA_KEY, method);
         if (!meta?.trigger) return;
+        /*
+         * 多个 handler 可以共用同一个 trigger（如 retention_daily 同时清 MFA 挑战
+         * 与执行保留策略）。SchedulerRegistry 的 job 名必须唯一，否则
+         * `addCronJob` 直接抛 "Cron Job with the given name already exists"，
+         * 在 ENABLE_SCHEDULER=true 时整个应用启动失败。
+         * 锁/日台账也用 jobName，避免两个 handler 互相抢执行权。
+         */
+        const jobName = `${meta.trigger}:${methodName}`;
         const job = new CronJob(
           meta.cron,
           () => {
-            void this.runExclusive(meta.trigger, () =>
+            void this.runExclusive(jobName, () =>
               (method as () => Promise<void>).call(instance),
             ).catch((error: unknown) => {
               // 兜底：避免 unhandledRejection 在 abortOnError 下拖死进程
@@ -68,9 +76,9 @@ export class JobScheduler implements OnModuleInit {
           false,
           'Asia/Shanghai',
         );
-        this.registry.addCronJob(meta.trigger, job);
+        this.registry.addCronJob(jobName, job);
         job.start();
-        this.logger.log(`已注册定时任务 ${meta.trigger} ${meta.cron}`);
+        this.logger.log(`已注册定时任务 ${jobName} ${meta.cron}`);
       });
     }
   }
