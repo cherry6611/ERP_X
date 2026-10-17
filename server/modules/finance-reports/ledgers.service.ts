@@ -23,6 +23,7 @@ import type {
   LedgerQueryParams,
 } from '@shared/api.interface';
 import { unwrapRows } from '@server/common/utils/rows';
+import { round2 } from '@server/common/utils/number';
 
 const PERIOD_PATTERN = /^\d{4}-(0[1-9]|1[0-2])$/;
 
@@ -35,9 +36,6 @@ interface RawBalanceRow {
   credit_occur: string | number;
 }
 
-function round2(value: number): number {
-  return Math.round(value * 100) / 100;
-}
 
 function toNumber(value: string | number | null | undefined): number {
   if (value === null || value === undefined) return 0;
@@ -421,7 +419,7 @@ export class LedgersService {
             : eq(finVoucher.status, 'posted'),
           taxEntityId
             ? sql`${finVoucher.taxEntityId} = ${taxEntityId}::uuid`
-            : sql``
+            : undefined
         )
       );
     const debit = round2(toNumber(rows[0]?.debit));
@@ -837,7 +835,11 @@ export class LedgersService {
   }
 
   /** 试算平衡（供报表校验与期间结账复核） */
-  async trialBalance(period: string): Promise<{
+  async trialBalance(
+    period: string,
+    /** B-2：已授权的纳税主体（由调用方经 DataScopeService 收敛后传入） */
+    taxEntityId?: string
+  ): Promise<{
     period: string;
     totalDebit: number;
     totalCredit: number;
@@ -854,7 +856,14 @@ export class LedgersService {
       .where(
         and(
           eq(finVoucher.period, period),
-          sql`${finVoucher.status} = 'posted'`
+          sql`${finVoucher.status} = 'posted'`,
+          // 不传主体时必须是 `undefined`，**不能**写 `sql\`\``。
+          // `and()` 会把 `sql\`\`` 当成一个真实条件拼进去，产出 `... and )` ——
+          // SQL 语法错误，PG 直接抛错（已实测复现：年末结转预览
+          // `GET /api/finance/year-end/preview` 500）。`undefined` 才会被 drizzle 忽略。
+          taxEntityId
+            ? sql`${finVoucher.taxEntityId} = ${taxEntityId}::uuid`
+            : undefined
         )
       );
     const totalDebit = round2(toNumber(rows[0]?.debit));

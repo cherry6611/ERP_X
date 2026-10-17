@@ -10,6 +10,11 @@ import {
   Req,
 } from '@nestjs/common';
 import { CanCapability, NeedLogin } from '@server/platform';
+import {
+  DataScopeService,
+  type TaxEntityFilter,
+} from '@server/common/auth/data-scope.service';
+import { actorFromRequest } from '@server/common/auth/actor';
 import type { Request } from 'express';
 import {
   IsDateString,
@@ -34,6 +39,7 @@ import type {
   CreateVoucherLineDto as ICreateVoucherLineDto,
   PagedResult,
   PeriodStatus,
+  UnassignedEntityCheckResult,
   VoucherItem,
   VoucherSourceRef,
 } from '@shared/api.interface';
@@ -162,7 +168,20 @@ export class UpdateVoucherLineDto {
 @NeedLogin()
 @Controller('api/voucher')
 export class VoucherController {
-  constructor(private readonly voucherService: VoucherService) {}
+  constructor(
+    private readonly voucherService: VoucherService,
+    private readonly dataScope: DataScopeService,
+  ) {}
+
+  /**
+   * B-2：凭证的纳税主体可见范围。
+   *
+   * 放在 HTTP 边界而不是 service：service 方法拿不到 actor；
+   * 而 service 收到 filter 后会把过滤条条件真正拼进 SQL（在 SQL 层过滤，不是 UI 隐藏）。
+   */
+  private async voucherScope(req: Request): Promise<TaxEntityFilter> {
+    return this.dataScope.taxEntityScopeFor('voucher', actorFromRequest(req));
+  }
 
   @Get('accounts')
   async listAccounts(
@@ -201,6 +220,7 @@ export class VoucherController {
 
   @Get('vouchers')
   async listVouchers(
+    @Req() req: Request,
     @Query('page') page?: string,
     @Query('pageSize') pageSize?: string,
     @Query('status') status?: string,
@@ -212,7 +232,8 @@ export class VoucherController {
       Math.min(50, Math.max(1, parseInt(pageSize ?? '20', 10) || 20)),
       status,
       period,
-      sourceType
+      sourceType,
+      await this.voucherScope(req)
     );
   }
 
@@ -226,12 +247,26 @@ export class VoucherController {
   @Post('vouchers/:id/actions/:action')
   async voucherAction(
     @Param('id', ParseUUIDPipe) id: string,
-    @Param('action') action: string
+    @Param('action') action: string,
+    @Req() req: Request
   ): Promise<VoucherItem> {
     return this.voucherService.voucherAction(
       id,
-      action as 'post' | 'void'
+      action as 'post' | 'void',
+      await this.voucherScope(req)
     );
+  }
+
+  /**
+   * B-1 / REQ-BE-01：凭证主体归属自检。
+   * 返回未归属纳税主体的凭证（按期间/来源类型聚合 + 逐张明细供下钻）。
+   */
+  @Get('unassigned-entity')
+  async checkUnassignedEntity(
+    @Query('period') period?: string,
+    @Query('sourceType') sourceType?: string
+  ): Promise<UnassignedEntityCheckResult> {
+    return this.voucherService.checkUnassignedEntity(period, sourceType);
   }
 
   @Get('periods')

@@ -10,10 +10,11 @@ import {
   DRIZZLE_DATABASE,
   type PostgresJsDatabase,
 } from '@server/platform';
-import { and, desc, eq, inArray, sql, sum, type SQL } from 'drizzle-orm';
+import { and, desc, eq, inArray, ne, sql, sum, type SQL } from 'drizzle-orm';
 import {
   erpApBill,
   erpApWriteoff,
+  erpInvoice,
   erpPayment,
   erpProject,
   mdSupplier,
@@ -21,10 +22,27 @@ import {
 import { generateBizCode } from '@server/common/utils/biz-code';
 import { DataScopeService } from '@server/common/auth/data-scope.service';
 import type { RequestActor } from '@server/common/auth/actor';
-import { inputIssueLines, paymentLines, paymentVoidLines } from '@server/common/tax/posting';
+import {
+  inputIssueLines,
+  inputVoidLines,
+  paymentLines,
+  paymentVoidLines,
+} from '@server/common/tax/posting';
 import { TaxResolverService } from '@server/modules/tax/tax-resolver.service';
 import { VoucherHookService } from '@server/modules/voucher/voucher-hook.service';
 import { todayInShanghai } from '@server/common/utils/biz-date';
+import {
+  PAYABLE_AP_STATUSES,
+  WRITEOFFABLE_AP_STATUSES,
+  blockedReasonForWriteAction,
+} from './void-guard';
+import {
+  apWriteoffReversalStatus,
+  apWriteoffStatus,
+  isPaymentFullyUsed,
+  paymentStatusAfterReversal,
+  type ApBillStatus,
+} from './writeoff-status';
 import { assertPeriodOpen } from '@server/common/utils/period-guard';
 import type {
   ApItem,
@@ -129,6 +147,9 @@ export class ApService {
       status: (row.ap.status ?? 'pending') as ApStatus,
       source: row.ap.source ?? 'manual',
       sourceRef: row.ap.sourceRef,
+      voidReason: row.ap.voidReason ?? null,
+      voidedAt: row.ap.voidedAt ? new Date(row.ap.voidedAt).toISOString() : null,
+      voidedBy: row.ap.voidedBy ?? null,
       remark: row.ap.remark,
       createdAt: row.ap.createdAt.toISOString(),
     }));
@@ -203,8 +224,174 @@ export class ApService {
       status: (row.status ?? 'pending') as ApStatus,
       source: row.source ?? 'manual',
       sourceRef: row.sourceRef,
+      voidReason: row.voidReason ?? null,
+      voidedAt: row.voidedAt ? new Date(row.voidedAt).toISOString() : null,
+      voidedBy: row.voidedBy ?? null,
       remark: row.remark,
       createdAt: row.createdAt.toISOString(),
+    };
+  }
+
+  /**
+   * B1：**作废应付**（终态，不可逆）。
+   *
+   * 与 `ArService.voidAr` 同源问题、同套修法：原状态集
+   * `pending / approved / partial / paid` **没有退出路径**，误录的应付会永久
+   * 占用资金计划（现金流预测的流出、BI 未付应付、供应商对账单）。
+   *
+   * ## 前置条件（三条，缺一不可）
+   *
+   *   1. `paid_amount = 0`：已有付款的应付不能作废（必须先冲销核销记录）。
+   *   2. 无**未作废**的付款单引用：`erp_payment.ap_id = 该应付 AND status <> 'voided'`。
+   *      否则会出现"钱已付出、应付已被作废"的悬空付款。
+   *   3. 无有效进项发票引用（`erp_invoice.ap_id = 该应付 AND status='issued'`）：
+   *      已登记进项票意味着进项税已入账，作废应付会让账票脱节。
+   *
+   * ## 同事务红字凭证
+   *
+   * `createAp` 出的是「借 6602 + 借 222102 / 贷 2202」（`inputIssueLines`），
+   * 作废必须出等额反向（即 `inputVoidLines` 的分录），且与状态变更**同事务**。
+   *
+   * ⚠️ 但 `source='vendor_settlement'` / `'expense'` 等由其他模块创建的应付，
+   * 其原凭证可能挂在别的 `sourceType` 下（外协结算、报销挂账等）。这里统一以
+   * `ap-void:{code}` 出反向分录 —— 分录方向恒等于 `inputVoidLines`，
+   * 与来源模块无关（2202 与费用/进项税的对冲关系对所有应付来源都成立）。
+   */
+  async voidAp(
+    id: string,
+    userId: string,
+    reason?: string
+  ): Promise<ApItem> {
+    const voidReason = reason?.trim() || '未填写作废原因';
+    const pre = await this.db
+      .select({
+        ap: erpApBill,
+        supplierTaxEntityId: mdSupplier.taxEntityId,
+        supplierDefaultRate: mdSupplier.defaultTaxRate,
+        supplierName: mdSupplier.name,
+      })
+      .from(erpApBill)
+      .leftJoin(mdSupplier, eq(erpApBill.supplierId, mdSupplier.id))
+      .where(eq(erpApBill.id, id));
+    if (pre.length === 0) throw new NotFoundException('应付记录不存在');
+    const before = pre[0];
+    if ((before.ap.status ?? 'pending') === 'voided') {
+      throw new ConflictException('该应付已作废，请勿重复操作');
+    }
+    await assertPeriodOpen(
+      this.db,
+      before.ap.dueDate ?? todayInShanghai(),
+      '作废应付'
+    );
+
+    await this.db.transaction(async (tx) => {
+      // ① 行锁重读
+      const lockedRows = await tx
+        .select()
+        .from(erpApBill)
+        .where(eq(erpApBill.id, id))
+        .for('update');
+      if (lockedRows.length === 0) throw new NotFoundException('应付记录不存在');
+      const ap = lockedRows[0];
+      if ((ap.status ?? 'pending') === 'voided') {
+        throw new ConflictException('该应付已作废，请勿重复操作');
+      }
+      const paid = Number(ap.paidAmount ?? 0);
+      if (paid > 0.001) {
+        throw new BadRequestException(
+          `该应付已有付款金额 ${paid}，不能作废；请先冲销对应的付款核销记录`
+        );
+      }
+      // ② 未作废付款单引用
+      const paymentRows = await tx
+        .select({ code: erpPayment.code, status: erpPayment.status })
+        .from(erpPayment)
+        .where(and(eq(erpPayment.apId, id), ne(erpPayment.status, 'voided')))
+        .limit(1);
+      if (paymentRows.length > 0) {
+        throw new BadRequestException(
+          `该应付已存在付款单 ${paymentRows[0].code}（状态 ${paymentRows[0].status ?? '-'}），` +
+            `不能作废；请先作废该付款单`
+        );
+      }
+      // ③ 有效进项发票引用
+      const invoiceRows = await tx
+        .select({ code: erpInvoice.code })
+        .from(erpInvoice)
+        .where(and(eq(erpInvoice.apId, id), eq(erpInvoice.status, 'issued')))
+        .limit(1);
+      if (invoiceRows.length > 0) {
+        throw new BadRequestException(
+          `该应付已被进项发票 ${invoiceRows[0].code} 引用，不能作废；` +
+            `请先作废该发票（同月）或开具红字发票（跨月），再作废应付`
+        );
+      }
+      // ④ CAS 收口
+      const updated = await tx
+        .update(erpApBill)
+        .set({
+          status: 'voided',
+          voidReason,
+          voidedAt: new Date(),
+          voidedBy: userId,
+          updatedAt: new Date(),
+        })
+        .where(and(eq(erpApBill.id, id), ne(erpApBill.status, 'voided')))
+        .returning({ id: erpApBill.id });
+      if (updated.length === 0) {
+        throw new ConflictException('该应付已被作废，请刷新后重试');
+      }
+      // ⑤ 同事务红字凭证
+      const amount = Number(ap.amount ?? 0);
+      if (amount !== 0) {
+        // 税率从供应商档案取（与 createAp 的解析链同源）；取不到时按 0 处理，
+        // 此时反向分录退化为「借 2202 / 贷 6602」全额冲减费用 —— 与
+        // `inputIssueLines(amount, 0)` 的分录严格镜像，借贷仍平。
+        const rate = Number(before.supplierDefaultRate ?? 0);
+        const lines = inputVoidLines(
+          amount,
+          Number.isFinite(rate) ? rate : 0
+        );
+        await this.voucherHookService.generateVoucherDraft({
+          sourceType: 'ap',
+          sourceRef: `ap-void:${ap.code}`,
+          voucherDate: todayInShanghai(),
+          summary: `应付作废 ${ap.code}`,
+          lines,
+          taxEntityId: before.supplierTaxEntityId ?? null,
+        });
+      }
+    });
+
+    const rows = await this.db
+      .select({
+        ap: erpApBill,
+        supplierName: mdSupplier.name,
+        projectName: erpProject.name,
+      })
+      .from(erpApBill)
+      .leftJoin(mdSupplier, eq(erpApBill.supplierId, mdSupplier.id))
+      .leftJoin(erpProject, eq(erpApBill.projectId, erpProject.id))
+      .where(eq(erpApBill.id, id));
+    const row = rows[0];
+    return {
+      id: row.ap.id,
+      code: row.ap.code,
+      supplierId: row.ap.supplierId ?? '',
+      supplierName: row.supplierName ?? '',
+      projectId: row.ap.projectId,
+      projectName: row.projectName,
+      amount: Number(row.ap.amount ?? 0),
+      paidAmount: Number(row.ap.paidAmount ?? 0),
+      dueDate: row.ap.dueDate,
+      status: 'voided' as ApStatus,
+      source: row.ap.source ?? 'manual',
+      sourceRef: row.ap.sourceRef,
+      voidReason: row.ap.voidReason ?? null,
+      voidedAt: row.ap.voidedAt ? new Date(row.ap.voidedAt).toISOString() : null,
+      voidedBy: row.ap.voidedBy ?? null,
+      remark: row.ap.remark,
+      createdAt: row.ap.createdAt.toISOString(),
     };
   }
 
@@ -253,6 +440,25 @@ export class ApService {
         .for('update');
       if (apRows.length === 0) throw new NotFoundException('应付记录不存在');
       const ap = apRows[0];
+      /*
+       * ⚠️ 作废的应付单**不得**再登记付款（与 `ArService.writeoff` 同一缺陷类）。
+       *
+       * `voidAp` 会写入 `status='voided'` 并开具冲回凭证；若仍允许对它登记付款，
+       * 后续核销会把 `paidAmount` 加上去，并在状态重算里把 `'voided'`
+       * **覆盖成 `'paid'`/`'partial'`** —— 已被作废（且已冲回）的单据被"复活"，
+       * 而冲回凭证还挂在账上 → 账实不符。
+       *
+       * 守卫放在余额校验**之前**：作废单的 `amount − reserved` 通常仍为正数，
+       * 余额校验拦不住它。客户端下拉也已排除 `voided`，但服务端是权威一方
+       * （接口可被直接调用，且并发下客户端读到的状态可能已过期）。
+       */
+      const payableBlocked = blockedReasonForWriteAction(
+        ap.status,
+        PAYABLE_AP_STATUSES,
+        '登记付款',
+        '应付',
+      );
+      if (payableBlocked) throw new BadRequestException(payableBlocked);
       const reservedRows = await tx
         .select({
           total: sql<string>`coalesce(sum(${erpPayment.amount}), 0)`,
@@ -501,6 +707,24 @@ export class ApService {
         .for('update');
       if (apRows.length === 0) throw new NotFoundException('应付记录不存在');
       const ap = apRows[0];
+      /*
+       * ⚠️ 这条守卫同时挡住**两个**后果，缺了它下面的状态重算会"复活"作废单：
+       *
+       * 核销末尾会按新的 `paidAmount` 重算状态
+       * （`newPaid >= amount ? 'paid' : newPaid > 0 ? 'partial' : 原状态`）——
+       * 一旦 `newPaid > 0`，`'voided'` 就被**覆盖**成 `'paid'`/`'partial'`。
+       * 而 `voidAp` 作废时已经开具了冲回凭证，于是出现：
+       * 单据状态回到"已付/部分付"、冲回凭证仍在账上 → 重复计数。
+       *
+       * 必须在重算**之前**拦（放在读取 `ap` 之后即最早可行点）。
+       */
+      const apWriteoffBlocked = blockedReasonForWriteAction(
+        ap.status,
+        WRITEOFFABLE_AP_STATUSES,
+        '核销',
+        '应付',
+      );
+      if (apWriteoffBlocked) throw new BadRequestException(apWriteoffBlocked);
       const payRows = await tx
         .select()
         .from(erpPayment)
@@ -565,12 +789,17 @@ export class ApService {
         writeoffDate: todayInShanghai(),
       });
       const newPaid = Number(apUpdated[0].paidAmount ?? 0);
-      const apStatus =
-        newPaid >= Number(apUpdated[0].amount)
-          ? 'paid'
-          : newPaid > 0
-            ? 'partial'
-            : (apUpdated[0].status ?? 'pending');
+      /*
+       * §5.9：状态重算公式已抽到 `./writeoff-status`（纯函数 + 13 条断言）。
+       * 该模块把 `voided` 做成**显式一档**（原样返回、不参与重算）——
+       * 等于给"作废单被复活"这条规则加了第二道防线（第一道是本方法开头的
+       * `blockedReasonForWriteAction` 守卫；见模块文件头的论证）。
+       */
+      const apStatus = apWriteoffStatus({
+        currentStatus: (apUpdated[0].status ?? 'pending') as ApBillStatus,
+        newPaidAmount: newPaid,
+        totalAmount: Number(apUpdated[0].amount),
+      });
       await tx
         .update(erpApBill)
         .set({
@@ -579,7 +808,7 @@ export class ApService {
         })
         .where(eq(erpApBill.id, dto.apId));
       const newUsed = Number(payUpdated[0].usedAmount ?? 0);
-      if (newUsed >= Number(payUpdated[0].amount)) {
+      if (isPaymentFullyUsed(newUsed, Number(payUpdated[0].amount))) {
         await tx
           .update(erpPayment)
           .set({ status: 'paid', updatedAt: new Date() })
@@ -610,6 +839,9 @@ export class ApService {
       status: (row.ap.status ?? 'pending') as ApStatus,
       source: row.ap.source ?? 'manual',
       sourceRef: row.ap.sourceRef,
+      voidReason: row.ap.voidReason ?? null,
+      voidedAt: row.ap.voidedAt ? new Date(row.ap.voidedAt).toISOString() : null,
+      voidedBy: row.ap.voidedBy ?? null,
       remark: row.ap.remark,
       createdAt: row.ap.createdAt.toISOString(),
     };
@@ -672,12 +904,11 @@ export class ApService {
         throw error;
       }
       const newPaid = Math.max(0, Number(apRows[0].paidAmount ?? 0) - amount);
-      const apStatus =
-        newPaid <= 0.001
-          ? 'pending'
-          : newPaid >= Number(apRows[0].amount)
-            ? 'paid'
-            : 'partial';
+      /* §5.9：冲回路径的状态判据（含 0.001 归零容差）见 `./writeoff-status` */
+      const apStatus = apWriteoffReversalStatus({
+        newPaidAmount: newPaid,
+        totalAmount: Number(apRows[0].amount),
+      });
       await tx
         .update(erpPayment)
         .set({
@@ -701,7 +932,7 @@ export class ApService {
       await tx
         .update(erpPayment)
         .set({
-          status: newUsed >= Number(payRows[0].amount) - 0.001 ? 'paid' : 'approved',
+          status: paymentStatusAfterReversal(newUsed, Number(payRows[0].amount)),
           updatedAt: new Date(),
         })
         .where(eq(erpPayment.id, src.paymentId ?? ''));
@@ -730,6 +961,9 @@ export class ApService {
       status: (row.ap.status ?? 'pending') as ApStatus,
       source: row.ap.source ?? 'manual',
       sourceRef: row.ap.sourceRef,
+      voidReason: row.ap.voidReason ?? null,
+      voidedAt: row.ap.voidedAt ? new Date(row.ap.voidedAt).toISOString() : null,
+      voidedBy: row.ap.voidedBy ?? null,
       remark: row.ap.remark,
       createdAt: row.ap.createdAt.toISOString(),
     };

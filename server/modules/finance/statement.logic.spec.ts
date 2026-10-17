@@ -362,14 +362,21 @@ describe('C-11 恒等式与取整', () => {
 
   it('roundAmount / sameAmount 走分比较，规避浮点误差', () => {
     expect(roundAmount(0.1 + 0.2)).toBe(0.3);
-    // 仓库口径是裸 `Math.round(x * 100) / 100`（不做 EPSILON 补偿），
-    // 因此 IEEE754 恰好略小于半分的值会向下取整：1.005→1、1.015→1.01。
-    // 这两个断言把该口径**写死**，避免有人"顺手"改成其他舍入方式而悄悄改变对账单金额。
-    expect(roundAmount(1.005)).toBe(1);
-    expect(roundAmount(1.015)).toBe(1.01);
-    // 正常半分（如 2.675、1.025）仍按四舍五入进位
+    // 口径已统一到 `shared/number.ts` 的十进制 round2（会计四舍五入、对负数对称）：
+    // 十进制的 1.005 就是 1.01（裸 Math.round 受 IEEE754 影响会错成 1.00），
+    // 且 roundAmount(-x) === -roundAmount(x) 恒成立（红冲凭证与原凭证可精确对冲）。
+    // 这两个断言把该口径**写死**，避免有人"顺手"改回 Math.round(x*100)/100
+    // 而悄悄改变对账单金额、破坏红冲对称。
+    expect(roundAmount(1.005)).toBe(1.01);
+    expect(roundAmount(1.015)).toBe(1.02);
+    // 正常半分按十进字面量四舍五入（会计口径）：1.025 的十进制字面量就是 1.03。
+    // 注意这与裸 Math.round(1.025 * 100) 的 IEEE 产物（1.02）不同 —— 后者把
+    // "1.025 存不下"的误差暴露成了金额差异，正是 shared/number.ts 要消除的。
     expect(roundAmount(2.675)).toBe(2.68);
-    expect(roundAmount(1.025)).toBe(1.02);
+    expect(roundAmount(1.025)).toBe(1.03);
+    // 红冲对称：原单 + 红冲必须精确为 0（借贷平衡的根基）
+    expect(roundAmount(-1.005)).toBe(-1.01);
+    expect(roundAmount(2.675) + roundAmount(-2.675)).toBe(0);
     expect(sameAmount(0.1 + 0.2, 0.3)).toBe(true);
     // 经典反例：0.1+0.2 === 0.3 为 false，分比较必须为 true
     expect(0.1 + 0.2 === 0.3).toBe(false);

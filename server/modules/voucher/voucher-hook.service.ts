@@ -1,5 +1,6 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import {
+  BindTrigger,
   DRIZZLE_DATABASE,
   type PostgresJsDatabase,
 } from '@server/platform';
@@ -290,6 +291,25 @@ export class VoucherHookService {
       }
     }
     return { retried, dead };
+  }
+
+  /**
+   * S4：凭证补偿对账（定时任务 `reconcile_voucher_ar`）。
+   *
+   * 业务（如项目收入确认的 AR + 凭证）采用「最终一致 + 补偿队列」：AR 写成功后若凭证生成
+   * 失败，会写入 `comp_voucher_job` 供重试。本任务周期性重放失败队列，缩小 AR 与凭证之间
+   * 的不一致窗口。强一致（单一编排事务）属二期改造，见 docs/REMEDIATION_PLAN_SEVERE.md。
+   */
+  @BindTrigger('reconcile_voucher_ar')
+  async reconcileVoucherCompensation(): Promise<{
+    retried: number;
+    dead: number;
+  }> {
+    const result = await this.retryPendingJobs(50);
+    this.logger.log(
+      `凭证补偿对账完成：重试 ${result.retried} 笔 / 标记 dead ${result.dead} 笔`,
+    );
+    return result;
   }
 
   /** 将失败记入重试队列。表不存在时只打日志。 */

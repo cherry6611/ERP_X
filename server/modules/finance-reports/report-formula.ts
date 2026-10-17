@@ -1,3 +1,4 @@
+import { round2 } from '@server/common/utils/number';
 /**
  * 法定财务报表取数公式 DSL（A-01 / A-02）。
  *
@@ -358,9 +359,6 @@ export interface FormulaAccountValues {
   name?: string;
 }
 
-function round2(value: number): number {
-  return Math.round(value * 100) / 100;
-}
 
 function directionValue(
   values: {

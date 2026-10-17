@@ -51,6 +51,9 @@ import {
       useFactory: () => createInvoiceVerifyProvider(),
     },
   ],
-  exports: [ArService],
+  // P0-C/P0-D：退货、收入冲回等模块需要复用它登记红字发票（负数发票）。
+  // 导出而不是让各模块各写一份 INSERT：红字发票的幂等键、负数落账口径、
+  // 认证状态联动都必须在**一处**，否则"账表对齐"又会分叉成多份实现。
+  exports: [ArService, InvoiceService],
 })
 export class FinanceModule {}

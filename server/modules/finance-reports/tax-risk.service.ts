@@ -8,6 +8,7 @@ import { erpInvoice, finAccount, mdTaxEntity } from '@server/database/schema';
 import { unwrapRows } from '@server/common/utils/rows';
 import { DictService } from '@server/modules/system-config/dict.service';
 import { VatDeclarationService } from './vat-declaration.service';
+import { round2 } from '@server/common/utils/number';
 import {
   DEFAULT_BURDEN_RATE_FLUCTUATION,
   DEFAULT_BURDEN_RATE_MAX,
@@ -28,9 +29,6 @@ import type {
 
 const PERIOD_PATTERN = /^\d{4}-(0[1-9]|1[0-2])$/;
 
-function round2(value: number): number {
-  return Math.round(value * 100) / 100;
-}
 
 function toNumber(value: string | number | null | undefined): number {
   if (value === null || value === undefined) return 0;

@@ -22,14 +22,13 @@
  * 而不是简单 `round2`。这是本文件最值得单测的部分。
  */
 
-import { FALLBACK_RATE } from '@shared/tax';
+import { FALLBACK_RATE, splitTax } from '@shared/tax';
+// 统一取整口径：原先这里自带一份 `Math.round(v * SCALE) / SCALE`，对负数不对称，
+// 分摊红冲时差 1 分。改为复用全仓唯一实现（`SCALE` 即 100，语义不变）。
+import { round2 } from '@server/common/utils/number';
 
 /** 分摊/组合分析里允许的最大小数位（金额到分） */
 const SCALE = 100;
-
-function round2(value: number): number {
-  return Math.round(value * SCALE) / SCALE;
-}
 
 function toNumber(value: number | string | null | undefined): number {
   if (value === null || value === undefined) return 0;
@@ -458,8 +457,21 @@ export function buildCrossDimensionRows(
   };
 }
 
-/** 分摊场景下的税额还原（复用 shared/tax 口径，避免各处自己写公式） */
+/**
+ * 分摊场景下的税额还原 —— **不含税净额**。
+ *
+ * ⚠️ 2026-10-17 修正：本函数原先自己写了一遍价税分离公式
+ * （`round2(gross * 100 / (100 + rate))`），而注释里却写着
+ * "复用 shared/tax 口径，避免各处自己写公式" —— **注释与实现不符**。
+ *
+ * 实测该写法与权威 `splitTax` 在 50 组（10 金额 × 5 税率）上**结果相同**，
+ * 所以这不是账目错误的修复，而是**消除一份将来可能分叉的副本**：
+ * `shared/tax.ts` 的 `splitTax` 是唯一权威（且带红冲符号不变量），
+ * 一旦权威公式的口径调整（例如取整顺序），副本就会静默不同步。
+ *
+ * 现在直接取 `splitTax(...).net`。
+ */
 export function netOfTax(gross: number, taxRate?: number | null): number {
   const rate = toNumber(taxRate ?? FALLBACK_RATE);
-  return round2((toNumber(gross) * 100) / (100 + rate));
+  return splitTax(toNumber(gross), rate).net;
 }

@@ -1,3 +1,4 @@
+import { round2 } from '@server/common/utils/number';
 /**
  * D-06：税务风险扫描的规则引擎。
  *
@@ -63,9 +64,6 @@ export interface TaxRiskFinding {
   amount: number | null;
 }
 
-function round2(value: number): number {
-  return Math.round(value * 100) / 100;
-}
 
 function toNumber(value: number | null | undefined): number {
   if (value === null || value === undefined) return 0;

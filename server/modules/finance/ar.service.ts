@@ -10,11 +10,12 @@ import {
   DRIZZLE_DATABASE,
   type PostgresJsDatabase,
 } from '@server/platform';
-import { and, desc, eq, inArray, sql, type SQL } from 'drizzle-orm';
+import { and, desc, eq, inArray, ne, sql, type SQL } from 'drizzle-orm';
 import {
   erpAr,
   erpArWriteoff,
   erpContract,
+  erpInvoice,
   erpProject,
   erpReceipt,
   mdCustomer,
@@ -31,6 +32,10 @@ import { VoucherHookService } from '@server/modules/voucher/voucher-hook.service
 import { TaxResolverService } from '@server/modules/tax/tax-resolver.service';
 import { arSettleStatus, receiptMatchStatus } from './ar-match';
 import { todayInShanghai, addDaysInShanghai } from '@server/common/utils/biz-date';
+import {
+  WRITEOFFABLE_AR_STATUSES,
+  blockedReasonForWriteAction,
+} from './void-guard';
 import { assertPeriodOpen } from '@server/common/utils/period-guard';
 import type {
   AgingBucket,
@@ -87,6 +92,9 @@ export class ArService {
       source: row.ar.source ?? 'manual',
       overdue: status !== 'settled' && open > 0 && (row.ar.dueDate ?? '') < today,
       ownerUserId: row.ar.ownerUserId ?? null,
+      voidReason: row.ar.voidReason ?? null,
+      voidedAt: row.ar.voidedAt ? new Date(row.ar.voidedAt).toISOString() : null,
+      voidedBy: row.ar.voidedBy ?? null,
       remark: row.ar.remark,
       createdAt: row.ar.createdAt.toISOString(),
     };
@@ -150,15 +158,37 @@ export class ArService {
 
   /** 应收登记：默认账期取客户档案的账期天数 */
   async createAr(dto: CreateArDto): Promise<ArItem> {
+    return this.createArWith(this.db, dto);
+  }
+
+  /**
+   * N-3/B-4：把应收插入并入调用方的事务。
+   *
+   * 收入确认若先落收入、再单独登记应收，则在两次写入之间失败会留下
+   * 「已确认收入、无应收」的静默不一致（原来只 `logger.error`，无台账、无重试入口）。
+   * 事务入口让收入主表与应收**同生共死**：任一步失败整体回滚，调用方可直接重试。
+   */
+  async createArInTransaction(
+    tx: PostgresJsDatabase,
+    dto: CreateArDto
+  ): Promise<ArItem> {
+    return this.createArWith(tx, dto);
+  }
+
+  /** 应收登记实现；`db` 允许是外部事务句柄（见 `createArInTransaction`） */
+  private async createArWith(
+    db: PostgresJsDatabase,
+    dto: CreateArDto
+  ): Promise<ArItem> {
     if (dto.amount <= 0) {
       throw new BadRequestException('应收金额必须大于 0');
     }
-    const contract = await this.db
+    const contract = await db
       .select()
       .from(erpContract)
       .where(eq(erpContract.id, dto.contractId));
     if (contract.length === 0) throw new NotFoundException('合同不存在');
-    const customer = await this.db
+    const customer = await db
       .select({ id: mdCustomer.id, name: mdCustomer.name, termsDays: mdCustomer.termsDays })
       .from(mdCustomer)
       .where(eq(mdCustomer.id, contract[0].customerId ?? ''));
@@ -173,7 +203,7 @@ export class ArService {
     // P1-5：期间闸门必须校验**业务发生日（登记日）**所在期间。
     // 原实现校验的是「账期到期日」所在期间：登记日已结账时漏拦，到期日落在已结账
     // 期间时又误拦。到期日只是账期推算结果，不对应任何业务发生。
-    await assertPeriodOpen(this.db, todayInShanghai(), '登记应收');
+    await assertPeriodOpen(db, todayInShanghai(), '登记应收');
     // D-03'：手工应收先解析税率，失败不落库
     let voucherRate: number | null = null;
     if (source === 'manual') {
@@ -193,7 +223,7 @@ export class ArService {
     }
     // D-19：同 sourceRef 幂等返回既有应收
     if (dto.sourceRef) {
-      const existed = await this.db
+      const existed = await db
         .select()
         .from(erpAr)
         .where(eq(erpAr.sourceRef, dto.sourceRef))
@@ -207,10 +237,10 @@ export class ArService {
         });
       }
     }
-    const code = await generateBizCode(this.db, erpAr, erpAr.code, 'ARR');
+    const code = await generateBizCode(db, erpAr, erpAr.code, 'ARR');
     let rows: (typeof erpAr.$inferSelect)[];
     try {
-      rows = await this.db
+      rows = await db
         .insert(erpAr)
         .values({
           code,
@@ -233,7 +263,7 @@ export class ArService {
           ? String((error as { code: unknown }).code)
           : '';
       if (pgCode === '23505' && dto.sourceRef) {
-        const existed = await this.db
+        const existed = await db
           .select()
           .from(erpAr)
           .where(eq(erpAr.sourceRef, dto.sourceRef))
@@ -364,20 +394,43 @@ export class ArService {
       erpReceipt.code,
       'RCV'
     );
-    const rows = await this.db
-      .insert(erpReceipt)
-      .values({
-        code,
-        customerId: dto.customerId,
-        amount: String(dto.amount),
-        receiptDate,
-        method: dto.method ?? 'bank',
-        source: dto.source,
-        status: 'unmatched',
-        remark: dto.remark,
-      })
-      .returning();
-    const row = rows[0];
+    /*
+     * 插入与（可选的）核销放在**同一事务**内：若使用者指定了应收单，
+     * 那么"回款已登记"与"该应收已核销"要么都成立、要么都不成立 ——
+     * 不允许出现"回款建好了但核销失败"的半成品（那会让使用者以为已回款）。
+     */
+    let receiptStatus: ReceiptStatus = 'unmatched';
+    const row = await this.db.transaction(async (tx) => {
+      const rows = await tx
+        .insert(erpReceipt)
+        .values({
+          code,
+          customerId: dto.customerId,
+          amount: String(dto.amount),
+          receiptDate,
+          method: dto.method ?? 'bank',
+          source: dto.source,
+          status: 'unmatched',
+          remark: dto.remark,
+        })
+        .returning();
+      const inserted = rows[0];
+      if (dto.arId) {
+        await this.applyWriteoffInTx(tx, {
+          arId: dto.arId,
+          receiptId: inserted.id,
+          amount: dto.amount,
+        });
+        /*
+         * 核销已把回款状态写成 matched/partial，但 `inserted` 是 INSERT 时的
+         * 快照（status 仍是 unmatched）。这里按与 `receiptMatchStatus` 同源的
+         * 判据复算一次，避免返回给前端的状态是旧的。
+         * 本入口不做部分核销（核销金额恒等于回款金额）→ matched。
+         */
+        receiptStatus = receiptMatchStatus(dto.amount, dto.amount);
+      }
+      return inserted;
+    });
 
     /* 回款登记成功 → 生成凭证草稿：借 银行存款(1002/100201) / 贷 应收账款(1122) */
     const receiptAmount = Number(row.amount ?? 0);
@@ -403,7 +456,7 @@ export class ArService {
       receiptDate: row.receiptDate,
       method: row.method ?? 'bank',
       source: row.source,
-      status: (row.status ?? 'unmatched') as ReceiptStatus,
+      status: receiptStatus,
       remark: row.remark,
       createdAt: row.createdAt.toISOString(),
     };
@@ -447,104 +500,151 @@ export class ArService {
     };
   }
 
-  /** 应收核销（支持部分核销）：事务内 FOR UPDATE 锁行（不可 SKIP LOCKED，需等待持锁方完成） */
+  /**
+   * 应收核销（支持部分核销）：事务内 FOR UPDATE 锁行（不可 SKIP LOCKED，需等待持锁方完成）
+   *
+   * 校验与写库逻辑抽到 `applyWriteoffInTx`，因为「登记回款」也要在**同一事务内**
+   * 直接核销（见 `createReceipt` 的 `arId` 参数）—— 两处必须用**同一份**校验，
+   * 否则一条路径能绕过的守卫在另一条路径上仍然存在。
+   */
   async writeoff(dto: ArWriteoffDto): Promise<ArItem> {
     if (dto.amount <= 0) {
       throw new BadRequestException('核销金额必须大于 0');
     }
     await this.db.transaction(async (tx) => {
-      const arRows = await tx
-        .select()
-        .from(erpAr)
-        .where(eq(erpAr.id, dto.arId))
-        .for('update');
-      if (arRows.length === 0) throw new NotFoundException('应收记录不存在');
-      const ar = arRows[0];
-      const arOpen = Number(ar.amount) - Number(ar.settledAmount ?? 0);
-      if (arOpen <= 0) throw new BadRequestException('该应收已全额核销');
-      if (dto.amount > arOpen) {
-        throw new BadRequestException(`核销金额超过应收未核销余额 ${arOpen}`);
-      }
-      const receiptRows = await tx
-        .select()
-        .from(erpReceipt)
-        .where(eq(erpReceipt.id, dto.receiptId))
-        .for('update');
-      if (receiptRows.length === 0) throw new NotFoundException('回款记录不存在');
-      const receipt = receiptRows[0];
-      if (receipt.status === 'voided') {
-        throw new BadRequestException('回款已作废，不可核销');
-      }
-      if (receipt.customerId !== ar.customerId) {
-        throw new BadRequestException('回款客户与应收客户不一致，不可核销');
-      }
-      // F4X-3：条件更新 used_amount，并发超额时 affected-rows=0
-      const receiptUpdated = await tx
-        .update(erpReceipt)
-        .set({
-          usedAmount: sql`${erpReceipt.usedAmount} + ${dto.amount}`,
-          updatedAt: new Date(),
-        })
-        .where(
-          and(
-            eq(erpReceipt.id, dto.receiptId),
-            sql`${erpReceipt.usedAmount} + ${dto.amount} <= ${erpReceipt.amount}`,
-          ),
-        )
-        .returning({
-          id: erpReceipt.id,
-          usedAmount: erpReceipt.usedAmount,
-          amount: erpReceipt.amount,
-        });
-      if (receiptUpdated.length === 0) {
-        throw new BadRequestException(
-          '回款可用余额不足（可能已被并发核销）',
-        );
-      }
-      const arUpdated = await tx
-        .update(erpAr)
-        .set({
-          settledAmount: sql`${erpAr.settledAmount} + ${dto.amount}`,
-          updatedAt: new Date(),
-        })
-        .where(
-          and(
-            eq(erpAr.id, dto.arId),
-            sql`coalesce(${erpAr.settledAmount}, 0) + ${dto.amount} <= ${erpAr.amount}`,
-          ),
-        )
-        .returning({
-          settledAmount: erpAr.settledAmount,
-          amount: erpAr.amount,
-        });
-      if (arUpdated.length === 0) {
-        throw new BadRequestException(
-          '应收可用余额不足（可能已被并发核销）',
-        );
-      }
-      const newSettled = Number(arUpdated[0].settledAmount ?? 0);
-      const newUsed = Number(receiptUpdated[0].usedAmount ?? 0);
-      await tx
-        .update(erpAr)
-        .set({
-          status: arSettleStatus(newSettled, Number(arUpdated[0].amount)),
-          updatedAt: new Date(),
-        })
-        .where(eq(erpAr.id, dto.arId));
-      await tx
-        .update(erpReceipt)
-        .set({
-          status: receiptMatchStatus(newUsed, Number(receiptUpdated[0].amount)),
-          updatedAt: new Date(),
-        })
-        .where(eq(erpReceipt.id, dto.receiptId));
-      await tx.insert(erpArWriteoff).values({
-        arId: dto.arId,
-        receiptId: dto.receiptId,
-        amount: String(dto.amount),
-        writeoffDate: todayInShanghai(),
-      });
+      await this.applyWriteoffInTx(tx, dto);
     });
+    return this.buildWriteoffResult(dto);
+  }
+
+  /**
+   * 核销的**唯一实现**（校验 + 写库），事务由调用方提供。
+   *
+   * 拆出来是因为核销现在有**两个**入口，且都必须走同一份校验：
+   *   ① 独立的「核销」操作（`writeoff`，自己开事务）；
+   *   ② 「登记回款」时若指定了应收单（`createReceipt` 的 `arId`），
+   *      在**同一事务内**顺带核销 —— 回款与其核销要么都成立、要么都不成立。
+   *
+   * ⚠️ 绝不要把这段逻辑复制成第二份：这里的守卫（作废状态、未核销余额、
+   * 客户一致性、并发条件更新）是针对"作废了还能收款"那类问题加的，
+   * 一份副本漂移就会重新打开那个口子。
+   */
+  private async applyWriteoffInTx(
+    tx: Parameters<Parameters<typeof this.db.transaction>[0]>[0],
+    dto: ArWriteoffDto
+  ): Promise<void> {
+    const arRows = await tx
+      .select()
+      .from(erpAr)
+      .where(eq(erpAr.id, dto.arId))
+      .for('update');
+    if (arRows.length === 0) throw new NotFoundException('应收记录不存在');
+    const ar = arRows[0];
+    /*
+     * ⚠️ **必须挡在金额校验之前**：作废的应收单 `amount − settledAmount` 通常
+     * 仍是正数，所以"未核销余额 > 0"这条**拦不住它**。B1 加了作废路径
+     * （`voidAr` 把 status 写成 `'voided'`）却没在核销入口补守卫，
+     * 后果是作废单仍可被核销 —— 而作废时已经开具了冲回凭证，
+     * 再核销会让账面上的应收重新出现变动，等于"作废了还能收款"。
+     *
+     * 客户端下拉已改为排除 `voided`（`ArTab` 的 `openArItems`），
+     * 但服务端必须是**权威**的一方：接口可被直接调用，且并发下
+     * 客户端读到的状态可能已过期。
+     */
+    const arBlocked = blockedReasonForWriteAction(
+      ar.status,
+      WRITEOFFABLE_AR_STATUSES,
+      '核销',
+      '应收',
+    );
+    if (arBlocked) throw new BadRequestException(arBlocked);
+    const arOpen = Number(ar.amount) - Number(ar.settledAmount ?? 0);
+    if (arOpen <= 0) throw new BadRequestException('该应收已全额核销');
+    if (dto.amount > arOpen) {
+      throw new BadRequestException(`核销金额超过应收未核销余额 ${arOpen}`);
+    }
+    const receiptRows = await tx
+      .select()
+      .from(erpReceipt)
+      .where(eq(erpReceipt.id, dto.receiptId))
+      .for('update');
+    if (receiptRows.length === 0) throw new NotFoundException('回款记录不存在');
+    const receipt = receiptRows[0];
+    if (receipt.status === 'voided') {
+      throw new BadRequestException('回款已作废，不可核销');
+    }
+    if (receipt.customerId !== ar.customerId) {
+      throw new BadRequestException('回款客户与应收客户不一致，不可核销');
+    }
+    // F4X-3：条件更新 used_amount，并发超额时 affected-rows=0
+    const receiptUpdated = await tx
+      .update(erpReceipt)
+      .set({
+        usedAmount: sql`${erpReceipt.usedAmount} + ${dto.amount}`,
+        updatedAt: new Date(),
+      })
+      .where(
+        and(
+          eq(erpReceipt.id, dto.receiptId),
+          sql`${erpReceipt.usedAmount} + ${dto.amount} <= ${erpReceipt.amount}`,
+        ),
+      )
+      .returning({
+        id: erpReceipt.id,
+        usedAmount: erpReceipt.usedAmount,
+        amount: erpReceipt.amount,
+      });
+    if (receiptUpdated.length === 0) {
+      throw new BadRequestException(
+        '回款可用余额不足（可能已被并发核销）',
+      );
+    }
+    const arUpdated = await tx
+      .update(erpAr)
+      .set({
+        settledAmount: sql`${erpAr.settledAmount} + ${dto.amount}`,
+        updatedAt: new Date(),
+      })
+      .where(
+        and(
+          eq(erpAr.id, dto.arId),
+          sql`coalesce(${erpAr.settledAmount}, 0) + ${dto.amount} <= ${erpAr.amount}`,
+        ),
+      )
+      .returning({
+        settledAmount: erpAr.settledAmount,
+        amount: erpAr.amount,
+      });
+    if (arUpdated.length === 0) {
+      throw new BadRequestException(
+        '应收可用余额不足（可能已被并发核销）',
+      );
+    }
+    const newSettled = Number(arUpdated[0].settledAmount ?? 0);
+    const newUsed = Number(receiptUpdated[0].usedAmount ?? 0);
+    await tx
+      .update(erpAr)
+      .set({
+        status: arSettleStatus(newSettled, Number(arUpdated[0].amount)),
+        updatedAt: new Date(),
+      })
+      .where(eq(erpAr.id, dto.arId));
+    await tx
+      .update(erpReceipt)
+      .set({
+        status: receiptMatchStatus(newUsed, Number(receiptUpdated[0].amount)),
+        updatedAt: new Date(),
+      })
+      .where(eq(erpReceipt.id, dto.receiptId));
+    await tx.insert(erpArWriteoff).values({
+      arId: dto.arId,
+      receiptId: dto.receiptId,
+      amount: String(dto.amount),
+      writeoffDate: todayInShanghai(),
+    });
+  }
+
+  private async buildWriteoffResult(dto: ArWriteoffDto): Promise<ArItem> {
     const updated = await this.db
       .select({
         ar: erpAr,
@@ -666,6 +766,169 @@ export class ArService {
     return this.buildArItem(updated[0]);
   }
 
+  /**
+   * B1：**作废应收**（终态，不可逆）。
+   *
+   * ## 为什么需要它（本报告最高优先级的业务风险）
+   *
+   * 原状态集只有 `open / partial / settled` —— **没有退出路径**。3 月手工登记
+   * 一笔 100 万应收、4 月发现客户搞错时，系统里**没有任何入口**可撤销它：
+   *   ① 它永久停留在 `open`，**每天**污染四个下游：
+   *      - 现金流预测（`cash-flow.service.ts` 把 `open/partial` 当作未来流入）
+   *      - 账龄与催款（`ar_due_reminder_daily` 每天推送飞书催款）
+   *      - 客户信用额度（`admin.automation.ts` 计入额度占用 → 该客户被误判超限）
+   *      - BI / 报表（应收余额、周转率全部失真）
+   *   ② **系统里没有任何对账能发现它** —— `reconcileRevenueChain` 只检查
+   *      "有收入无应收／无凭证"，不检查"应收是否有真实业务依据"。
+   *   ③ 唯一"解法"是**伪造一笔回款核销掉它** —— 那一步把"数据录入错误"
+   *      升级为"人为掩盖"，且核销会生成银行收款凭证，账实从此不符。
+   *
+   * ## 前置条件（三条，缺一不可）
+   *
+   *   1. `settled_amount = 0`：已核销的应收不能作废（必须先反核销）。
+   *      部分核销同理 —— 作废一笔已收过钱的债权会让已收款的银行流水悬空。
+   *   2. 无**有效**发票引用：`erp_invoice.ar_id = 该应收 AND status = 'issued'`。
+   *      已开票就意味着纳税义务已经发生，作废应收而不作废发票会让
+   *      "票在、债权不在"，申报口径与账簿脱节。
+   *   3. 非终态：已 `voided` 的不能重复作废。
+   *
+   * ## 同事务红字凭证
+   *
+   * 手工应收登记时会出「借 1122 / 贷 2203 + 贷 222101」（`arRegisterLines`）。
+   * 作废必须出**等额反向**，且与状态变更**同事务** —— 否则会产生新的
+   * "有业务无凭证"（或反之），正是前序 S4 治理过的那类非原子写。
+   * `source = 'revenue'` 的应收不出凭证（收入侧已生成），作废时也不出。
+   *
+   * ## 红字凭证的分录方向
+   *
+   * 作废分录 = 登记分录的镜像：借 2203（预收账款）/ 借 222101（销项税）
+   * / 贷 1122（应收）。用 `arRegisterLines` 取反即可保证两侧恒等，
+   * 不手写第二套方向（手写方向正是 `round2` 与红冲对称性那类缺陷的来源）。
+   */
+  async voidAr(
+    id: string,
+    userId: string,
+    reason?: string
+  ): Promise<ArItem> {
+    const voidReason = reason?.trim() || '未填写作废原因';
+    // 事务外先取税率与主体（进事务前读，缩短持锁时间；解析器走另一条连接）
+    const pre = await this.db
+      .select({
+        ar: erpAr,
+        contractTaxRate: erpContract.taxRate,
+        contractTaxEntityId: erpContract.taxEntityId,
+      })
+      .from(erpAr)
+      .leftJoin(erpContract, eq(erpAr.contractId, erpContract.id))
+      .where(eq(erpAr.id, id));
+    if (pre.length === 0) throw new NotFoundException('应收记录不存在');
+    const before = pre[0];
+    const current = (before.ar.status ?? 'open') as ArStatus;
+    if (current === 'voided') {
+      throw new ConflictException('该应收已作废，请勿重复操作');
+    }
+    // 期间闸门：作废是对已结账期间的账务改写，必须与登记同口径拦截
+    await assertPeriodOpen(
+      this.db,
+      before.ar.dueDate ?? todayInShanghai(),
+      '作废应收'
+    );
+
+    const affected = await this.db.transaction(async (tx) => {
+      // ① 行锁重读 + CAS：并发双击/两个标签页同时作废时只有一个能成功
+      const lockedRows = await tx
+        .select()
+        .from(erpAr)
+        .where(eq(erpAr.id, id))
+        .for('update');
+      if (lockedRows.length === 0) throw new NotFoundException('应收记录不存在');
+      const ar = lockedRows[0];
+      const status = (ar.status ?? 'open') as ArStatus;
+      if (status === 'voided') {
+        throw new ConflictException('该应收已作废，请勿重复操作');
+      }
+      const settled = Number(ar.settledAmount ?? 0);
+      if (settled > 0.001) {
+        throw new BadRequestException(
+          `该应收已有核销金额 ${settled}，不能作废；请先在核销明细中反核销，再作废`
+        );
+      }
+      // ② 有效发票引用检查
+      const invoiceRows = await tx
+        .select({ code: erpInvoice.code })
+        .from(erpInvoice)
+        .where(
+          and(eq(erpInvoice.arId, id), eq(erpInvoice.status, 'issued'))
+        )
+        .limit(1);
+      if (invoiceRows.length > 0) {
+        throw new BadRequestException(
+          `该应收已被发票 ${invoiceRows[0].code} 引用，不能作废；` +
+            `请先作废该发票（同月）或开具红字发票（跨月），再作废应收`
+        );
+      }
+      // ③ CAS 收口：WHERE 带状态条件，affected rows = 0 即并发已被处理
+      const updated = await tx
+        .update(erpAr)
+        .set({
+          status: 'voided',
+          voidReason,
+          voidedAt: new Date(),
+          voidedBy: userId,
+          updatedAt: new Date(),
+        })
+        .where(and(eq(erpAr.id, id), ne(erpAr.status, 'voided')))
+        .returning({ id: erpAr.id });
+      if (updated.length === 0) {
+        throw new ConflictException('该应收已被作废，请刷新后重试');
+      }
+      // ④ 同事务红字凭证（只有手工应收出过凭证，收入侧不出）
+      const amount = Number(ar.amount ?? 0);
+      const source = ar.source ?? 'manual';
+      if (source === 'manual' && amount !== 0) {
+        const rate = Number(before.contractTaxRate ?? NaN);
+        if (Number.isFinite(rate)) {
+          // 登记分录的镜像：借 2203 / 借 222101 / 贷 1122
+          const lines = arRegisterLines(amount, rate).map((line) => ({
+            accountCode: line.accountCode,
+            debit: line.credit,
+            credit: line.debit,
+          }));
+          await this.voucherHookService.generateVoucherDraft({
+            sourceType: 'ar',
+            sourceRef: `ar-void:${ar.code}`,
+            voucherDate: todayInShanghai(),
+            summary: `应收作废 ${ar.code}`,
+            lines,
+            taxEntityId: before.contractTaxEntityId ?? null,
+          });
+        } else {
+          // 取不到税率时不静默跳过：宁可作废失败，也不要留下"业务已作废、
+          // 凭证还挂在账上"的悬空账（那种差额对账时极难归因）。
+          throw new BadRequestException(
+            '作废应收失败：合同税率缺失，无法生成红字凭证；请先补齐合同税率后重试'
+          );
+        }
+      }
+      return true;
+    });
+    if (!affected) throw new ConflictException('该应收已被作废，请刷新后重试');
+
+    const rows = await this.db
+      .select({
+        ar: erpAr,
+        contractName: erpContract.name,
+        customerName: mdCustomer.name,
+        projectName: erpProject.name,
+      })
+      .from(erpAr)
+      .leftJoin(erpContract, eq(erpAr.contractId, erpContract.id))
+      .leftJoin(mdCustomer, eq(erpAr.customerId, mdCustomer.id))
+      .leftJoin(erpProject, eq(erpAr.projectId, erpProject.id))
+      .where(eq(erpAr.id, id));
+    return this.buildArItem(rows[0]);
+  }
+
   async listWriteoffs(arId?: string): Promise<
     Array<{
       id: string;
@@ -712,6 +975,9 @@ export class ArService {
     }));
     for (const row of rows) {
       if (row.status === 'settled') continue;
+      // B1：作废应收必须从账龄里排除 —— 否则误录的 100 万会永久挂在
+      // "90天以上"桶里，账龄表每天都在提示一笔根本不存在的债权。
+      if (row.status === 'voided') continue;
       const open = Number(row.amount) - Number(row.settledAmount ?? 0);
       if (open <= 0) continue;
       const overdueDays = row.dueDate

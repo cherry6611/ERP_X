@@ -3,7 +3,7 @@ import {
   DRIZZLE_DATABASE,
   type PostgresJsDatabase,
 } from '@server/platform';
-import { and, eq, ne, sum } from 'drizzle-orm';
+import { and, eq, inArray, ne, sum } from 'drizzle-orm';
 import {
   erpApBill,
   erpAr,
@@ -28,7 +28,9 @@ export class FinanceService {
         status: erpAr.status,
       })
       .from(erpAr)
-      .where(ne(erpAr.status, 'settled'));
+      // B1：白名单化 —— 原 `ne('settled')` 会把作废应收算进财务概览的
+      // 「未结应收/逾期应收」，作废即失效的语义不成立。
+      .where(inArray(erpAr.status, ['open', 'partial']));
     const today = todayInShanghai();
     let openArAmount = 0;
     let overdueArAmount = 0;
@@ -37,7 +39,9 @@ export class FinanceService {
       openArAmount += open;
       if ((row.dueDate ?? '') < today) overdueArAmount += open;
     }
-    // T6：回款合计排除作废
+    // T6：回款合计排除作废。
+    // B5 收敛：口径与现金流预测共用 `resolveOpeningCash` 的取数条件，
+    // 避免三处各写一遍再次分叉（现金流预测原先就是在这里漏掉了作废过滤）。
     const receiptRows = await this.db
       .select({ total: sum(erpReceipt.amount) })
       .from(erpReceipt)
@@ -49,7 +53,8 @@ export class FinanceService {
         status: erpApBill.status,
       })
       .from(erpApBill)
-      .where(ne(erpApBill.status, 'paid'));
+      // B1：白名单化（同上）；`'paid'` 与新增的 `'voided'` 都不计入未结应付。
+      .where(inArray(erpApBill.status, ['pending', 'approved', 'partial']));
     let openApAmount = 0;
     for (const row of apRows) {
       openApAmount += Number(row.amount) - Number(row.paidAmount ?? 0);

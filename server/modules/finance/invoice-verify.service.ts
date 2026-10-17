@@ -243,7 +243,15 @@ export class InvoiceVerifyService {
     return result;
   }
 
-  /** 勾选认证（或标记已抵扣）。独立于查验，仅校验期间格式 */
+  /**
+   * 勾选认证（或标记已抵扣）。独立于查验，仅校验期间格式。
+   *
+   * P0-A 附带缺陷修正：**只有进项（`direction='purchase'`）发票才可以被勾选认证**。
+   * 原实现只校验了状态与期间格式，于是销项发票也能被标记成 `certified` / `deducted`
+   * —— 一旦底稿按"认证状态即抵扣权"接线（本次 P0-A 的修法），
+   * 一张销项票被误勾选就会凭空产生一笔可抵扣进项 = **直接少缴增值税**。
+   * 因此这条校验不是形式检查，而是 P0-A 修复的必要配套。
+   */
   async certifyInvoice(
     id: string,
     dto: CertifyInvoiceDto,
@@ -256,6 +264,19 @@ export class InvoiceVerifyService {
     if (!row) throw new NotFoundException('发票记录不存在');
     if (row.status === 'voided') {
       throw new BadRequestException('作废发票不可勾选认证');
+    }
+    // P0-A：销项发票不存在"勾选认证/抵扣"这个概念，必须拒绝
+    if ((row.direction ?? 'sales') !== 'purchase') {
+      throw new BadRequestException(
+        '仅进项发票（direction=purchase）可勾选认证；销项发票的抵扣凭证是购买方取得后自行勾选'
+      );
+    }
+    // 红字进项发票（负数）不参与勾选认证：它是对已认证进项的冲减，
+    // 在申报表上走"进项税额转出"，而不是再认证一笔负数进项。
+    if (Number(row.amount ?? 0) < 0 || row.sourceRef?.startsWith('red-letter:')) {
+      throw new BadRequestException(
+        '红字进项发票不可勾选认证：请在申报表按「进项税额转出」处理'
+      );
     }
 
     const nextStatus: InvoiceCertificationStatus =

@@ -11,11 +11,13 @@ import {
 import { asc, sql } from 'drizzle-orm';
 import { finAuxDimension } from '@server/database/schema';
 import { unwrapRows } from '@server/common/utils/rows';
+import { round2 } from '@server/common/utils/number';
 import {
   allocateAmount,
   assessCombinationCoverage,
   buildCombinations,
   buildCrossDimensionRows,
+  netOfTax,
   validateCombinationRequest,
   type AuxLineForCombination,
   type DimensionValue,
@@ -29,9 +31,6 @@ import type {
 
 const PERIOD_PATTERN = /^\d{4}-(0[1-9]|1[0-2])$/;
 
-function round2(value: number): number {
-  return Math.round(value * 100) / 100;
-}
 
 function toNumber(value: string | number | null | undefined): number {
   if (value === null || value === undefined) return 0;
@@ -438,7 +437,8 @@ export class AuxCombinationService {
         netShare:
           taxRate === undefined || taxRate === null
             ? null
-            : round2((share * 100) / (100 + taxRate)),
+            : /* 价税分离统一走权威口径（netOfTax → shared/tax 的 splitTax） */
+              netOfTax(share, taxRate),
       })),
     };
   }

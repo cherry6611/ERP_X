@@ -99,7 +99,25 @@ describe('A-09 科目启用/停用', () => {
       name: '[API_TEST]已发生额科目',
       accountType: 'expense',
     });
-    // 直接写入一条分录：模拟该科目已被使用
+    /*
+     * 直接写入一条分录：模拟该科目已被使用。
+     *
+     * ⚠️ 2026-10-17：**必须先建父凭证**。
+     * `fin_voucher_line.voucher_id` 原先没有外键，所以本 spec 只用了个悬空 uuid
+     * 也能插进去；迁移 `2026-10-17-fix12-voucher-line-fk.sql` 补上
+     * `FOREIGN KEY … ON DELETE CASCADE` 之后，这个插入被正确拒绝
+     * （`violates foreign key constraint "fk_fin_voucher_line_voucher"`）。
+     *
+     * 这说明**之前的写法在造非法数据**（分录没有父凭证），
+     * 而"分录属于某张凭证"本来就是业务事实 —— 补父凭证后 spec 更贴近真实，
+     * 也正是那道外键想保证的。
+     */
+    await db.exec(`
+      INSERT INTO fin_voucher (id, code, period, summary, status)
+      VALUES ('eeeeeeee-0000-4000-8000-000000000001',
+              'VCH-API-TEST-920', '2026-10', '[API_TEST]科目停用测试凭证', 'draft')
+      ON CONFLICT (id) DO NOTHING;
+    `);
     await db.exec(`
       INSERT INTO fin_voucher_line (id, voucher_id, summary, account_code, debit, credit)
       VALUES ('dddddddd-0000-4000-8000-000000000001',

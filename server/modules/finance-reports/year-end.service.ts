@@ -27,19 +27,23 @@ import { generateBizCode } from '@server/common/utils/biz-code';
 import { unwrapRows } from '@server/common/utils/rows';
 import { assertFiscalYearOpen } from '@server/common/utils/period-guard';
 import { LedgersService } from './ledgers.service';
+import { buildCarryForwardLines } from './year-end-lines';
+import {
+  PERIOD_FORMAT_MESSAGE,
+  isValidPeriod,
+  lastDayOfMonth as computeLastDayOfMonth,
+  yearOfPeriod,
+} from './period-utils';
+import { round2 } from '@server/common/utils/number';
 import type {
   PeriodCarryForwardPreview,
   YearEndCloseResult,
   YearEndStatusItem,
 } from '@shared/api.interface';
 
-const PERIOD_PATTERN = /^\d{4}-(0[1-9]|1[0-2])$/;
 /** 损益类科目类型（用于结转损益） */
 const PROFIT_LOSS_TYPES = ['income', 'revenue', 'expense', 'cost'];
 
-function round2(value: number): number {
-  return Math.round(value * 100) / 100;
-}
 
 const NULL_ENTITY = '00000000-0000-0000-0000-000000000000';
 
@@ -52,14 +56,15 @@ export class YearEndService {
     private readonly ledgers: LedgersService,
   ) {}
 
+  /* §5.9：期间闸门与月末计算已抽到 `./period-utils`（纯函数 + 15 条断言） */
   private assertPeriod(period: string): void {
-    if (!PERIOD_PATTERN.test(period)) {
-      throw new BadRequestException('期间格式必须为 YYYY-MM');
+    if (!isValidPeriod(period)) {
+      throw new BadRequestException(PERIOD_FORMAT_MESSAGE);
     }
   }
 
   private yearOf(period: string): number {
-    return Number(period.slice(0, 4));
+    return yearOfPeriod(period);
   }
 
   /** A-04 ①②：结转损益预览（含前置校验清单） */
@@ -77,6 +82,10 @@ export class YearEndService {
         .where(
           and(
             eq(finYearEndClose.fiscalYear, fiscalYear),
+            // 必须只认 status='closed'：反年结把行改成 'open' 后**行仍然存在**，
+            // 若不过滤状态，反年结之后 alreadyCarried 仍为真 → 永远无法重新年结，
+            // 年结退化成一次性不可逆操作。
+            eq(finYearEndClose.status, 'closed'),
             this.entityCondition(params.taxEntityId)
           )
         )
@@ -274,59 +283,55 @@ export class YearEndService {
       );
     }
 
-    const voucherDate = `${params.period}-31`;
+    // 用该月真实最后一天，而不是硬拼 '-31'（2/4/6/9/11 月不存在 31 日，
+    // 直接插入会让 PG 抛 date out of range，年结在 2 月结账时必然失败）
     const safeDate = this.lastDayOfMonth(params.period);
-    const lines: Array<{
-      accountId: string;
-      accountCode: string;
-      summary: string;
-      debit: string;
-      credit: string;
-    }> = [];
-    let profitDelta = 0;
+    // 先按科目编码解析出 accountId；科目表里没有的科目无法入账，跳过并在下面兜底报错
+    const accountIdByCode = new Map<string, string>();
     for (const item of preview.items) {
       const accountRow = await this.db
         .select({ id: finAccount.id })
         .from(finAccount)
         .where(eq(finAccount.code, item.accountCode))
         .limit(1);
-      if (accountRow.length === 0) continue;
-      // carryDirection 表示"结转分录用哪个方向冲平该科目"，也就是原余额的反方向
-      const isRevenue = item.accountType === 'income' || item.accountType === 'revenue';
-      const debit = isRevenue ? item.carryAmount : 0;
-      const credit = isRevenue ? 0 : item.carryAmount;
-      lines.push({
-        accountId: accountRow[0].id,
-        accountCode: item.accountCode,
-        summary: `结转损益 ${item.accountCode} ${item.accountName}`,
-        debit: String(debit),
-        credit: String(credit),
-      });
-      profitDelta += credit - debit;
+      if (accountRow.length > 0) {
+        accountIdByCode.set(item.accountCode, accountRow[0].id);
+      }
     }
-    profitDelta = round2(profitDelta);
-    if (lines.length === 0) {
+    const resolvable = preview.items.filter((item) =>
+      accountIdByCode.has(item.accountCode)
+    );
+    if (resolvable.length === 0) {
       throw new BadRequestException('待结转科目均不存在于科目表，请先补齐科目');
     }
-    // 本年利润科目余额（贷方为盈利）
-    lines.push({
-      accountId: profitAccount[0].id,
-      accountCode: profitAccount[0].code,
-      summary: `结转本年利润 ${fiscalYear}`,
-      debit: String(profitDelta < 0 ? Math.abs(profitDelta) : 0),
-      credit: String(profitDelta > 0 ? profitDelta : 0),
-    });
-    const totalDebit = round2(
-      lines.reduce((sum, line) => sum + Number(line.debit || 0), 0)
+
+    // 分录构造走纯函数 `buildCarryForwardLines`（唯一实现，含双向单测），
+    // 避免 service 里再留一份方向判断导致两处漂移。
+    const built = buildCarryForwardLines(
+      resolvable.map((item) => ({
+        accountCode: item.accountCode,
+        accountName: item.accountName,
+        carryAmount: item.carryAmount,
+        carryDirection: item.carryDirection,
+      })),
+      profitAccount[0].code,
+      fiscalYear
     );
-    const totalCredit = round2(
-      lines.reduce((sum, line) => sum + Number(line.credit || 0), 0)
-    );
-    if (totalDebit !== totalCredit) {
+    if (!built.balanced) {
       throw new BadRequestException(
-        `结转凭证借贷不平衡：借 ${totalDebit}，贷 ${totalCredit}`
+        `结转凭证借贷不平衡：借 ${built.totalDebit}，贷 ${built.totalCredit}`
       );
     }
+    const lines = built.lines.map((line) => ({
+      accountId:
+        line.accountCode === profitAccount[0].code
+          ? profitAccount[0].id
+          : (accountIdByCode.get(line.accountCode) ?? ''),
+      accountCode: line.accountCode,
+      summary: line.summary,
+      debit: line.debit,
+      credit: line.credit,
+    }));
 
     const code = await generateBizCode(
       this.db,
@@ -400,11 +405,7 @@ export class YearEndService {
   }
 
   private lastDayOfMonth(period: string): string {
-    const [yearText, monthText] = period.split('-');
-    const year = Number(yearText);
-    const month = Number(monthText);
-    const lastDay = new Date(Date.UTC(year, month, 0)).getUTCDate();
-    return `${yearText}-${monthText}-${String(lastDay).padStart(2, '0')}`;
+    return computeLastDayOfMonth(period);
   }
 
   /** A-04 ④：反年结（需审批留痕；红冲结转凭证） */

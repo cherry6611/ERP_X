@@ -14,7 +14,17 @@ import { CanCapability, NeedLogin } from '@server/platform';
 import { FinanceRead } from '@server/common/auth/read-roles';
 import { actorFromRequest } from '@server/common/auth/actor';
 import type { Request } from 'express';
-import { IsIn, IsOptional, IsString, IsUUID, Matches } from 'class-validator';
+import {
+  IsDateString,
+  IsIn,
+  IsNumber,
+  IsOptional,
+  IsString,
+  IsUUID,
+  Length,
+  Matches,
+  Min,
+} from 'class-validator';
 import { ArService } from './ar.service';
 import { ApService } from './ap.service';
 import { CashFlowService } from './cash-flow.service';
@@ -69,6 +79,69 @@ export class ReverseWriteoffDto {
 export class BindApDto {
   @IsUUID()
   apId!: string;
+}
+
+/**
+ * B1 / P0-C：作废原因。
+ *
+ * 作废是**不可逆**动作（单据退出资金/申报口径），必须留下"为什么"。
+ * 允许为空（兼容既有前端调用），但服务端会把空值落为「未填写作废原因」
+ * 而不是 NULL —— 事后看到 NULL 无法区分"没填"和"没走这条路径"。
+ */
+export class VoidReasonDto {
+  @IsOptional()
+  @IsString()
+  reason?: string;
+}
+
+/**
+ * P0-C / P0-D：红字发票登记（销售退货 / 收入冲回 / 采购退货）。
+ *
+ * 金额一律传**正数**，服务端按负数落账 —— 让调用方不必记住符号约定，
+ * 也避免"传了负数又被取绝对值"这类双向歧义。
+ */
+export class CreateRedLetterInvoiceDto {
+  @IsIn(['sales', 'purchase'], { message: 'direction 仅支持 sales / purchase' })
+  direction!: 'sales' | 'purchase';
+
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @Min(0.01)
+  amount!: number;
+
+  @IsNumber({ maxDecimalPlaces: 2 })
+  taxRate!: number;
+
+  @IsString()
+  @Length(1, 100)
+  sourceRef!: string;
+
+  @IsOptional()
+  @IsDateString()
+  invoiceDate?: string;
+
+  @IsOptional()
+  @IsUUID()
+  contractId?: string;
+
+  @IsOptional()
+  @IsUUID()
+  customerId?: string;
+
+  @IsOptional()
+  @IsUUID()
+  supplierId?: string;
+
+  @IsOptional()
+  @IsUUID()
+  projectId?: string;
+
+  @IsOptional()
+  @IsUUID()
+  taxEntityId?: string;
+
+  @IsOptional()
+  @IsString()
+  remark?: string;
 }
 
 /**
@@ -191,6 +264,28 @@ export class FinanceController {
     return this.arService.createAr(dto);
   }
 
+  /**
+   * B1：作废应收（终态，不可逆）。
+   *
+   * 前置条件：`settledAmount = 0`、无有效发票引用；作废与红字凭证同事务。
+   * 这是本报告列为最高优先级业务风险的那一项 —— 在此之前，误录的应收
+   * **没有任何退出路径**，唯一"解法"是伪造一笔回款核销（把录入错误升级为
+   * 人为掩盖）。前端在 `status='voided'` 或无权限时隐藏/禁用该按钮。
+   */
+  @CanCapability('finance_write')
+  @Post('ars/:id/void')
+  async voidAr(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Req() req: Request,
+    @Body() dto: VoidReasonDto
+  ): Promise<ArItem> {
+    return this.arService.voidAr(
+      id,
+      req.userContext?.userId ?? 'anonymous',
+      dto.reason
+    );
+  }
+
   @FinanceRead()
   @Get('receipts')
   async listReceipts(
@@ -255,6 +350,25 @@ export class FinanceController {
   @Post('aps')
   async createAp(@Body() dto: CreateApDto): Promise<ApItem> {
     return this.apService.createAp(dto);
+  }
+
+  /**
+   * B1：作废应付（终态，不可逆）。与 `ars/:id/void` 同源问题、同套修法。
+   *
+   * 前置条件：`paidAmount = 0`、无未作废付款单、无有效进项发票引用。
+   */
+  @CanCapability('finance_write')
+  @Post('aps/:id/void')
+  async voidAp(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Req() req: Request,
+    @Body() dto: VoidReasonDto
+  ): Promise<ApItem> {
+    return this.apService.voidAp(
+      id,
+      req.userContext?.userId ?? 'anonymous',
+      dto.reason
+    );
   }
 
   @FinanceRead()
@@ -415,10 +529,42 @@ export class FinanceController {
   @Post('invoices/:id/void')
   async voidInvoice(
     @Param('id', ParseUUIDPipe) id: string,
-    @Req() req: Request
+    @Req() req: Request,
+    @Body() dto: VoidReasonDto
   ): Promise<InvoiceItem> {
     const userId: string = req.userContext?.userId ?? 'anonymous';
-    return this.invoiceService.voidInvoice(id, userId);
+    return this.invoiceService.voidInvoice(id, userId, dto.reason);
+  }
+
+  /**
+   * P0-C / P0-D：登记红字发票（负数发票）。
+   *
+   * 退货与收入冲回原先只出红字凭证、不出红字发票，导致底稿销项不冲减
+   * （多缴）且每月必报 `output_mismatch`（告警疲劳）。本接口让票与账重新对齐。
+   * 幂等键为 `sourceRef`（同一来源单据重复调用返回既有红字发票）。
+   */
+  @CanCapability('finance_write')
+  @Post('invoices/red-letter')
+  async createRedLetterInvoice(
+    @Body() dto: CreateRedLetterInvoiceDto,
+    @Req() req: Request
+  ): Promise<InvoiceItem> {
+    return this.invoiceService.createRedLetterInvoice(
+      {
+        direction: dto.direction,
+        amount: dto.amount,
+        taxRate: dto.taxRate,
+        sourceRef: dto.sourceRef,
+        invoiceDate: dto.invoiceDate,
+        contractId: dto.contractId ?? null,
+        customerId: dto.customerId ?? null,
+        supplierId: dto.supplierId ?? null,
+        projectId: dto.projectId ?? null,
+        taxEntityId: dto.taxEntityId ?? null,
+        remark: dto.remark,
+      },
+      req.userContext?.userId ?? 'anonymous'
+    );
   }
 
   @CanCapability('finance_write')

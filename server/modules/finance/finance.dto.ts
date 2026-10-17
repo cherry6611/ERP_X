@@ -12,6 +12,7 @@ import {
   Matches,
   MaxLength,
   Min,
+  ValidateIf,
 } from 'class-validator';
 import type {
   ApWriteoffDto as IApWriteoffDto,
@@ -96,6 +97,15 @@ export class ApWriteoffDto implements IApWriteoffDto {
 export class CreateReceiptDto implements ICreateReceiptDto {
   @IsUUID()
   customerId!: string;
+
+  /**
+   * 直接核销的应收单（可选）。校验与独立「核销」接口共用
+   * `ArService.applyWriteoffInTx`，所以这里只需保证它是合法 UUID；
+   * 作废/客户不一致/超额等业务守卫在 service 里统一判定。
+   */
+  @IsOptional()
+  @IsUUID()
+  arId?: string;
 
   @IsNumber()
   @Min(0)
@@ -226,7 +236,7 @@ export class CreateInvoiceDto implements ICreateInvoiceDto {
   remark?: string;
 }
 
-/** 发票补充关联（PATCH /api/finance/invoices/:id）：arId 传 null 表示清除关联 */
+/** 发票补充关联 + 登记后编辑（PATCH /api/finance/invoices/:id）；可空字段传 null 表示清除 */
 export class UpdateInvoiceDto implements IUpdateInvoiceDto {
   @IsOptional()
   @IsString()
@@ -241,6 +251,67 @@ export class UpdateInvoiceDto implements IUpdateInvoiceDto {
   @IsString()
   @MaxLength(1000)
   remark?: string;
+
+  /*
+   * ── 登记后编辑（用户要求）──
+   *
+   * 可空 UUID 一律用「`@IsOptional()` + `@ValidateIf((_, v) => v !== null)`
+   * + `@IsUUID()`」这一组：`@IsOptional()` 让 `undefined` 与 `null` 都短路放行
+   * （class-validator 把二者一同视为"未提供"），`@ValidateIf` 再把 `null` 显式排除，
+   * 于是**非 null 即必须是合法 UUID**。与 `data-asset.controller.ts`、
+   * `master-data.dto.ts#UpdateCustomerDto.taxEntityId` 的既有写法逐字一致。
+   *
+   * 金额/税率沿用 `CreateInvoiceDto` 的 `@IsNumber({ maxDecimalPlaces: 2 })`（AGENTS.md API-1）。
+   *
+   * ⚠️ 这些字段能否真正写入**由 service 判定**（凭证是否已过账），见
+   * `server/modules/finance/invoice-edit-guard.ts`。此处只负责"格式合法 + 允许出现"——
+   * 不加这些字段的话，`forbidNonWhitelisted` 会把请求直接 400，编辑功能根本到不了 service。
+   */
+  @IsOptional()
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @Min(0.01)
+  amount?: number;
+
+  @IsOptional()
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @Min(0)
+  taxRate?: number;
+
+  @IsOptional()
+  @IsDateString()
+  invoiceDate?: string;
+
+  @IsOptional()
+  @IsIn(['vat_special', 'vat_normal', 'electronic'], {
+    message: 'invoiceType 仅支持 vat_special / vat_normal / electronic',
+  })
+  invoiceType?: IUpdateInvoiceDto['invoiceType'];
+
+  @IsOptional()
+  @IsIn(['sales', 'purchase'], {
+    message: 'direction 仅支持 sales / purchase',
+  })
+  direction?: IUpdateInvoiceDto['direction'];
+
+  @IsOptional()
+  @ValidateIf((_, v) => v !== null)
+  @IsUUID()
+  projectId?: string | null;
+
+  @IsOptional()
+  @ValidateIf((_, v) => v !== null)
+  @IsUUID()
+  contractId?: string | null;
+
+  @IsOptional()
+  @ValidateIf((_, v) => v !== null)
+  @IsUUID()
+  supplierId?: string | null;
+
+  @IsOptional()
+  @ValidateIf((_, v) => v !== null)
+  @IsUUID()
+  apId?: string | null;
 }
 
 /** 外协供应商结算生成（按供应商 + 月份，可选项目） */

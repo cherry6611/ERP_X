@@ -3,13 +3,13 @@ import {
   DRIZZLE_DATABASE,
   type PostgresJsDatabase,
 } from '@server/platform';
-import { and, desc, eq, inArray, sql, sum } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNull, sql, sum } from 'drizzle-orm';
 import dayjs from 'dayjs';
+import { round2 } from '@server/common/utils/number';
+import { resolveOpeningCash } from './opening-cash';
 import {
   erpApBill,
   erpAr,
-  erpPayment,
-  erpReceipt,
   finExpenseClaim,
   hrPayroll,
 } from '@server/database/schema';
@@ -20,9 +20,6 @@ import type {
 
 const TZ_OFFSET = 8;
 
-function round2(value: number): number {
-  return Math.round(value * 100) / 100;
-}
 
 @Injectable()
 export class CashFlowService {
@@ -50,16 +47,10 @@ export class CashFlowService {
     const anchorStr: string = anchor.format('YYYY-MM-DD');
     const windowDays: number = weekCount * 7;
 
-    const receiptRows = await this.db
-      .select({ total: sum(erpReceipt.amount) })
-      .from(erpReceipt);
-    const paymentRows = await this.db
-      .select({ total: sum(erpPayment.amount) })
-      .from(erpPayment)
-      .where(inArray(erpPayment.status, ['approved', 'paid']));
-    const openingCash: number = round2(
-      Number(receiptRows[0]?.total ?? 0) - Number(paymentRows[0]?.total ?? 0)
-    );
+    // 期初现金口径统一走 `resolveOpeningCash`（B5）。
+    // 原实现在这里**漏了 `status <> 'voided'`**：作废回款仍被算作已收，
+    // 13 周曲线整体高估。口径分叉的根因已由抽函数消除，不要再在此处内联。
+    const openingCash: number = await resolveOpeningCash(this.db);
 
     const arRows = await this.db
       .select({
@@ -95,11 +86,26 @@ export class CashFlowService {
       if (idx >= 0 && idx < weekCount) outflow[idx] += open;
     }
 
-    // 已审批未支付的报销单据视为即付，落第一周
+    // 已审批未支付的报销单据视为即付，落第一周。
+    //
+    // B-13：必须排除**已经生成了应付单**的报销 —— `fin-expense.service.ts:719`
+    // 在报销审批通过时同事务插入 `erp_ap_bill`（`source_ref = 'expense:<单号>'`），
+    // 所以同一笔钱会**既在 outflow[0]（报销）又在 apRows（应付落周）被计两次**，
+    // 现金流预测凭空多出一份流出。原先用 `status = 'approved'` 全额汇总，
+    // 正是踩了这个重复；这里用 LEFT JOIN 只取"尚无对应应付单"的部分。
     const claimRows = await this.db
       .select({ total: sum(finExpenseClaim.amount) })
       .from(finExpenseClaim)
-      .where(eq(finExpenseClaim.status, 'approved'));
+      .leftJoin(
+        erpApBill,
+        eq(erpApBill.sourceRef, sql`'expense:' || ${finExpenseClaim.code}`)
+      )
+      .where(
+        and(
+          eq(finExpenseClaim.status, 'approved'),
+          isNull(erpApBill.id)
+        )
+      );
     if (weekCount > 0) {
       outflow[0] += Number(claimRows[0]?.total ?? 0);
     }

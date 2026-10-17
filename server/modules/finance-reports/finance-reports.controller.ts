@@ -33,6 +33,8 @@ import { VatDeclarationService } from './vat-declaration.service';
 import { AuxiliaryService } from './auxiliary.service';
 import { TaxRiskService } from './tax-risk.service';
 import { AuxCombinationService } from './aux-combination.service';
+import { DataScopeService, type DataScopeResource } from '@server/common/auth/data-scope.service';
+import { actorFromRequest } from '@server/common/auth/actor';
 import type {
   AuxAllocationArgs as IAuxAllocationArgs,
   CreateAuxDimensionDto as ICreateAuxDimensionDto,
@@ -152,7 +154,27 @@ export class FinanceReportsController {
     private readonly auxiliaryService: AuxiliaryService,
     private readonly taxRiskService: TaxRiskService,
     private readonly auxCombinationService: AuxCombinationService,
+    private readonly dataScope: DataScopeService,
   ) {}
+
+  /**
+   * B-2：账簿/报表的纳税主体可见范围收敛。
+   *
+   * 为什么不把校验放进 service：Service 方法拿不到 actor（要传就得改一大片签名），
+   * 而 HTTP 边界本来就是安全边界（与 `@CanCapability` 同一层）。
+   * service 收到的 `taxEntityId` 已经是一个**已授权**的主体 id，SQL 过滤照旧生效。
+   */
+  private async scopedTaxEntityId(
+    resource: Extract<DataScopeResource, 'ledger' | 'report'>,
+    req: Request,
+    requested?: string,
+  ): Promise<string | undefined> {
+    return this.dataScope.narrowTaxEntityIdFor(
+      resource,
+      actorFromRequest(req),
+      requested,
+    );
+  }
 
   private assertPeriod(period: string | undefined, field = 'period'): string {
     if (!period || !PERIOD_PATTERN.test(period)) {
@@ -174,42 +196,45 @@ export class FinanceReportsController {
 
   @CanCapability('finance')
   @Get('reports/balance-sheet')
-  getBalanceSheet(
+  async getBalanceSheet(
+    @Req() req: Request,
     @Query('period') period?: string,
     @Query('taxEntityId') taxEntityId?: string,
     @Query('includeDraft') includeDraft?: string,
   ) {
     return this.reportsService.balanceSheet({
       period: this.assertPeriod(period),
-      taxEntityId: taxEntityId || undefined,
+      taxEntityId: await this.scopedTaxEntityId('report', req, taxEntityId),
       includeDraft: this.parseIncludeDraft(includeDraft),
     });
   }
 
   @CanCapability('finance')
   @Get('reports/income-statement')
-  getIncomeStatement(
+  async getIncomeStatement(
+    @Req() req: Request,
     @Query('period') period?: string,
     @Query('taxEntityId') taxEntityId?: string,
     @Query('includeDraft') includeDraft?: string,
   ) {
     return this.reportsService.incomeStatement({
       period: this.assertPeriod(period),
-      taxEntityId: taxEntityId || undefined,
+      taxEntityId: await this.scopedTaxEntityId('report', req, taxEntityId),
       includeDraft: this.parseIncludeDraft(includeDraft),
     });
   }
 
   @CanCapability('finance')
   @Get('reports/cash-flow')
-  getCashFlow(
+  async getCashFlow(
+    @Req() req: Request,
     @Query('period') period?: string,
     @Query('taxEntityId') taxEntityId?: string,
     @Query('includeDraft') includeDraft?: string,
   ) {
     return this.reportsService.cashFlow({
       period: this.assertPeriod(period),
-      taxEntityId: taxEntityId || undefined,
+      taxEntityId: await this.scopedTaxEntityId('report', req, taxEntityId),
       includeDraft: this.parseIncludeDraft(includeDraft),
     });
   }
@@ -221,8 +246,9 @@ export class FinanceReportsController {
    */
   @CanCapability('finance')
   @Get('reports/:reportCode')
-  getReport(
+  async getReport(
     @Param('reportCode') reportCode: string,
+    @Req() req: Request,
     @Query('period') period?: string,
     @Query('taxEntityId') taxEntityId?: string,
     @Query('includeDraft') includeDraft?: string,
@@ -234,7 +260,7 @@ export class FinanceReportsController {
     }
     return this.reportsService.getReport(reportCode as ReportCodeParam, {
       period: this.assertPeriod(period),
-      taxEntityId: taxEntityId || undefined,
+      taxEntityId: await this.scopedTaxEntityId('report', req, taxEntityId),
       includeDraft: this.parseIncludeDraft(includeDraft),
     });
   }
@@ -254,7 +280,7 @@ export class FinanceReportsController {
    */
   @CanCapability('finance')
   @Get('reports/:reportCode/print')
-  getReportPrintPack(
+  async getReportPrintPack(
     @Param('reportCode') reportCode: string,
     @Req() req: Request,
     @Query('period') period?: string,
@@ -268,7 +294,7 @@ export class FinanceReportsController {
     }
     return this.reportsService.printPack(reportCode as ReportCodeParam, {
       period: this.assertPeriod(period),
-      taxEntityId: taxEntityId || undefined,
+      taxEntityId: await this.scopedTaxEntityId('report', req, taxEntityId),
       operator: req.userContext?.userName ?? req.userContext?.userId ?? null,
       includeDraft: this.parseIncludeDraft(includeDraft),
     });
@@ -278,7 +304,8 @@ export class FinanceReportsController {
 
   @CanCapability('finance')
   @Get('ledgers/account-balance')
-  getAccountBalance(
+  async getAccountBalance(
+    @Req() req: Request,
     @Query('period') period?: string,
     @Query('level') level?: string,
     @Query('taxEntityId') taxEntityId?: string,
@@ -287,28 +314,30 @@ export class FinanceReportsController {
     return this.ledgersService.accountBalance({
       period: this.assertPeriod(period),
       level: level ? Math.min(Math.max(Number(level) || 6, 1), 6) : undefined,
-      taxEntityId: taxEntityId || undefined,
+      taxEntityId: await this.scopedTaxEntityId('ledger', req, taxEntityId),
       includeDraft: this.parseIncludeDraft(includeDraft),
     });
   }
 
   @CanCapability('finance')
   @Get('ledgers/general')
-  getGeneralLedger(
+  async getGeneralLedger(
+    @Req() req: Request,
     @Query('period') period?: string,
     @Query('taxEntityId') taxEntityId?: string,
     @Query('includeDraft') includeDraft?: string,
   ) {
     return this.ledgersService.generalLedger({
       period: this.assertPeriod(period),
-      taxEntityId: taxEntityId || undefined,
+      taxEntityId: await this.scopedTaxEntityId('ledger', req, taxEntityId),
       includeDraft: this.parseIncludeDraft(includeDraft),
     });
   }
 
   @CanCapability('finance')
   @Get('ledgers/detail')
-  getDetailLedger(
+  async getDetailLedger(
+    @Req() req: Request,
     @Query('accountCode') accountCode?: string,
     @Query('period') period?: string,
     @Query('page') page?: string,
@@ -325,7 +354,7 @@ export class FinanceReportsController {
       period: this.assertPeriod(period),
       page: Math.max(1, Number(page) || 1),
       pageSize: Math.min(Math.max(Number(pageSize) || 50, 1), 500),
-      taxEntityId: taxEntityId || undefined,
+      taxEntityId: await this.scopedTaxEntityId('ledger', req, taxEntityId),
       includeChildren: includeChildren === 'true',
       includeDraft: this.parseIncludeDraft(includeDraft),
     });
@@ -333,7 +362,8 @@ export class FinanceReportsController {
 
   @CanCapability('finance')
   @Get('ledgers/aux-balance')
-  getAuxBalance(
+  async getAuxBalance(
+    @Req() req: Request,
     @Query('period') period?: string,
     @Query('dimension') dimension?: string,
     @Query('dimensionId') dimensionId?: string,
@@ -347,7 +377,7 @@ export class FinanceReportsController {
       period: this.assertPeriod(period),
       dimensionCode: dimension,
       dimensionId: dimensionId || undefined,
-      taxEntityId: taxEntityId || undefined,
+      taxEntityId: await this.scopedTaxEntityId('ledger', req, taxEntityId),
       includeDraft: this.parseIncludeDraft(includeDraft),
     });
   }
@@ -360,8 +390,11 @@ export class FinanceReportsController {
 
   @CanCapability('finance')
   @Get('ledgers/trial-balance')
-  getTrialBalance(@Query('period') period?: string) {
-    return this.ledgersService.trialBalance(this.assertPeriod(period));
+  async getTrialBalance(@Req() req: Request, @Query('period') period?: string) {
+    return this.ledgersService.trialBalance(
+      this.assertPeriod(period),
+      await this.scopedTaxEntityId('ledger', req)
+    );
   }
 
   /* ========== A-04 期末结转损益与年结 ========== */

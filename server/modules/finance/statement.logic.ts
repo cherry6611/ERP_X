@@ -21,6 +21,8 @@
  *   4. 期末 = 期初 + 本期借方 − 本期贷方，三者用同一套 2 位小数四舍五入。
  */
 
+import { round2 } from '@shared/number';
+
 /** 对账方向：customer=客户对账单（我们开出去），supplier=供应商对账单（供应商开给我们） */
 export const STATEMENT_DIRECTIONS = ['customer', 'supplier'] as const;
 
@@ -128,14 +130,14 @@ export interface StatementComputation {
 
 const PERIOD_PATTERN = /^(\d{4})-(0[1-9]|1[0-2])$/;
 
-/** 金额统一按 2 位小数四舍五入（与全仓 `Math.round(x * 100) / 100` 一致） */
+/** 金额统一 2 位小数四舍五入：唯一入口 `round2`（十进制、对负数对称，红冲凭证可对冲） */
 export function roundAmount(value: number): number {
-  return Math.round(value * 100) / 100;
+  return round2(value);
 }
 
-/** 分比较：浮点金额判等一律走分，禁止 `===` */
+/** 分比较：浮点金额判等一律走 round2，禁止 `===`（`round2` 对负数对称，负向金额也可靠） */
 export function sameAmount(a: number, b: number): boolean {
-  return Math.round(a * 100) === Math.round(b * 100);
+  return round2(a) === round2(b);
 }
 
 /**

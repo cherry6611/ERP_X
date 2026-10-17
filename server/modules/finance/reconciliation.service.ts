@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { and, desc, eq, ne, sql, sum } from 'drizzle-orm';
 import type { ReconRowItem } from '@shared/api.interface';
+import { round2 } from '@server/common/utils/number';
 import {
   DRIZZLE_DATABASE,
   type PostgresJsDatabase,
@@ -27,9 +28,6 @@ import {
 /** 勾稽明细行：契约以 shared 为唯一权威（ReconRowItem） */
 export type ReconRow = ReconRowItem;
 
-function round2(value: number): number {
-  return Math.round(value * 100) / 100;
-}
 
 @Injectable()
 export class ReconciliationService {

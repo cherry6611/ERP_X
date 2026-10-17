@@ -22,6 +22,8 @@ import {
   type ParsedFormula,
 } from './report-formula';
 import { fiscalYearStart, LedgersService, previousPeriod } from './ledgers.service';
+import { buildReportCheck } from './report-check';
+import { round2 } from '@server/common/utils/number';
 import type {
   AccountDirection,
   BalanceSheetResult,
@@ -50,9 +52,6 @@ interface TemplateRow {
 
 type Rolled = Awaited<ReturnType<LedgersService['rolledBalances']>>;
 
-function round2(value: number): number {
-  return Math.round(value * 100) / 100;
-}
 
 @Injectable()
 export class ReportsService {
@@ -269,18 +268,23 @@ export class ReportsService {
    * 年终结转后损益科目已被清零、4103 已承接本期利润，本值自然为 0，不会重复计算。
    *
    * 取数口径：rolledBalances 的期末净额为「建账至本期末」的累计数；损益类科目
-   * 年终结转即清零，因此累计数即本年累计。只汇总末级科目，避免父级重复计入。
+   * 年终结转即清零，因此累计数即本年累计。对每个损益类科目取【直接发生额】
+   * （自身净额 − 其损益类下级的净额）后跨科目求和：既能纳入末级科目，也能纳入
+   * 历史数据中直接记在非末级（汇总）科目上的发生额（如费用记在 6602 而非 660201），
+   * 且不会因父级已包含下级而重复计入。
    */
   private ytdProfitLossNet(rolled: Rolled): number {
     let expenseMinusRevenue = 0;
-    for (const values of rolled.values()) {
-      if (!values.isLeaf) continue;
-      if (
-        !['income', 'revenue', 'expense', 'cost'].includes(values.accountType)
-      ) {
-        continue;
+    for (const [code, values] of rolled) {
+      if (!ReportsService.isProfitLoss(values.accountType)) continue;
+      let direct = values.closingDebit - values.closingCredit;
+      for (const child of values.children) {
+        const childValues = rolled.get(child);
+        if (childValues && ReportsService.isProfitLoss(childValues.accountType)) {
+          direct -= childValues.closingDebit - childValues.closingCredit;
+        }
       }
-      expenseMinusRevenue += values.closingDebit - values.closingCredit;
+      expenseMinusRevenue += round2(direct);
     }
     return round2(-expenseMinusRevenue);
   }
@@ -337,24 +341,28 @@ export class ReportsService {
     const assetsTotal = this.findRow(rows, '10');
     const liabilitiesTotal = this.findRow(rows, '17');
     const equityTotal = this.findRow(rows, '21');
+    /*
+     * §5.9：自查项改由 `./report-check` 的 `buildReportCheck` 构造 ——
+     * `passed` 由 `difference` **推导**，不再各处各写一遍
+     * `round2(a) === round2(b)`，于是不可能出现"差异 0 却判不通过"
+     * （或更糟的"差异非零却判通过"）。
+     * 注意两项刻意比较**不同的行**：`equation` 比 行22（模板合计），
+     * `subtotal` 比 17+21 之和 —— 这样"合计算错"与"分项相加错"能分别暴露。
+     */
+    const row22 = this.findRow(rows, '22');
     const checks: ReportCheck[] = [
-      {
+      buildReportCheck({
         code: 'balance_sheet_equation',
         label: '资产总计 = 负债和所有者权益总计',
         left: assetsTotal,
-        right: this.findRow(rows, '22'),
-        difference: round2(assetsTotal - this.findRow(rows, '22')),
-        passed: round2(assetsTotal) === round2(this.findRow(rows, '22')),
-      },
-      {
+        right: row22,
+      }),
+      buildReportCheck({
         code: 'balance_sheet_subtotal',
         label: '负债和所有者权益总计 = 负债合计 + 所有者权益合计',
-        left: this.findRow(rows, '22'),
-        right: round2(liabilitiesTotal + equityTotal),
-        difference: round2(this.findRow(rows, '22') - (liabilitiesTotal + equityTotal)),
-        passed:
-          round2(this.findRow(rows, '22')) === round2(liabilitiesTotal + equityTotal),
-      },
+        left: row22,
+        right: liabilitiesTotal + equityTotal,
+      }),
     ];
 
     return {
@@ -439,26 +447,18 @@ export class ReportsService {
       params.includeDraft
     );
     const checks: ReportCheck[] = [
-      {
+      buildReportCheck({
         code: 'income_statement_net_profit',
         label: '净利润 = 利润总额 − 所得税费用',
         left: netProfit,
-        right: round2(this.findRow(rows, '10') - this.findRow(rows, '11')),
-        difference: round2(
-          netProfit - (this.findRow(rows, '10') - this.findRow(rows, '11'))
-        ),
-        passed:
-          round2(netProfit) ===
-          round2(this.findRow(rows, '10') - this.findRow(rows, '11')),
-      },
-      {
+        right: this.findRow(rows, '10') - this.findRow(rows, '11'),
+      }),
+      buildReportCheck({
         code: 'income_statement_business_profit',
         label: '营业利润 = 营业收入 − 营业成本及费用',
         left: operatingProfit,
-        right: round2(revenueTotal - costTotal),
-        difference: round2(operatingProfit - (revenueTotal - costTotal)),
-        passed: round2(operatingProfit) === round2(revenueTotal - costTotal),
-      },
+        right: revenueTotal - costTotal,
+      }),
     ];
 
     // P2-3：把原先「算了但被 void 掉」的年终结转一致性校验真正落地。
@@ -468,14 +468,14 @@ export class ReportsService {
     const netProfitYtd =
       rows.find((row) => row.rowNo === '12')?.ytdAmount ?? netProfit;
     if (round2(yearProfitOccur) !== 0) {
-      checks.push({
-        code: 'income_statement_year_profit',
-        label: '本年利润（4103）本期发生额 = 本年累计净利润（年终结转一致性）',
-        left: round2(-yearProfitOccur),
-        right: round2(netProfitYtd),
-        difference: round2(-yearProfitOccur - netProfitYtd),
-        passed: round2(-yearProfitOccur) === round2(netProfitYtd),
-      });
+      checks.push(
+        buildReportCheck({
+          code: 'income_statement_year_profit',
+          label: '本年利润（4103）本期发生额 = 本年累计净利润（年终结转一致性）',
+          left: -yearProfitOccur,
+          right: netProfitYtd,
+        }),
+      );
     }
 
     return {
@@ -589,8 +589,16 @@ export class ReportsService {
     const openingCash = this.findRow(rows, '13');
     const closingCash = this.findRow(rows, '14');
     const cashDifference = round2(openingCash + netIncrease - closingCash);
+    /* 资产负债表侧的货币资金期末余额：只取一次，避免 left/right/difference 三处各调一次 */
+    const balanceSheetMoneyFunds = this.moneyFunds(currentRolled, 'closing');
 
     const checks: ReportCheck[] = [
+      /*
+       * 这一项**特意不用** `buildReportCheck`：它的 `left` 本身就是
+       * `round2(期初 + 净增加)`，`passed` 直接看那个已取整的差额是否为零 ——
+       * 语义比"两侧各自取整再比"更直接，且是原有行为，不顺手改。
+       * （两者在正常数据上等价；差异只可能出现在"取整后恰好跨分"的极端情形。）
+       */
       {
         code: 'cash_flow_reconcile',
         label: '期初现金 + 现金净增加额 = 期末现金',
@@ -599,17 +607,12 @@ export class ReportsService {
         difference: cashDifference,
         passed: cashDifference === 0,
       },
-      {
+      buildReportCheck({
         code: 'cash_flow_balance_sheet',
         label: '期末现金 = 资产负债表货币资金期末余额',
         left: closingCash,
-        right: round2(
-          this.moneyFunds(currentRolled, 'closing')
-        ),
-        difference: round2(closingCash - this.moneyFunds(currentRolled, 'closing')),
-        passed:
-          round2(closingCash) === round2(this.moneyFunds(currentRolled, 'closing')),
-      },
+        right: balanceSheetMoneyFunds,
+      }),
     ];
 
     return {

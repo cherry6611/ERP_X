@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   Inject,
   Injectable,
   Logger,
@@ -10,7 +11,11 @@ import {
   DRIZZLE_DATABASE,
   type PostgresJsDatabase,
 } from '@server/platform';
-import { and, asc, count, desc, eq, inArray, sql } from 'drizzle-orm';
+import { and, asc, count, desc, eq, inArray, or, sql } from 'drizzle-orm';
+import {
+  ilikeEscaped,
+  likeContains,
+} from '@server/common/utils/sql-like';
 import {
   astAsset,
   crmQuotation,
@@ -33,15 +38,22 @@ import {
   hrPayroll,
 } from '@server/database/schema';
 import { generateBizCode } from '@server/common/utils/biz-code';
+import { extractPostgresErrorCode } from '@server/common/utils/postgres-error';
+import {
+  taxEntityScopeCondition,
+  type TaxEntityFilter,
+} from '@server/common/auth/data-scope.service';
 import { unwrapRows } from '@server/common/utils/rows';
 import { resolveVoucherTaxEntityId } from '@server/common/tax/tax-entity-resolver';
 import { assertFiscalYearOpen, assertPeriodOpen as assertPeriodOpenGuard } from '@server/common/utils/period-guard';
+import { round2 } from '@server/common/utils/number';
 import type {
   AccountItem,
   CreateAccountDto,
   CreateVoucherDto,
   PagedResult,
   PeriodStatus,
+  UnassignedEntityCheckResult,
   VoucherAction,
   VoucherItem,
   VoucherLineAuxItem,
@@ -92,9 +104,6 @@ interface VoucherLineRow {
   aux?: VoucherLineAuxItem[];
 }
 
-function round2(value: number): number {
-  return Math.round(value * 100) / 100;
-}
 
 /** 解析 fin_account.aux_required（JSON 数组字符串），异常值按"无要求"处理 */
 function parseAuxRequired(raw: string | null | undefined): string[] {
@@ -200,9 +209,16 @@ export class VoucherService {
   ): Promise<PagedResult<AccountItem>> {
     const conditions = [];
     if (keyword) {
-      conditions.push(
-        sql`(${finAccount.code} ilike ${`%${keyword}%`} or ${finAccount.name} ilike ${`%${keyword}%`})`
-      );
+      // S4：转义 `%`/`_` 并显式 `ESCAPE`（原实现 `%${keyword}%` 传 `%` 即匹配全表）
+      const pattern = likeContains(keyword);
+      if (pattern) {
+        conditions.push(
+          or(
+            ilikeEscaped(finAccount.code, pattern),
+            ilikeEscaped(finAccount.name, pattern)
+          )
+        );
+      }
     }
     const where = conditions.length > 0 ? and(...conditions) : undefined;
     const totalRows: Array<{ total: number }> = await this.db
@@ -340,7 +356,7 @@ export class VoucherService {
       }
       return this.getAccountById(inserted[0].id);
     } catch (error) {
-      if (this.extractPostgresErrorCode(error) === '23505') {
+      if (extractPostgresErrorCode(error) === '23505') {
         throw new ConflictException(`科目编码 ${dto.code} 已存在`);
       }
       throw error;
@@ -355,17 +371,6 @@ export class VoucherService {
       .limit(1);
     if (rows.length === 0) throw new NotFoundException('科目不存在');
     return this.toAccountItem(rows[0]);
-  }
-
-  private extractPostgresErrorCode(error: unknown): string | undefined {
-    let current: unknown = error;
-    for (let depth = 0; depth < 4 && current; depth += 1) {
-      if (typeof current !== 'object') break;
-      const { code, cause } = current as { code?: unknown; cause?: unknown };
-      if (typeof code === 'string') return code;
-      current = cause;
-    }
-    return undefined;
   }
 
   /* ========== 凭证 ========== */
@@ -458,25 +463,50 @@ export class VoucherService {
     return result;
   }
 
-  private async getVoucherById(id: string): Promise<VoucherItem> {
-    const rows: VoucherHeadRow[] = await this.db
-      .select({
-        id: finVoucher.id,
-        code: finVoucher.code,
-        voucherDate: finVoucher.voucherDate,
-        period: finVoucher.period,
-        summary: finVoucher.summary,
-        sourceType: finVoucher.sourceType,
-        sourceRef: finVoucher.sourceRef,
-        status: finVoucher.status,
-        remark: finVoucher.remark,
-        createdAt: finVoucher.createdAt,
-      })
-      .from(finVoucher)
-      .where(eq(finVoucher.id, id))
-      .limit(1);
+  private async getVoucherById(
+    id: string,
+    taxEntityFilter?: TaxEntityFilter
+  ): Promise<VoucherItem> {
+    const rows: Array<VoucherHeadRow & { taxEntityId: string | null }> =
+      await this.db
+        .select({
+          id: finVoucher.id,
+          code: finVoucher.code,
+          voucherDate: finVoucher.voucherDate,
+          period: finVoucher.period,
+          summary: finVoucher.summary,
+          sourceType: finVoucher.sourceType,
+          sourceRef: finVoucher.sourceRef,
+          status: finVoucher.status,
+          remark: finVoucher.remark,
+          createdAt: finVoucher.createdAt,
+          taxEntityId: finVoucher.taxEntityId,
+        })
+        .from(finVoucher)
+        .where(eq(finVoucher.id, id))
+        .limit(1);
     if (rows.length === 0) throw new NotFoundException('凭证不存在');
+    this.assertVoucherVisible(rows[0].taxEntityId, taxEntityFilter);
     return this.buildVoucherItem(rows[0]);
+  }
+
+  /**
+   * B-2：凭证详情的越权校验（越权直连接口同样 403，不只靠列表隐藏）。
+   *
+   * `denied` 时不区分“不存在”与“无权限”是**有意**的：
+   * 否则可通过 404/403 的差异探测其他主体的凭证是否存在。
+   */
+  private assertVoucherVisible(
+    taxEntityId: string | null,
+    filter?: TaxEntityFilter
+  ): void {
+    if (!filter || filter.kind === 'unrestricted') return;
+    if (filter.kind === 'denied' || !taxEntityId) {
+      throw new ForbiddenException('没有查看该凭证的数据权限');
+    }
+    if (!filter.taxEntityIds.includes(taxEntityId)) {
+      throw new ForbiddenException('没有查看该凭证的数据权限');
+    }
   }
 
   private async buildVoucherItem(row: VoucherHeadRow): Promise<VoucherItem> {
@@ -520,12 +550,18 @@ export class VoucherService {
     pageSize: number,
     status?: string,
     period?: string,
-    sourceType?: string
+    sourceType?: string,
+    /** B-2：纳税主体可见范围（由 DataScopeService 解析后传入；不传 = 不限） */
+    taxEntityFilter?: TaxEntityFilter
   ): Promise<PagedResult<VoucherItem>> {
     const conditions = [];
     if (status) conditions.push(eq(finVoucher.status, status));
     if (period) conditions.push(eq(finVoucher.period, period));
     if (sourceType) conditions.push(eq(finVoucher.sourceType, sourceType));
+    const scopeCondition = taxEntityFilter
+      ? taxEntityScopeCondition(finVoucher.taxEntityId, taxEntityFilter)
+      : undefined;
+    if (scopeCondition) conditions.push(scopeCondition);
     const where = conditions.length > 0 ? and(...conditions) : undefined;
 
     const totalRows: Array<{ total: number }> = await this.db
@@ -749,27 +785,35 @@ export class VoucherService {
   }
 
   /** 状态机：post 仅 draft→posted；void 允许 draft|posted→voided */
-  async voucherAction(id: string, action: VoucherAction): Promise<VoucherItem> {
+  async voucherAction(
+    id: string,
+    action: VoucherAction,
+    /** B-2：写入类操作也要越权拦截（否则可越过列表直接改其他主体的凭证） */
+    taxEntityFilter?: TaxEntityFilter
+  ): Promise<VoucherItem> {
     if (action !== 'post' && action !== 'void') {
       throw new BadRequestException(`非法的凭证操作：${action}`);
     }
-    const rows: VoucherHeadRow[] = await this.db
-      .select({
-        id: finVoucher.id,
-        code: finVoucher.code,
-        voucherDate: finVoucher.voucherDate,
-        period: finVoucher.period,
-        summary: finVoucher.summary,
-        sourceType: finVoucher.sourceType,
-        sourceRef: finVoucher.sourceRef,
-        status: finVoucher.status,
-        remark: finVoucher.remark,
-        createdAt: finVoucher.createdAt,
-      })
-      .from(finVoucher)
-      .where(eq(finVoucher.id, id))
-      .limit(1);
+    const rows: Array<VoucherHeadRow & { taxEntityId: string | null }> =
+      await this.db
+        .select({
+          id: finVoucher.id,
+          code: finVoucher.code,
+          voucherDate: finVoucher.voucherDate,
+          period: finVoucher.period,
+          summary: finVoucher.summary,
+          sourceType: finVoucher.sourceType,
+          sourceRef: finVoucher.sourceRef,
+          status: finVoucher.status,
+          remark: finVoucher.remark,
+          createdAt: finVoucher.createdAt,
+          taxEntityId: finVoucher.taxEntityId,
+        })
+        .from(finVoucher)
+        .where(eq(finVoucher.id, id))
+        .limit(1);
     if (rows.length === 0) throw new NotFoundException('凭证不存在');
+    this.assertVoucherVisible(rows[0].taxEntityId, taxEntityFilter);
     const voucher = rows[0];
     const current = (voucher.status ?? 'draft') as VoucherStatus;
     const period = voucher.period ?? '';
@@ -1270,17 +1314,17 @@ export class VoucherService {
 
     const matched = spec[sourceType];
     const label = matched?.label ?? sourceType;
-    const bizId = matched && bizCode ? await matched.resolve(bizCode) : null;
+    // url 与 bizId 分离：resolve 返回的是**路由字符串**，只能进 url；
+    // bizId 语义是业务单据主键（uuid），source_ref 只带业务编码时无法解析，恒为 null。
+    const url = matched && bizCode ? await matched.resolve(bizCode) : null;
     return {
       sourceType,
       bizType: matched?.bizType ?? sourceType,
-      // bizId 语义为"业务单据主键"，这里只在确实反查到 uuid 时给出；
-      // 为避免把路由字符串误当主键，统一返回 null（路由信息在 url 字段）。
       bizId: null,
       sourceRef,
       bizCode,
       title: bizCode ? `${label} ${bizCode}` : label,
-      url: bizId,
+      url,
       manual: sourceType === 'manual' || bizCode === null,
     };
   }
@@ -1321,5 +1365,112 @@ export class VoucherService {
       .set({ summary: dto.summary ?? null, updatedAt: new Date() })
       .where(eq(finVoucherLine.id, lineId));
     return this.getVoucherById(voucherId);
+  }
+
+  /**
+   * B-1 / REQ-BE-01：凭证主体归属自检。
+   *
+   * 为什么需要接口：`v_fin_voucher_unassigned_entity` 视图早已建好（迁移
+   * `2026-10-15-upgrade-batch4-voucher-entity-backfill.sql`），但此前**只有集成
+   * 测试引用过它**，没有任何 API 或界面入口 → 运维/财务无法发现"本月有 N 张凭证
+   * 没进任何主体报表"，对使用者而言等价于凭证静默消失。
+   *
+   * 口径：
+   *   - 未归属 = `fin_voucher.tax_entity_id IS NULL`，且 `status <> 'voided'`
+   *     （作废凭证本就不进报表，不构成缺口）；
+   *   - 聚合口径与视图一致（期间 × 来源类型；`source_type` 为 NULL 时归一为 `(manual)`）；
+   *   - 另返回逐张明细供界面下钻（视图只有聚合，无法定位到具体凭证）。
+   *
+   * 说明：需求提到"按主体聚合"，但未归属凭证的 `tax_entity_id` 恒为 NULL，
+   * 按主体过滤无意义，故只提供期间 + 来源类型两个筛选维度。
+   */
+  async checkUnassignedEntity(
+    period?: string,
+    sourceType?: string
+  ): Promise<UnassignedEntityCheckResult> {
+    if (period && !PERIOD_PATTERN.test(period)) {
+      throw new BadRequestException('期间格式必须为 YYYY-MM');
+    }
+    const periodFilter = period ?? null;
+    const sourceTypeFilter = sourceType ?? null;
+    const groups = unwrapRows<{
+      period: string | null;
+      source_type: string;
+      voucher_count: number;
+      total_debit: string | null;
+    }>(
+      await this.db.execute(sql`
+        SELECT period, source_type, voucher_count, total_debit
+          FROM v_fin_voucher_unassigned_entity
+         WHERE (${periodFilter}::text IS NULL OR period = ${periodFilter})
+           AND (${sourceTypeFilter}::text IS NULL OR source_type = ${sourceTypeFilter})
+         ORDER BY period, source_type
+      `)
+    );
+    const vouchers = unwrapRows<{
+      id: string;
+      code: string;
+      period: string | null;
+      voucher_date: string;
+      source_type: string | null;
+      source_ref: string | null;
+      summary: string | null;
+      total_debit: string | null;
+    }>(
+      await this.db.execute(sql`
+        SELECT v.id,
+               v.code,
+               v.period,
+               v.voucher_date::text AS voucher_date,
+               coalesce(v.source_type, '(manual)') AS source_type,
+               v.source_ref,
+               v.summary,
+               coalesce(sum(l.debit), 0) AS total_debit
+          FROM fin_voucher v
+          LEFT JOIN fin_voucher_line l ON l.voucher_id = v.id
+         WHERE v.tax_entity_id IS NULL
+           AND v.status <> 'voided'
+           AND (${periodFilter}::text IS NULL OR v.period = ${periodFilter})
+           AND (
+                 ${sourceTypeFilter}::text IS NULL
+                 OR coalesce(v.source_type, '(manual)') = ${sourceTypeFilter}
+               )
+         GROUP BY v.id, v.code, v.period, v.voucher_date, v.source_type, v.source_ref, v.summary
+         ORDER BY v.period, v.code
+      `)
+    );
+
+    const groupItems = groups.map((row) => ({
+      period: row.period ?? '',
+      sourceType: row.source_type,
+      voucherCount: Number(row.voucher_count ?? 0),
+      totalDebit: round2(Number(row.total_debit ?? 0)),
+    }));
+    const voucherItems = vouchers.map((row) => ({
+      id: row.id,
+      code: row.code,
+      period: row.period ?? '',
+      voucherDate: row.voucher_date,
+      sourceType: row.source_type ?? '(manual)',
+      sourceRef: row.source_ref,
+      summary: row.summary ?? '',
+      totalDebit: round2(Number(row.total_debit ?? 0)),
+    }));
+    const voucherCount = groupItems.reduce(
+      (sum, item) => sum + item.voucherCount,
+      0
+    );
+    const totalDebit = round2(
+      groupItems.reduce((sum, item) => sum + item.totalDebit, 0)
+    );
+    return {
+      period: period ?? null,
+      sourceType: sourceType ?? null,
+      voucherCount,
+      totalDebit,
+      consistent: voucherCount === 0,
+      groups: groupItems,
+      vouchers: voucherItems,
+    };
   }
 }
