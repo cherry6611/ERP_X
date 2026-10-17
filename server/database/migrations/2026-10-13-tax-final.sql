@@ -1,3 +1,4 @@
+-- requires: 0000_baseline.sql（erp_contract / erp_invoice / fin_account 等基线表；本迁移自己建 erp_contract_item 与 md_tax_entity）
 -- 终版含税口径。不写入纳税主体种子数据。
 -- 历史销项发票金额按「原不含税 + 税额」改写为价税合计，仅在 net_amount 仍为空时执行一次。
 

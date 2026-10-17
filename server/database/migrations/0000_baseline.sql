@@ -1,6 +1,14 @@
 -- 独立部署基线。由 scripts/emit-baseline.ts 根据 schema.ts 生成。
-CREATE TYPE user_profile AS (user_id varchar, user_name varchar);
-CREATE TYPE file_attachment AS (bucket_id varchar, file_path varchar);
+-- ⚠️ 本文件由生成器覆写：不要手工编辑（改了会在下次 db:generate 时丢失）。
+-- requires: （无）迁移链起点
+DO $$ BEGIN
+  CREATE TYPE user_profile AS (user_id varchar, user_name varchar);
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+DO $$ BEGIN
+  CREATE TYPE file_attachment AS (bucket_id varchar, file_path varchar);
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 CREATE TABLE IF NOT EXISTS "ast_asset" (
   "id" uuid PRIMARY KEY DEFAULT gen_random_uuid(),

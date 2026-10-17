@@ -1,3 +1,4 @@
+-- requires: 0000_baseline.sql（comp_feishu_drive_config / hr_attendance_amendment 均为基线表）
 -- 2026-10-13 安全与一致性整改。在业务库执行一次。
 -- 未执行时：编号生成回退为 count()+1；凭证失败只记日志；补卡 submitted_by 写不进去但不阻断。
 

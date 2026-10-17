@@ -81,6 +81,10 @@ FROM (VALUES
   ('note_due_reminder_daily',
    '票据到期提醒',
    '每日 09:00 扫描逾期与 15 天内到期的应收/应付票据，按责任人推送。',
+   true),
+  ('reconcile_voucher_ar',
+   '凭证补偿对账',
+   '每 15 分钟重放凭证失败队列，收敛「已生成应收但未生成凭证」的不一致窗口（最终一致兜底）。',
    true)
 ) AS v(task_key, task_name, description, enabled)
 WHERE NOT EXISTS (

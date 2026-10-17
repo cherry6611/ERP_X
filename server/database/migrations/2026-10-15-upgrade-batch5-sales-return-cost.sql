@@ -1,3 +1,4 @@
+-- requires: 2026-10-15-upgrade-batch3-core.sql（sales_return 由该迁移建立）
 -- 销售退货成本冲回（口径：逐单选择处置方式）
 --
 -- 背景：`return-rules.ts` 早已备好 `salesReturnCostLines()`，注释写明"不自动红冲成本，

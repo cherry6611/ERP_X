@@ -1,3 +1,4 @@
+-- requires: 0000_baseline.sql（crm_opportunity / crm_quotation / erp_project 均为基线表）
 -- 商机多轮报价 / 最终成交报价 / 项目关联成交报价
 
 ALTER TABLE crm_quotation

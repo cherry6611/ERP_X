@@ -1,3 +1,4 @@
+-- requires: 0000_baseline.sql（comp_feishu_bitable_config 依赖基线表结构）
 -- 飞书深度集成。先于更换 SECRET_ENC_KEY 执行：本文件只加列和索引，不解密旧密文。
 -- 更换主密钥之前，运维应先跑 scripts/clear-feishu-secrets.sql，否则 enc1 密文无法还原。
 

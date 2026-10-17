@@ -23,7 +23,7 @@ ALTER TABLE fin_report_template
 INSERT INTO fin_report_template (report_code, row_no, row_name, formula, section, indent, bold, sort_no)
 SELECT v.report_code, v.row_no, v.row_name, v.formula, v.section, v.indent, v.bold, v.sort_no
 FROM (VALUES
-  ('balance_sheet', '1',  '货币资金',           '科目余额(1001, 借) + 科目余额(1002, 借)', 'assets', 1, 0, 1010),
+  ('balance_sheet', '1',  '货币资金',           '科目余额(1001, 净) + 科目余额(1002, 净)', 'assets', 1, 0, 1010),
   ('balance_sheet', '2',  '应收账款',           '科目余额(1122, 借)',                      'assets', 1, 0, 1020),
   ('balance_sheet', '3',  '预付款项',           '科目余额(1123, 借)',                      'assets', 1, 0, 1030),
   ('balance_sheet', '4',  '存货',               '科目余额(1403, 借)',                      'assets', 1, 0, 1040),

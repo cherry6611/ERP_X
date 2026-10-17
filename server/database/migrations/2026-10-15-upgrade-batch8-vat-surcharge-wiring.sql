@@ -1,3 +1,4 @@
+-- requires: 0000_baseline.sql（fin_account）；2026-10-13-tax-final.sql（md_tax_entity）
 -- 附加税费接线（第 1、2 步）：主体城建税率 + 6403 税种末级明细
 --
 -- 口径来源：业务方 2026-10-15 批准

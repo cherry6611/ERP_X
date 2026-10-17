@@ -1,3 +1,4 @@
+-- requires: 0000_baseline.sql（comp_stored_file / comp_voucher_job / pur_order 为基线表）；本迁移自建 sys_inbox_message
 -- 最终评估报告：本地文件归属、凭证重试队列辅助索引、税率 CHECK 重申
 
 ALTER TABLE comp_stored_file

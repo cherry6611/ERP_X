@@ -1,3 +1,4 @@
+-- requires: 0000_baseline.sql（erp_ap_writeoff / erp_ar_writeoff / fin_voucher / hr_payroll / md_employee 均为基线表）
 -- v2.5/v2.6 后期升级迁移
 -- 审批回写增强 / 反核销 / 跨期红冲 / 反结账审计 / 工资城市规则
 

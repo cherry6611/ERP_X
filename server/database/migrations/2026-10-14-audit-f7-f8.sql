@@ -1,3 +1,4 @@
+-- requires: 0000_baseline.sql（erp_invoice / erp_project / md_employee / sys_user 均为基线表）
 -- 审计报告 F7/F8：项目经理 userId 化 + 进项发票勾稽应付
 -- 日期：2026-10-14
 

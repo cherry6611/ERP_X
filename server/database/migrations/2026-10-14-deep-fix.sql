@@ -1,3 +1,4 @@
+-- requires: 2026-10-13-tax-final.sql（依赖其建立的 erp_contract_item / md_tax_entity）
 -- 深度检查配套迁移（v2）。
 -- 文件名刻意排在所有 2026-10-13-* 之后：本文件依赖 2026-10-13-tax-final.sql
 -- 建的 md_tax_entity / erp_contract_item / fin_account 与各税率列，

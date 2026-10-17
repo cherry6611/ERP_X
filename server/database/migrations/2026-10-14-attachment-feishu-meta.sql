@@ -1,3 +1,4 @@
+-- requires: 0000_baseline.sql（comp_attachment 为基线表）
 -- 附件飞书元数据：token / 文档类型 / 规范化 URL
 
 ALTER TABLE comp_attachment

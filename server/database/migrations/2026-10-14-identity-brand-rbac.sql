@@ -1,3 +1,4 @@
+-- requires: 0000_baseline.sql（sys_role 为基线表）；本迁移自建 sys_feishu_bind_invite
 -- P0：身份管理邀请表、品牌配置、Bitable field_map
 CREATE TABLE IF NOT EXISTS sys_feishu_bind_invite (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),

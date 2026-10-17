@@ -1,3 +1,4 @@
+-- requires: 0000_baseline.sql（fin_account 为基线表）；本迁移只做数据写入
 -- P2-11：业务场景 → 会计科目（显式映射）
 --
 -- 背景：工资计提等分录写死科目（`hr-pay.service.ts` 固定 6401 主营业务成本），
