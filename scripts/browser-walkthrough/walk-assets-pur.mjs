@@ -744,11 +744,24 @@ async function main() {
       const eqHttp = (page.httpErrors ?? []).filter((e) => e.url.includes(equipPo.id) && Number(e.status) >= 400);
       const eqSt2 = (await sql`SELECT accepted_quantity, status FROM pur_order WHERE id = ${equipPo.id}`)[0];
       const eqAp = await sql`SELECT count(*)::int AS n FROM erp_ap_bill WHERE source = 'purchase' AND source_ref LIKE ${`po-accept:${equipPo.code}:%`}`;
+      /*
+       * ⚠️ 2026-10-19 反向：这条断言原先是**「断言缺陷仍然存在」**（`defectReproduced`），
+       * 用于开发期确认缺陷能复现。`pur-capitalize.ts` 修复后它必然失败 ——
+       * 而"断言 bug 存在"的测试在修复之后**不能留着**，否则修好了反而报红。
+       *
+       * 现在改为断言**修复生效**：第 2 次验收被接受、数量累进到 2/3、
+       * 订单仍是 pending（剩余 1 件待收）、按批次各生成 1 张应付。
+       */
       const defectReproduced = eqSt2?.accepted_quantity === 1 && eqSt2?.status === 'pending' && eqHttp.some((e) => Number(e.status) === 409);
+      const partialAcceptWorks =
+        Number(eqSt2?.accepted_quantity) === 2 &&
+        eqSt2?.status === 'pending' &&
+        eqAp[0].n === 2 &&
+        !eqHttp.some((e) => Number(e.status) === 409);
       record(
-        '设备类分批验收第 2 次被拒（缺陷复现：订单卡在 pending、剩余数量永远收不完）',
-        defectReproduced,
-        `第 2 次验收后 accepted=${eqSt2?.accepted_quantity}/3 status=${eqSt2?.status} 应付=${eqAp[0].n} 张 http=${JSON.stringify(eqHttp.map((e) => e.status))} toast=${JSON.stringify(tEq2)}`,
+        '设备类分批验收第 2 次被接受（修复：数量累进到 2/3、订单仍 pending、按批次各生成 1 张应付）',
+        partialAcceptWorks && !defectReproduced,
+        `第 2 次验收后 accepted=${eqSt2?.accepted_quantity}/3 status=${eqSt2?.status} 应付=${eqAp[0].n} 张 http=${JSON.stringify(eqHttp.map((e) => e.status))} toast=${JSON.stringify(tEq2)} 缺陷复现=${defectReproduced}`,
       );
       evidence.push({
         section: 'PUR 缺陷 1（设备类分批验收）',
