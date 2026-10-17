@@ -12,8 +12,11 @@
  * ## 采购退货分录（冲减原采购入库）
  *
  * ```
- * 借 2202 应付账款（含税）  /  贷 1403 原材料（不含税） + 贷 222102 应交税费-进项税额（税额）
+ * 借 2202 应付账款（含税）  /  贷 {原采购净额科目}（不含税） + 贷 222102 应交税费-进项税额（税额）
  * ```
+ *
+ * 净额科目与原采购入账科目**镜像**（T-S4）：费用化采购是 6602、设备资本化是 1601，
+ * 不能一律写 1403。见 `purchaseReturnLines` 注释。
  *
  * ## 销售退货分录（红冲收入，**需财务确认**）
  *
@@ -39,6 +42,7 @@ import {
   ACCOUNT_VAT_OUTPUT,
 } from './account-codes';
 import type { PostingLine } from './posting';
+import { round2 } from '@server/common/utils/number';
 
 /** 退货状态机 */
 export const RETURN_STATUSES = [
@@ -173,9 +177,6 @@ export interface ReturnAmountResult {
   taxAmount: number;
 }
 
-function round2(value: number): number {
-  return Math.round(value * 100) / 100;
-}
 
 /**
  * 按原单税率倒算退货金额。
@@ -218,20 +219,32 @@ export function sumReturnLines(
 
 /**
  * 采购退货（冲减原采购入库）：
- * 借 2202 应付账款（含税）/ 贷 1403 原材料（不含税）+ 贷 222102 进项税额（税额）
+ * 借 2202 应付账款（含税）/ 贷 {净额科目}（不含税）+ 贷 222102 进项税额（税额）
  *
  * 为什么冲减应付而不是"应收供应商"：退货通常直接抵减对该供应商的应付余额，
  * 不产生独立的债权；若供应商已付款，则需另行走退款流程（涉及资金，本系统不自动处理）。
+ *
+ * ## T-S4：净额科目必须与原采购入账科目镜像
+ *
+ * 采购验收的借方净额科目并不总是 1403 原材料：
+ * - 费用化采购（`inputIssueLines`）借方是 **6602 管理费用**；
+ * - 设备资本化（`inputCapitalizeLines`）借方是 **1601 固定资产**。
+ * 若退货一律贷 1403，费用化采购退货会出现「6602 只借不冲 + 1403 库存变负数」
+ * 的双重错配——两个科目同时失真，且账面上看不出异常。
+ * 因此调用方应通过 `options.netAccountCode` 传入原凭证的净额借方科目；
+ * 仅在**查不到原凭证**时才回落到 1403（保持旧行为，由服务层 warn）。
  */
 export function purchaseReturnLines(
   netAmount: number,
-  taxAmount: number
+  taxAmount: number,
+  options?: { netAccountCode?: string }
 ): PostingLine[] {
   const gross = round2(netAmount + taxAmount);
+  const netAccount = options?.netAccountCode ?? ACCOUNT_INVENTORY;
   const lines: PostingLine[] = [];
   if (gross > 0) lines.push({ accountCode: ACCOUNT_AP, debit: gross });
   if (netAmount > 0) {
-    lines.push({ accountCode: ACCOUNT_INVENTORY, credit: netAmount });
+    lines.push({ accountCode: netAccount, credit: netAmount });
   }
   if (taxAmount > 0) {
     lines.push({ accountCode: ACCOUNT_VAT_INPUT, credit: taxAmount });

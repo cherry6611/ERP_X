@@ -37,14 +37,59 @@ export const ACCOUNT_FIXED_ASSET_IMPAIRMENT = '1604';
 export const ACCOUNT_AP = '2202';
 /** 预收账款 */
 export const ACCOUNT_ADVANCE_RECEIPT = '2203';
-/** 应付职工薪酬 */
+/** 应付职工薪酬（汇总，不可直接做账） */
 export const ACCOUNT_PAYROLL_PAYABLE = '2211';
+/** 应付职工薪酬-工资（末级，N-1 计提与代扣的枢纽科目） */
+export const ACCOUNT_PAYROLL_PAYABLE_SALARY = '221101';
+/** 应付职工薪酬-社会保险费（末级，含代扣个人部分） */
+export const ACCOUNT_PAYROLL_PAYABLE_SOCIAL_INSURANCE = '221102';
+/** 应付职工薪酬-住房公积金（末级，含代扣个人部分） */
+export const ACCOUNT_PAYROLL_PAYABLE_HOUSING_FUND = '221103';
+/** 应付职工薪酬-其他代扣（末级，企业年金等） */
+export const ACCOUNT_PAYROLL_PAYABLE_OTHER_DEDUCTION = '221104';
 /** 应交税费（非末级） */
 export const ACCOUNT_TAX_PAYABLE = '2221';
 /** 应交税费-应交增值税（销项税额） */
 export const ACCOUNT_VAT_OUTPUT = '222101';
 /** 应交税费-应交增值税（进项税额） */
 export const ACCOUNT_VAT_INPUT = '222102';
+/**
+ * T-S3：应交税费-转出未交增值税（借方科目，月末结转分录的借方）。
+ *
+ * 月末把"应交增值税"明细的净贷差（应纳税额）转出到"未交增值税"：
+ *   借 222103 转出未交增值税 / 贷 222104 未交增值税
+ * 没有这一步，2221 的明细余额永远停在"应交增值税"上，账面上的应交数
+ * 与申报表的应纳税额、与实际的欠税三者对不上。
+ */
+export const ACCOUNT_VAT_TRANSFER_OUT = '222103';
+/**
+ * T-S3：应交税费-未交增值税（贷方科目，月末结转分录的贷方）。
+ * 实际缴纳时借 222104 / 贷 1002 银行存款冲减。
+ */
+export const ACCOUNT_VAT_UNPAID = '222104';
+/** 应交税费-城建税（末级，附加税费计提贷方） */
+export const ACCOUNT_TAX_PAYABLE_URBAN_MAINT = '222106';
+/** 应交税费-教育费附加（末级） */
+export const ACCOUNT_TAX_PAYABLE_EDUCATION = '222110';
+/** 应交税费-地方教育附加（末级） */
+export const ACCOUNT_TAX_PAYABLE_LOCAL_EDUCATION = '222111';
+/** 应交税费-应交个人所得税（末级，N-1 工资代扣个税贷方） */
+export const ACCOUNT_TAX_PAYABLE_INDIVIDUAL_INCOME_TAX = '222112';
+/**
+ * 应交税费-印花税（末级）。
+ *
+ * §4.7(f)：印花税在全仓（ts/tsx/sql/md）原先**零命中** —— 完全未实现。
+ * 编码排在 222112 之后，因此不影响 2221 的下钻目标（仍是 222101）。
+ */
+export const ACCOUNT_TAX_PAYABLE_STAMP_DUTY = '222113';
+/**
+ * 应交税费-应交企业所得税（末级）。
+ *
+ * §4.7(e)：`ACCOUNT_INCOME_TAX = '6801'` 此前**全仓无引用** ——
+ * 所得税费用科目存在、利润表第 11 行恒为 0。本编码与 6801 配套接线。
+ * 排在 222113 之后，同样不影响 2221 下钻目标。
+ */
+export const ACCOUNT_TAX_PAYABLE_INCOME_TAX = '222114';
 
 /** 实收资本 */
 export const ACCOUNT_PAID_IN_CAPITAL = '4001';
@@ -68,8 +113,21 @@ export const ACCOUNT_NON_OPERATING_INCOME = '6301';
 export const ACCOUNT_COST_MAIN = '6401';
 /** 其他业务成本 */
 export const ACCOUNT_COST_OTHER = '6402';
-/** 税金及附加 */
+/** 税金及附加（汇总，不可直接做账） */
 export const ACCOUNT_TAX_SURCHARGE = '6403';
+/** 税金及附加-城建税（末级） */
+export const ACCOUNT_TAX_SURCHARGE_URBAN_MAINT = '640301';
+/** 税金及附加-教育费附加（末级） */
+export const ACCOUNT_TAX_SURCHARGE_EDUCATION = '640302';
+/** 税金及附加-地方教育附加（末级） */
+export const ACCOUNT_TAX_SURCHARGE_LOCAL_EDUCATION = '640303';
+/**
+ * 税金及附加-印花税（末级）。
+ *
+ * §4.7(f)：印花税计入「税金及附加」（财会〔2016〕22 号），
+ * 与城建税/教育费附加同科目家族，因此编码排在 640303 之后。
+ */
+export const ACCOUNT_TAX_SURCHARGE_STAMP_DUTY = '640304';
 /** 销售费用 */
 export const ACCOUNT_SELLING_EXPENSE = '6601';
 /** 管理费用（非末级） */

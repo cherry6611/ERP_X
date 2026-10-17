@@ -22,4 +22,7 @@ export const CRON_BY_TRIGGER: Record<string, string> = {
   note_due_reminder_daily: '0 9 * * *',
   /** C-10：合同到期提醒（每日 09:15，30/15/3 天三档；与应收提醒错开 15 分钟避免同时推送） */
   contract_expiry_remind: '15 9 * * *',
+  /** S4：凭证补偿对账。收入确认等业务「AR 成功 + 凭证失败」时写入 comp_voucher_job，
+   * 本任务周期性重放失败队列，缩小 AR 与凭证之间的不一致窗口（最终一致兜底）。 */
+  reconcile_voucher_ar: '*/15 * * * *',
 };

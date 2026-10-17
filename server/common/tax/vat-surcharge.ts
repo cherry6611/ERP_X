@@ -21,6 +21,8 @@
  */
 
 /** 城建税率未配置等要件缺失时，拒绝出数的原因 */
+import { round2 } from '@server/common/utils/number';
+
 export interface VatSurchargeBlocked {
   ok: false;
   /** 面向使用者的拒绝原因（可直接展示） */
@@ -71,16 +73,16 @@ export interface VatSurchargeInput {
   withinSmallScaleExemption?: boolean;
 }
 
-/**
- * 分转元：取到分。
- *
- * 取整策略：**逐税种取整，合计由分项相加得出**。若改成"先算合计再取整"，
- * 在基数带小数（如 333.33）时会与分项之和不一致，而凭证上是按分项三行记账的，
- * 合计与分项对不上就是借贷不平。
- */
-function round2(value: number): number {
-  return Math.round((value + Number.EPSILON) * 100) / 100;
-}
+// 取整口径统一走 `@server/common/utils/number` 的 `round2`（十进制、对负数对称）。
+//
+// 原先这里自带一份 `Math.round((v + Number.EPSILON) * 100) / 100`：
+// EPSILON 能把正数的 1.005 补回 1.01，但对负数无效 —— 红冲时
+// `round2(1.005) + round2(-1.005) = 0.01`，附加税红冲会凭空差出 1 分。
+// 统一实现后 `round2(x) + round2(-x) === 0` 恒成立。
+//
+// 取整策略仍保持：**逐税种取整，合计由分项相加得出**。若改成"先算合计再取整"，
+// 在基数带小数（如 333.33）时会与分项之和不一致，而凭证上是按分项三行记账的，
+// 合计与分项对不上就是借贷不平。
 
 export function computeVatSurcharge(input: VatSurchargeInput): VatSurchargeResult {
   const payableVat = Number(input.payableVat ?? 0);

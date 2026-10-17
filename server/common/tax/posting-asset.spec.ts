@@ -1,3 +1,4 @@
+import { round2 } from '@server/common/utils/number';
 import {
   assetDisposalLines,
   assetImpairmentLines,
@@ -5,11 +6,11 @@ import {
 } from './posting';
 
 function debitTotal(lines: PostingLine[]): number {
-  return Math.round(lines.reduce((sum, line) => sum + (line.debit ?? 0), 0) * 100) / 100;
+  return round2(lines.reduce((sum, line) => sum + (line.debit ?? 0), 0));
 }
 
 function creditTotal(lines: PostingLine[]): number {
-  return Math.round(lines.reduce((sum, line) => sum + (line.credit ?? 0), 0) * 100) / 100;
+  return round2(lines.reduce((sum, line) => sum + (line.credit ?? 0), 0));
 }
 
 function amountOn(lines: PostingLine[], accountCode: string): {
@@ -17,10 +18,9 @@ function amountOn(lines: PostingLine[], accountCode: string): {
   credit: number;
 } {
   const match = lines.filter((line) => line.accountCode === accountCode);
-  const round = (value: number) => Math.round(value * 100) / 100;
   return {
-    debit: round(match.reduce((sum, line) => sum + (line.debit ?? 0), 0)),
-    credit: round(match.reduce((sum, line) => sum + (line.credit ?? 0), 0)),
+    debit: round2(match.reduce((sum, line) => sum + (line.debit ?? 0), 0)),
+    credit: round2(match.reduce((sum, line) => sum + (line.credit ?? 0), 0)),
   };
 }
 
@@ -105,17 +105,26 @@ describe('D-08 固定资产减值与处置分录', () => {
       expect(Math.round((amountOn(lines, '1603').debit - amountOn(lines, '1603').credit) * 100) / 100).toBe(0);
     });
 
-    it('出售有销项税：收入 50000、税 3000 时 gainLoss = 50000 − 3000 − 30000 = +17000', () => {
+    it('出售有销项税：不含税收入 50000、税 3000 时 gainLoss = 50000 − 30000 = +20000', () => {
       const { lines, gainLoss } = assetDisposalLines({
         ...base,
         disposalType: 'sale',
+        // 口径：disposalIncome 是**不含税**净额，outputTax 单独传入；银行实收两者之和
         disposalIncome: 50_000,
         outputTax: 3_000,
       });
-      expect(gainLoss).toBe(17_000);
-      // 银行收款为含税
+      // 销项税是价外税，不进入损益：gainLoss = 不含税收入 − 净值
+      // 反例：若改回 `disposalIncome − outputTax − netBookValue`，这里会变成 17000（少计一个税额）
+      expect(gainLoss).toBe(20_000);
+      // 银行收款为价税合计
       expect(amountOn(lines, '100201').debit).toBe(53_000);
       expect(amountOn(lines, '222101').credit).toBe(3_000);
+      // 1603 贷方记不含税收入；与 ③ 结转的 20000 借方一起轧平为 0
+      expect(amountOn(lines, '1603').credit).toBe(50_000);
+      expect(
+        round2(amountOn(lines, '1603').debit - amountOn(lines, '1603').credit)
+      ).toBe(0);
+      // 借贷必平：差额恰为销项税的那一版曾让凭证少 3000（借贷不平）
       expect(debitTotal(lines)).toBe(creditTotal(lines));
     });
 

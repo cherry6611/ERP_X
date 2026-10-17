@@ -139,10 +139,10 @@ export const crmQuotationItem = pgTable("crm_quotation_item", {
   seq: integer("seq").notNull(),
   itemName: varchar("item_name", { length: 200 }).notNull(),
   unit: varchar("unit", { length: 20 }).notNull().default('人天'),
-  quantity: numeric("quantity").notNull().default('1'),
-  unitPrice: numeric("unit_price").notNull().default('0'),
-  discountPct: numeric("discount_pct").notNull().default('0'),
-  estUnitCost: numeric("est_unit_cost").notNull().default('0'),
+  quantity: numeric("quantity", { precision: 18, scale: 6 }).notNull().default('1'),
+  unitPrice: numeric("unit_price", { precision: 18, scale: 6 }).notNull().default('0'),
+  discountPct: numeric("discount_pct", { precision: 6, scale: 2 }).notNull().default('0'),
+  estUnitCost: numeric("est_unit_cost", { precision: 18, scale: 6 }).notNull().default('0'),
   remark: text("remark"),
   // System field: Creation time (auto-filled, do not modify)
   createdAt: customTimestamptz("_created_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
@@ -169,10 +169,10 @@ export const crmQuotation = pgTable("crm_quotation", {
   quoteDate: date("quote_date"),
   validUntil: date("valid_until"),
   status: varchar("status", { length: 20 }).notNull().default('draft'),
-  discountPct: numeric("discount_pct").notNull().default('0'),
-  totalAmount: numeric("total_amount").notNull().default('0'),
-  taxRate: numeric("tax_rate"),
-  estimatedCost: numeric("estimated_cost").notNull().default('0'),
+  discountPct: numeric("discount_pct", { precision: 6, scale: 2 }).notNull().default('0'),
+  totalAmount: numeric("total_amount", { precision: 18, scale: 2 }).notNull().default('0'),
+  taxRate: numeric("tax_rate", { precision: 6, scale: 2 }),
+  estimatedCost: numeric("estimated_cost", { precision: 18, scale: 2 }).notNull().default('0'),
   remark: text("remark"),
   contractId: uuid("contract_id"),
   // System field: Creation time (auto-filled, do not modify)
@@ -189,7 +189,7 @@ export const crmQuotation = pgTable("crm_quotation", {
   uniqueIndex("crm_quotation_code_key").on(table.code),
   index("idx_crm_quotation_opportunity").on(table.opportunityId),
   index("idx_crm_quotation_customer").on(table.customerId),
-  check("chk_quotation_tax_rate", sql`${table.taxRate} IS NULL OR ${table.taxRate} IN (0, 1, 3, 6, 9, 13)`),
+  check("chk_quotation_tax_rate", sql`${table.taxRate} IS NULL OR ${table.taxRate} IN (0, 1, 3, 5, 6, 9, 13)`),
 ]);
 
 export const compFeishuDriveConfig = pgTable("comp_feishu_drive_config", {
@@ -280,7 +280,7 @@ export const erpAdminAffair = pgTable("erp_admin_affair", {
   participants: jsonb("participants"),
   startDate: date("start_date").notNull(),
   endDate: date("end_date"),
-  amount: numeric("amount"),
+  amount: numeric("amount", { precision: 18, scale: 2 }),
   status: varchar("status", { length: 20 }).notNull().default('registered'),
   remark: text("remark"),
   // System field: Creation time (auto-filled, do not modify)
@@ -304,8 +304,8 @@ export const erpAdminAsset = pgTable("erp_admin_asset", {
   name: varchar("name", { length: 200 }).notNull(),
   category: varchar("category", { length: 30 }).notNull(),
   quantity: integer("quantity").notNull().default(1),
-  unitPrice: numeric("unit_price").notNull(),
-  amount: numeric("amount"),
+  unitPrice: numeric("unit_price", { precision: 18, scale: 6 }).notNull(),
+  amount: numeric("amount", { precision: 18, scale: 2 }),
   location: varchar("location", { length: 100 }),
   owner: userProfile("owner"),
   purchaseDate: date("purchase_date"),
@@ -331,7 +331,7 @@ export const erpAdminBill = pgTable("erp_admin_bill", {
   code: varchar("code", { length: 50 }).notNull().unique(),
   title: varchar("title", { length: 200 }).notNull(),
   billType: varchar("bill_type", { length: 30 }).notNull(),
-  amount: numeric("amount").notNull(),
+  amount: numeric("amount", { precision: 18, scale: 2 }).notNull(),
   period: varchar("period", { length: 10 }).notNull(),
   payee: varchar("payee", { length: 100 }),
   expenseDate: date("expense_date").notNull(),
@@ -364,9 +364,9 @@ export const erpAdminRentContract = pgTable("erp_admin_rent_contract", {
   name: varchar("name", { length: 200 }).notNull(),
   propertyAddress: varchar("property_address", { length: 255 }).notNull(),
   lessor: varchar("lessor", { length: 100 }).notNull(),
-  monthlyRent: numeric("monthly_rent").notNull(),
-  deposit: numeric("deposit"),
-  area: numeric("area"),
+  monthlyRent: numeric("monthly_rent", { precision: 18, scale: 2 }).notNull(),
+  deposit: numeric("deposit", { precision: 18, scale: 2 }),
+  area: numeric("area", { precision: 18, scale: 6 }),
   startDate: date("start_date").notNull(),
   endDate: date("end_date").notNull(),
   paymentCycle: varchar("payment_cycle", { length: 20 }).notNull().default('monthly'),
@@ -609,7 +609,7 @@ export const astDepreciation = pgTable("ast_depreciation", {
   id: uuid("id").primaryKey().defaultRandom(),
   assetId: uuid("asset_id"),
   period: varchar("period", { length: 7 }),
-  amount: numeric("amount").default('0'),
+  amount: numeric("amount", { precision: 18, scale: 2 }).default('0'),
   costGenerated: boolean("cost_generated").default(false),
   remark: text("remark"),
   // System field: Creation time (auto-filled, do not modify)
@@ -632,9 +632,9 @@ export const astAsset = pgTable("ast_asset", {
   code: varchar("code", { length: 20 }).notNull().unique(),
   name: varchar("name", { length: 200 }).notNull(),
   category: varchar("category", { length: 20 }).default('other'),
-  originalValue: numeric("original_value").default('0'),
-  residualValue: numeric("residual_value").default('0'),
-  netValue: numeric("net_value").default('0'),
+  originalValue: numeric("original_value", { precision: 18, scale: 2 }).default('0'),
+  residualValue: numeric("residual_value", { precision: 18, scale: 2 }).default('0'),
+  netValue: numeric("net_value", { precision: 18, scale: 2 }).default('0'),
   departmentId: uuid("department_id"),
   projectId: uuid("project_id"),
   purchaseOrderId: uuid("purchase_order_id"),
@@ -642,11 +642,11 @@ export const astAsset = pgTable("ast_asset", {
   usefulMonths: integer("useful_months").default(36),
   status: varchar("status", { length: 20 }).default('in_use'),
   /** D-08：累计已计提减值金额（NULL 表示未计提过减值） */
-  impairmentAmount: numeric("impairment_amount"),
+  impairmentAmount: numeric("impairment_amount", { precision: 18, scale: 2 }),
   /** D-08：最近一次减值测试日 */
   impairmentDate: date("impairment_date"),
   /** D-08：减值后净值（账面价值 − 已计提减值） */
-  netValueAfter: numeric("net_value_after"),
+  netValueAfter: numeric("net_value_after", { precision: 18, scale: 2 }),
   remark: text("remark"),
   // System field: Creation time (auto-filled, do not modify)
   createdAt: customTimestamptz("_created_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
@@ -676,9 +676,9 @@ export const astImpairment = pgTable("ast_impairment", {
   assetId: uuid("asset_id").notNull(),
   testDate: date("test_date").notNull(),
   period: varchar("period", { length: 7 }),
-  bookValue: numeric("book_value").notNull().default('0'),
-  recoverableAmount: numeric("recoverable_amount").notNull().default('0'),
-  impairmentLoss: numeric("impairment_loss").notNull().default('0'),
+  bookValue: numeric("book_value", { precision: 18, scale: 2 }).notNull().default('0'),
+  recoverableAmount: numeric("recoverable_amount", { precision: 18, scale: 2 }).notNull().default('0'),
+  impairmentLoss: numeric("impairment_loss", { precision: 18, scale: 2 }).notNull().default('0'),
   method: varchar("method", { length: 30 }).notNull().default('recoverable_vs_book'),
   voucherRef: varchar("voucher_ref", { length: 100 }),
   remark: text("remark"),
@@ -708,13 +708,13 @@ export const astDisposal = pgTable("ast_disposal", {
   status: varchar("status", { length: 20 }).notNull().default('disposing'),
   applyDate: date("apply_date").notNull(),
   disposeDate: date("dispose_date"),
-  originalValue: numeric("original_value").notNull().default('0'),
-  accumulatedDepreciation: numeric("accumulated_depreciation").notNull().default('0'),
-  netValue: numeric("net_value").notNull().default('0'),
-  disposalIncome: numeric("disposal_income").notNull().default('0'),
-  taxRate: numeric("tax_rate"),
-  taxAmount: numeric("tax_amount").notNull().default('0'),
-  gainLoss: numeric("gain_loss").notNull().default('0'),
+  originalValue: numeric("original_value", { precision: 18, scale: 2 }).notNull().default('0'),
+  accumulatedDepreciation: numeric("accumulated_depreciation", { precision: 18, scale: 2 }).notNull().default('0'),
+  netValue: numeric("net_value", { precision: 18, scale: 2 }).notNull().default('0'),
+  disposalIncome: numeric("disposal_income", { precision: 18, scale: 2 }).notNull().default('0'),
+  taxRate: numeric("tax_rate", { precision: 6, scale: 2 }),
+  taxAmount: numeric("tax_amount", { precision: 18, scale: 2 }).notNull().default('0'),
+  gainLoss: numeric("gain_loss", { precision: 18, scale: 2 }).notNull().default('0'),
   voucherRef: varchar("voucher_ref", { length: 100 }),
   reason: varchar("reason", { length: 500 }),
   remark: text("remark"),
@@ -751,9 +751,9 @@ export const purOrder = pgTable("pur_order", {
   itemName: varchar("item_name", { length: 200 }).notNull(),
   category: varchar("category", { length: 20 }).default('service'),
   quantity: integer("quantity").default(1),
-  unitPrice: numeric("unit_price").default('0'),
-  amount: numeric("amount").default('0'),
-  taxRate: numeric("tax_rate"),
+  unitPrice: numeric("unit_price", { precision: 18, scale: 6 }).default('0'),
+  amount: numeric("amount", { precision: 18, scale: 2 }).default('0'),
+  taxRate: numeric("tax_rate", { precision: 6, scale: 2 }),
   orderDate: date("order_date"),
   acceptedQuantity: integer("accepted_quantity").default(0),
   acceptDate: date("accept_date"),
@@ -775,7 +775,7 @@ export const purOrder = pgTable("pur_order", {
   index("idx_pur_order_supplier").on(table.supplierId),
   index("idx_pur_order_contract").on(table.contractId),
   index("idx_pur_order_project").on(table.projectId),
-  check("chk_pur_order_tax_rate", sql`${table.taxRate} IS NULL OR ${table.taxRate} IN (0, 1, 3, 6, 9, 13)`),
+  check("chk_pur_order_tax_rate", sql`${table.taxRate} IS NULL OR ${table.taxRate} IN (0, 1, 3, 5, 6, 9, 13)`),
 ]);
 
 export const purRequest = pgTable("pur_request", {
@@ -786,7 +786,7 @@ export const purRequest = pgTable("pur_request", {
   departmentId: uuid("department_id"),
   projectId: uuid("project_id"),
   supplierId: uuid("supplier_id"),
-  amount: numeric("amount").default('0'),
+  amount: numeric("amount", { precision: 18, scale: 2 }).default('0'),
   expectDate: date("expect_date"),
   status: varchar("status", { length: 20 }).default('pending'),
   reason: varchar("reason", { length: 500 }),
@@ -821,10 +821,10 @@ export const purReturn = pgTable("pur_return", {
   projectId: uuid("project_id"),
   returnDate: date("return_date").notNull(),
   returnQuantity: integer("return_quantity").notNull().default(0),
-  amount: numeric("amount").notNull().default('0'),
-  taxRate: numeric("tax_rate"),
-  netAmount: numeric("net_amount").notNull().default('0'),
-  taxAmount: numeric("tax_amount").notNull().default('0'),
+  amount: numeric("amount", { precision: 18, scale: 2 }).notNull().default('0'),
+  taxRate: numeric("tax_rate", { precision: 6, scale: 2 }),
+  netAmount: numeric("net_amount", { precision: 18, scale: 2 }).notNull().default('0'),
+  taxAmount: numeric("tax_amount", { precision: 18, scale: 2 }).notNull().default('0'),
   apBillId: uuid("ap_bill_id"),
   redInvoiceId: uuid("red_invoice_id"),
   status: varchar("status", { length: 20 }).notNull().default('draft'),
@@ -877,8 +877,8 @@ export const finVoucherLine = pgTable("fin_voucher_line", {
   /** A-10/A-03：冗余科目编码，避免账簿查询每次都 join fin_account */
   accountCode: varchar("account_code", { length: 20 }),
   summary: varchar("summary", { length: 200 }),
-  debit: numeric("debit").default('0'),
-  credit: numeric("credit").default('0'),
+  debit: numeric("debit", { precision: 18, scale: 2 }).default('0'),
+  credit: numeric("credit", { precision: 18, scale: 2 }).default('0'),
   // System field: Creation time (auto-filled, do not modify)
   createdAt: customTimestamptz("_created_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
   // System field: Creator (auto-filled, do not modify)
@@ -1077,12 +1077,12 @@ export const finAccountBalanceSnapshot = pgTable("fin_account_balance_snapshot",
   taxEntityId: uuid("tax_entity_id"),
   accountCode: varchar("account_code", { length: 20 }).notNull(),
   accountName: varchar("account_name", { length: 100 }),
-  openingDebit: numeric("opening_debit").notNull().default('0'),
-  openingCredit: numeric("opening_credit").notNull().default('0'),
-  debitOccur: numeric("debit_occur").notNull().default('0'),
-  creditOccur: numeric("credit_occur").notNull().default('0'),
-  closingDebit: numeric("closing_debit").notNull().default('0'),
-  closingCredit: numeric("closing_credit").notNull().default('0'),
+  openingDebit: numeric("opening_debit", { precision: 18, scale: 2 }).notNull().default('0'),
+  openingCredit: numeric("opening_credit", { precision: 18, scale: 2 }).notNull().default('0'),
+  debitOccur: numeric("debit_occur", { precision: 18, scale: 2 }).notNull().default('0'),
+  creditOccur: numeric("credit_occur", { precision: 18, scale: 2 }).notNull().default('0'),
+  closingDebit: numeric("closing_debit", { precision: 18, scale: 2 }).notNull().default('0'),
+  closingCredit: numeric("closing_credit", { precision: 18, scale: 2 }).notNull().default('0'),
   voucherCount: integer("voucher_count").notNull().default(0),
   generatedAt: customTimestamptz("generated_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
 }, (table) => [
@@ -1117,7 +1117,7 @@ export const finYearEndClose = pgTable("fin_year_end_close", {
   period: varchar("period", { length: 7 }).notNull(),
   taxEntityId: uuid("tax_entity_id"),
   status: varchar("status", { length: 20 }).notNull().default('closed'),
-  profitAmount: numeric("profit_amount").notNull().default('0'),
+  profitAmount: numeric("profit_amount", { precision: 18, scale: 2 }).notNull().default('0'),
   carryVoucherId: uuid("carry_voucher_id"),
   closedAt: customTimestamptz("closed_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
   closedBy: varchar("closed_by", { length: 64 }),
@@ -1147,15 +1147,15 @@ export const finVatDeclaration = pgTable("fin_vat_declaration", {
   period: varchar("period", { length: 7 }).notNull(),
   taxEntityId: uuid("tax_entity_id"),
   status: varchar("status", { length: 20 }).notNull().default('draft'),
-  outputTax: numeric("output_tax").notNull().default('0'),
-  inputTax: numeric("input_tax").notNull().default('0'),
-  transferOut: numeric("transfer_out").notNull().default('0'),
-  previousCredit: numeric("previous_credit").notNull().default('0'),
-  payableTax: numeric("payable_tax").notNull().default('0'),
-  closingCredit: numeric("closing_credit").notNull().default('0'),
+  outputTax: numeric("output_tax", { precision: 18, scale: 2 }).notNull().default('0'),
+  inputTax: numeric("input_tax", { precision: 18, scale: 2 }).notNull().default('0'),
+  transferOut: numeric("transfer_out", { precision: 18, scale: 2 }).notNull().default('0'),
+  previousCredit: numeric("previous_credit", { precision: 18, scale: 2 }).notNull().default('0'),
+  payableTax: numeric("payable_tax", { precision: 18, scale: 2 }).notNull().default('0'),
+  closingCredit: numeric("closing_credit", { precision: 18, scale: 2 }).notNull().default('0'),
   /** 总账口径（222101 / 222102 发生额），用于勾稽留痕 */
-  ledgerOutputTax: numeric("ledger_output_tax").notNull().default('0'),
-  ledgerInputTax: numeric("ledger_input_tax").notNull().default('0'),
+  ledgerOutputTax: numeric("ledger_output_tax", { precision: 18, scale: 2 }).notNull().default('0'),
+  ledgerInputTax: numeric("ledger_input_tax", { precision: 18, scale: 2 }).notNull().default('0'),
   differenceReason: varchar("difference_reason", { length: 500 }),
   generatedBy: varchar("generated_by", { length: 64 }),
   generatedAt: customTimestamptz("generated_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
@@ -1172,7 +1172,7 @@ export const finExpenseClaim = pgTable("fin_expense_claim", {
   departmentId: uuid("department_id"),
   projectId: uuid("project_id"),
   expenseCategory: varchar("expense_category", { length: 50 }),
-  amount: numeric("amount").default('0'),
+  amount: numeric("amount", { precision: 18, scale: 2 }).default('0'),
   expenseDate: date("expense_date"),
   applicant: varchar("applicant", { length: 50 }),
   status: varchar("status", { length: 20 }).default('pending'),
@@ -1202,7 +1202,7 @@ export const finExpenseApply = pgTable("fin_expense_apply", {
   departmentId: uuid("department_id"),
   projectId: uuid("project_id"),
   expenseCategory: varchar("expense_category", { length: 50 }),
-  amount: numeric("amount").default('0'),
+  amount: numeric("amount", { precision: 18, scale: 2 }).default('0'),
   expectDate: date("expect_date"),
   status: varchar("status", { length: 20 }).default('pending'),
   reason: varchar("reason", { length: 500 }),
@@ -1230,7 +1230,7 @@ export const finBudget = pgTable("fin_budget", {
   projectId: uuid("project_id"),
   expenseCategory: varchar("expense_category", { length: 50 }),
   period: varchar("period", { length: 7 }),
-  budgetAmount: numeric("budget_amount").default('0'),
+  budgetAmount: numeric("budget_amount", { precision: 18, scale: 2 }).default('0'),
   /**
    * D-05：预算类型（**全面预算**的扩展点）。
    *
@@ -1285,7 +1285,7 @@ export const hrTraining = pgTable("hr_training", {
   code: varchar("code", { length: 20 }).notNull().unique(),
   name: varchar("name", { length: 200 }).notNull(),
   trainer: varchar("trainer", { length: 50 }),
-  hours: numeric("hours").default('0'),
+  hours: numeric("hours", { precision: 18, scale: 6 }).default('0'),
   startDate: date("start_date"),
   endDate: date("end_date"),
   status: varchar("status", { length: 20 }).default('planned'),
@@ -1309,7 +1309,7 @@ export const hrAppraisal = pgTable("hr_appraisal", {
   code: varchar("code", { length: 20 }).notNull().unique(),
   employeeId: uuid("employee_id"),
   period: varchar("period", { length: 10 }),
-  score: numeric("score").default('0'),
+  score: numeric("score", { precision: 8, scale: 4 }).default('0'),
   grade: varchar("grade", { length: 2 }),
   status: varchar("status", { length: 20 }).default('draft'),
   remark: text("remark"),
@@ -1378,29 +1378,29 @@ export const hrPayroll = pgTable("hr_payroll", {
   code: varchar("code", { length: 20 }).notNull().unique(),
   employeeId: uuid("employee_id"),
   period: varchar("period", { length: 7 }),
-  baseSalary: numeric("base_salary").default('0'),
-  perfSalary: numeric("perf_salary").default('0'),
-  allowance: numeric("allowance").default('0'),
-  socialInsurance: numeric("social_insurance").default('0'),
-  housingFund: numeric("housing_fund").default('0'),
-  tax: numeric("tax").default('0'),
-  netSalary: numeric("net_salary").default('0'),
+  baseSalary: numeric("base_salary", { precision: 18, scale: 2 }).default('0'),
+  perfSalary: numeric("perf_salary", { precision: 18, scale: 2 }).default('0'),
+  allowance: numeric("allowance", { precision: 18, scale: 2 }).default('0'),
+  socialInsurance: numeric("social_insurance", { precision: 18, scale: 2 }).default('0'),
+  housingFund: numeric("housing_fund", { precision: 18, scale: 2 }).default('0'),
+  tax: numeric("tax", { precision: 18, scale: 2 }).default('0'),
+  netSalary: numeric("net_salary", { precision: 18, scale: 2 }).default('0'),
   status: varchar("status", { length: 20 }).default('draft'),
   remark: text("remark"),
   allocationGenerated: boolean("allocation_generated").default(false),
   manualOverride: integer("manual_override").notNull().default(0),
   engineSnapshot: text("engine_snapshot"),
   // A-07：个税累计预扣预缴口径字段（便于逐月递推与审计复核）
-  ytdIncome: numeric("ytd_income").notNull().default('0'),
-  ytdTaxFreeIncome: numeric("ytd_tax_free_income").notNull().default('0'),
-  ytdBasicDeduction: numeric("ytd_basic_deduction").notNull().default('0'),
-  ytdDeduction: numeric("ytd_deduction").notNull().default('0'),
-  ytdAdditionalDeduction: numeric("ytd_additional_deduction").notNull().default('0'),
-  ytdTaxWithheld: numeric("ytd_tax_withheld").notNull().default('0'),
-  ytdTaxableIncome: numeric("ytd_taxable_income").notNull().default('0'),
-  taxRate: numeric("tax_rate"),
-  quickDeduction: numeric("quick_deduction"),
-  ytdNet: numeric("ytd_net").notNull().default('0'),
+  ytdIncome: numeric("ytd_income", { precision: 18, scale: 2 }).notNull().default('0'),
+  ytdTaxFreeIncome: numeric("ytd_tax_free_income", { precision: 18, scale: 2 }).notNull().default('0'),
+  ytdBasicDeduction: numeric("ytd_basic_deduction", { precision: 18, scale: 2 }).notNull().default('0'),
+  ytdDeduction: numeric("ytd_deduction", { precision: 18, scale: 2 }).notNull().default('0'),
+  ytdAdditionalDeduction: numeric("ytd_additional_deduction", { precision: 18, scale: 2 }).notNull().default('0'),
+  ytdTaxWithheld: numeric("ytd_tax_withheld", { precision: 18, scale: 2 }).notNull().default('0'),
+  ytdTaxableIncome: numeric("ytd_taxable_income", { precision: 18, scale: 2 }).notNull().default('0'),
+  taxRate: numeric("tax_rate", { precision: 6, scale: 2 }),
+  quickDeduction: numeric("quick_deduction", { precision: 18, scale: 2 }),
+  ytdNet: numeric("ytd_net", { precision: 18, scale: 2 }).notNull().default('0'),
   // System field: Creation time (auto-filled, do not modify)
   createdAt: customTimestamptz("_created_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
   // System field: Creator (auto-filled, do not modify)
@@ -1423,10 +1423,18 @@ export const hrEmployeeTaxDeduction = pgTable("hr_employee_tax_deduction", {
   employeeId: uuid("employee_id").notNull(),
   taxYear: integer("tax_year").notNull(),
   deductionType: varchar("deduction_type", { length: 32 }).notNull(),
-  monthlyAmount: numeric("monthly_amount").notNull().default('0'),
+  monthlyAmount: numeric("monthly_amount", { precision: 18, scale: 2 }).notNull().default('0'),
   startMonth: integer("start_month").notNull().default(1),
   endMonth: integer("end_month"),
   remark: varchar("remark", { length: 200 }),
+  /** N-4：赡养老人是否为独生子女。null = 未声明（存量数据），独生 3000 / 非独生分摊 ≤1500 */
+  isOnlyChild: boolean("is_only_child"),
+  /** N-4：非独生子女赡养老人的本人分摊额（元/月，≤1500） */
+  shareAmount: numeric("share_amount", { precision: 18, scale: 2 }),
+  /** N-5：子女教育 / 婴幼儿照护的人数，上限 = 标准 × 人数 */
+  dependentCount: integer("dependent_count").notNull().default(1),
+  /** 本人扣除比例（0~1，父母各扣 50% 填 0.5） */
+  shareRatio: numeric("share_ratio", { precision: 8, scale: 4 }).notNull().default('1'),
   createdAt: customTimestamptz("_created_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
   updatedAt: customTimestamptz("_updated_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
 }, (table) => [
@@ -1445,7 +1453,7 @@ export const hrLeaveRequest = pgTable("hr_leave_request", {
   leaveType: varchar("leave_type", { length: 20 }).default('annual'),
   startDate: date("start_date"),
   endDate: date("end_date"),
-  days: numeric("days").default('0'),
+  days: numeric("days", { precision: 18, scale: 6 }).default('0'),
   reason: varchar("reason", { length: 500 }),
   status: varchar("status", { length: 20 }).default('pending'),
   // System field: Creation time (auto-filled, do not modify)
@@ -1468,8 +1476,8 @@ export const hrLeaveBalance = pgTable("hr_leave_balance", {
   employeeId: uuid("employee_id"),
   leaveType: varchar("leave_type", { length: 20 }).default('annual'),
   year: varchar("year", { length: 4 }),
-  totalDays: numeric("total_days").default('0'),
-  usedDays: numeric("used_days").default('0'),
+  totalDays: numeric("total_days", { precision: 18, scale: 6 }).default('0'),
+  usedDays: numeric("used_days", { precision: 18, scale: 6 }).default('0'),
   // System field: Creation time (auto-filled, do not modify)
   createdAt: customTimestamptz("_created_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
   // System field: Creator (auto-filled, do not modify)
@@ -1583,6 +1591,7 @@ export const compAuditLog = pgTable("comp_audit_log", {
     WHEN (current_setting('app.user_id'::text, true) = ''::text) THEN NULL`),
 }, (table) => [
   index("idx_comp_audit_log_object").on(table.objectType),
+  index("idx_comp_audit_log_object_id").on(table.objectType, table.objectId),
 ]);
 
 export const erpInvoice = pgTable("erp_invoice", {
@@ -1593,12 +1602,12 @@ export const erpInvoice = pgTable("erp_invoice", {
   projectId: uuid("project_id"),
   invoiceNo: varchar("invoice_no", { length: 50 }),
   invoiceType: varchar("invoice_type", { length: 20 }).default('vat_special'),
-  amount: numeric("amount").default('0'),
-  taxRate: numeric("tax_rate").default('6'),
-  taxAmount: numeric("tax_amount").default('0'),
+  amount: numeric("amount", { precision: 18, scale: 2 }).default('0'),
+  taxRate: numeric("tax_rate", { precision: 6, scale: 2 }).default('6'),
+  taxAmount: numeric("tax_amount", { precision: 18, scale: 2 }).default('0'),
   taxEntityId: uuid("tax_entity_id"),
-  netAmount: numeric("net_amount"),
-  oldAmount: numeric("old_amount"),
+  netAmount: numeric("net_amount", { precision: 18, scale: 2 }),
+  oldAmount: numeric("old_amount", { precision: 18, scale: 2 }),
   buyerName: varchar("buyer_name", { length: 200 }),
   buyerUscc: varchar("buyer_uscc", { length: 20 }),
   sellerName: varchar("seller_name", { length: 200 }),
@@ -1625,6 +1634,19 @@ export const erpInvoice = pgTable("erp_invoice", {
   certificationPeriod: varchar("certification_period", { length: 7 }),
   /** C-01：最近一次勾选完成时间 */
   certifiedAt: customTimestamptz("certified_at"),
+  /**
+   * B1 / P0-C：作废原因。
+   *
+   * 作废是**不可逆**动作（发票作废即退出申报口径，应收/应付作废即退出资金口径），
+   * 只改 `status` 会让事后无从回答"谁、为什么、什么时候"作废的。
+   * 三个字段与回款/付款作废留痕对齐（见 `2026-10-16-fix01-*.sql`）。
+   * 注意：`status` 已是 `'voided'`，此处不再加 CHECK —— 历史行没有原因，加约束会失败。
+   */
+  voidReason: varchar("void_reason", { length: 500 }),
+  /** P0-C：作废时间 */
+  voidedAt: customTimestamptz("voided_at"),
+  /** P0-C：作废操作人（妙搭 userId） */
+  voidedBy: varchar("voided_by", { length: 64 }),
   // System field: Creation time (auto-filled, do not modify)
   createdAt: customTimestamptz("_created_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
   // System field: Creator (auto-filled, do not modify)
@@ -1641,15 +1663,26 @@ export const erpInvoice = pgTable("erp_invoice", {
   index("idx_erp_invoice_project").on(table.projectId),
   index("idx_erp_invoice_ap").on(table.apId),
   index("idx_erp_invoice_source_ref").on(table.sourceRef),
+  // P1-10：发票号码唯一性（同日同号，仅约束未作废发票）。
+  // 不用全局 UNIQUE：红字发票允许与蓝字票同日同号（同一张票的冲减），
+  // 且历史数据可能已有重复 —— 全局唯一会让迁移在存量库上直接失败。
+  // 对应迁移 `2026-10-16-fix01-invoice-void-and-vat-certification.sql`。
+  uniqueIndex("uq_erp_invoice_no_date_issued")
+    .on(table.invoiceNo, table.invoiceDate)
+    .where(sql`${table.status} = 'issued' AND ${table.invoiceNo} IS NOT NULL AND ${table.invoiceDate} IS NOT NULL`),
+  // P0-C/P0-D：红字发票幂等（只约束 amount < 0 的行）
+  uniqueIndex("uq_erp_invoice_red_letter_source")
+    .on(table.sourceRef)
+    .where(sql`${table.amount} < 0 AND ${table.sourceRef} IS NOT NULL`),
   // T8：发票税率法定档位（与迁移 chk_invoice_tax_rate 一致）
-  check("chk_invoice_tax_rate", sql`${table.taxRate} IS NULL OR ${table.taxRate} IN (0, 1, 3, 6, 9, 13)`),
+  check("chk_invoice_tax_rate", sql`${table.taxRate} IS NULL OR ${table.taxRate} IN (0, 1, 3, 5, 6, 9, 13)`),
 ]);
 
 export const erpApWriteoff = pgTable("erp_ap_writeoff", {
   id: uuid("id").primaryKey().defaultRandom(),
   apId: uuid("ap_id"),
   paymentId: uuid("payment_id"),
-  amount: numeric("amount").default('0'),
+  amount: numeric("amount", { precision: 18, scale: 2 }).default('0'),
   writeoffDate: date("writeoff_date"),
   reversalOf: uuid("reversal_of"),
   remark: varchar("remark", { length: 500 }),
@@ -1675,9 +1708,9 @@ export const erpPayment = pgTable("erp_payment", {
   code: varchar("code", { length: 20 }).notNull().unique(),
   apId: uuid("ap_id"),
   supplierId: uuid("supplier_id"),
-  amount: numeric("amount").default('0'),
+  amount: numeric("amount", { precision: 18, scale: 2 }).default('0'),
   /** F4X-4：已核销金额冗余列，条件更新防并发超额 */
-  usedAmount: numeric("used_amount").notNull().default('0'),
+  usedAmount: numeric("used_amount", { precision: 18, scale: 2 }).notNull().default('0'),
   payDate: date("pay_date"),
   method: varchar("method", { length: 20 }).default('bank'),
   status: varchar("status", { length: 20 }).default('pending'),
@@ -1703,13 +1736,24 @@ export const erpApBill = pgTable("erp_ap_bill", {
   code: varchar("code", { length: 20 }).notNull().unique(),
   supplierId: uuid("supplier_id"),
   projectId: uuid("project_id"),
-  amount: numeric("amount").default('0'),
-  paidAmount: numeric("paid_amount").default('0'),
+  amount: numeric("amount", { precision: 18, scale: 2 }).default('0'),
+  paidAmount: numeric("paid_amount", { precision: 18, scale: 2 }).default('0'),
   dueDate: date("due_date"),
+  /**
+   * B1：新增终态 `'voided'`（作废）。原状态集 `pending / approved / partial / paid`
+   * 同样**没有退出路径** —— 误录的应付永远占用资金计划。与 `erp_ar.status` 同策略：
+   * 不加 CHECK，取值合法性由 service 状态机保证。
+   */
   status: varchar("status", { length: 20 }).default('pending'),
   source: varchar("source", { length: 20 }).default('manual'),
   remark: text("remark"),
   sourceRef: varchar("source_ref", { length: 100 }),
+  /** B1：作废原因（前置条件 `paid_amount = 0` 且无有效发票引用） */
+  voidReason: varchar("void_reason", { length: 500 }),
+  /** B1：作废时间 */
+  voidedAt: customTimestamptz("voided_at"),
+  /** B1：作废操作人（妙搭 userId） */
+  voidedBy: varchar("voided_by", { length: 64 }),
   // System field: Creation time (auto-filled, do not modify)
   createdAt: customTimestamptz("_created_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
   // System field: Creator (auto-filled, do not modify)
@@ -1726,13 +1770,15 @@ export const erpApBill = pgTable("erp_ap_bill", {
   uniqueIndex("uq_erp_ap_bill_source_ref")
     .on(table.sourceRef)
     .where(sql`${table.sourceRef} IS NOT NULL`),
+  // S5：与 erp_ar 同因（现金流预测按 status + due_date 过滤，此前无索引）
+  index("idx_erp_ap_bill_status_due_date").on(table.status, table.dueDate),
 ]);
 
 export const erpArWriteoff = pgTable("erp_ar_writeoff", {
   id: uuid("id").primaryKey().defaultRandom(),
   arId: uuid("ar_id"),
   receiptId: uuid("receipt_id"),
-  amount: numeric("amount").default('0'),
+  amount: numeric("amount", { precision: 18, scale: 2 }).default('0'),
   writeoffDate: date("writeoff_date"),
   /** 冲回原核销行（红字核销） */
   reversalOf: uuid("reversal_of"),
@@ -1759,9 +1805,9 @@ export const erpReceipt = pgTable("erp_receipt", {
   id: uuid("id").primaryKey().defaultRandom(),
   code: varchar("code", { length: 20 }).notNull().unique(),
   customerId: uuid("customer_id"),
-  amount: numeric("amount").default('0'),
+  amount: numeric("amount", { precision: 18, scale: 2 }).default('0'),
   /** F4X-3：已核销金额冗余列，条件更新防并发超额 */
-  usedAmount: numeric("used_amount").notNull().default('0'),
+  usedAmount: numeric("used_amount", { precision: 18, scale: 2 }).notNull().default('0'),
   receiptDate: date("receipt_date"),
   method: varchar("method", { length: 20 }).default('bank'),
   source: varchar("source", { length: 100 }),
@@ -1788,15 +1834,33 @@ export const erpAr = pgTable("erp_ar", {
   contractId: uuid("contract_id"),
   customerId: uuid("customer_id"),
   projectId: uuid("project_id"),
-  amount: numeric("amount").default('0'),
-  settledAmount: numeric("settled_amount").default('0'),
+  amount: numeric("amount", { precision: 18, scale: 2 }).default('0'),
+  settledAmount: numeric("settled_amount", { precision: 18, scale: 2 }).default('0'),
   dueDate: date("due_date"),
+  /**
+   * B1：新增终态 `'voided'`（作废）。
+   *
+   * 原状态集只有 `open / partial / settled` —— **没有退出路径**。一张误录的
+   * 100 万应收无法撤销，永久停留在 `open`，**每天**污染现金流预测、账龄与催款、
+   * 客户信用额度、BI 报表四个下游，且系统内没有任何对账能发现它
+   * （`reconcileRevenueChain` 只查"有收入无应收/无凭证"，不查"应收是否有业务依据"）。
+   * 唯一"解法"是伪造一笔回款核销掉它 —— 那一步把数据录入错误升级为人为掩盖。
+   *
+   * 不加 CHECK 约束：历史行可能已有其他取值，加约束会让迁移在存量库上失败；
+   * 取值合法性由 service 的状态机保证（与 `erp_receipt.status` 同策略）。
+   */
   status: varchar("status", { length: 20 }).default('open'),
   source: varchar("source", { length: 20 }).default('manual'),
   /** D-19：收入确认等幂等键 */
   sourceRef: varchar("source_ref", { length: 100 }),
   remark: text("remark"),
   ownerUserId: varchar("owner_user_id", { length: 50 }),
+  /** B1：作废原因（作废前置条件 `settled_amount = 0` 且无有效发票引用） */
+  voidReason: varchar("void_reason", { length: 500 }),
+  /** B1：作废时间 */
+  voidedAt: customTimestamptz("voided_at"),
+  /** B1：作废操作人（妙搭 userId） */
+  voidedBy: varchar("voided_by", { length: 64 }),
   // System field: Creation time (auto-filled, do not modify)
   createdAt: customTimestamptz("_created_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
   // System field: Creator (auto-filled, do not modify)
@@ -1814,6 +1878,10 @@ export const erpAr = pgTable("erp_ar", {
   uniqueIndex("uq_erp_ar_source_ref")
     .on(table.sourceRef)
     .where(sql`${table.sourceRef} IS NOT NULL`),
+  // S5：催款 cron（`ar-reminder.automation.ts` 每日 `status IN ('open','partial')
+  // AND due_date <= horizon`）与现金流预测（`cash-flow.service.ts`）此前无索引可用，
+  // 数据量上来后每日全表扫描。列序 `(status, due_date)` 与两类查询的过滤顺序一致。
+  index("idx_erp_ar_status_due_date").on(table.status, table.dueDate),
 ]);
 
 export const erpRevenueAdjust = pgTable("erp_revenue_adjust", {
@@ -1821,7 +1889,7 @@ export const erpRevenueAdjust = pgTable("erp_revenue_adjust", {
   code: varchar("code", { length: 20 }).notNull().unique(),
   revenueId: uuid("revenue_id"),
   adjustType: varchar("adjust_type", { length: 20 }).default('discount'),
-  amount: numeric("amount").default('0'),
+  amount: numeric("amount", { precision: 18, scale: 2 }).default('0'),
   reason: varchar("reason", { length: 500 }),
   status: varchar("status", { length: 20 }).default('applied'),
   // System field: Creation time (auto-filled, do not modify)
@@ -1846,7 +1914,7 @@ export const erpProjectRevenue = pgTable("erp_project_revenue", {
   contractId: uuid("contract_id"),
   period: varchar("period", { length: 7 }),
   method: varchar("method", { length: 20 }).default('progress'),
-  amount: numeric("amount").default('0'),
+  amount: numeric("amount", { precision: 18, scale: 2 }).default('0'),
   basis: varchar("basis", { length: 500 }),
   status: varchar("status", { length: 20 }).default('recognized'),
   remark: text("remark"),
@@ -1880,10 +1948,10 @@ export const salesReturn = pgTable("sales_return", {
   customerId: uuid("customer_id"),
   projectId: uuid("project_id"),
   returnDate: date("return_date").notNull(),
-  amount: numeric("amount").notNull().default('0'),
-  taxRate: numeric("tax_rate"),
-  netAmount: numeric("net_amount").notNull().default('0'),
-  taxAmount: numeric("tax_amount").notNull().default('0'),
+  amount: numeric("amount", { precision: 18, scale: 2 }).notNull().default('0'),
+  taxRate: numeric("tax_rate", { precision: 6, scale: 2 }),
+  netAmount: numeric("net_amount", { precision: 18, scale: 2 }).notNull().default('0'),
+  taxAmount: numeric("tax_amount", { precision: 18, scale: 2 }).notNull().default('0'),
   redInvoiceId: uuid("red_invoice_id"),
   revenueAdjustId: uuid("revenue_adjust_id"),
   /**
@@ -1893,7 +1961,7 @@ export const salesReturn = pgTable("sales_return", {
    */
   disposalType: varchar("disposal_type", { length: 20 }).notNull().default('restock'),
   /** 自动按含税收入占比分摊算出的成本冲回金额（0 = 项目无成本数据，未生成成本行） */
-  costAmount: numeric("cost_amount").notNull().default('0'),
+  costAmount: numeric("cost_amount", { precision: 18, scale: 2 }).notNull().default('0'),
   status: varchar("status", { length: 20 }).notNull().default('draft'),
   reason: varchar("reason", { length: 500 }),
   remark: text("remark"),
@@ -1941,7 +2009,7 @@ export const erpNote = pgTable("erp_note", {
   noteType: varchar("note_type", { length: 20 }).notNull(),
   drawer: varchar("drawer", { length: 200 }),
   payee: varchar("payee", { length: 200 }),
-  amount: numeric("amount").notNull().default('0'),
+  amount: numeric("amount", { precision: 18, scale: 2 }).notNull().default('0'),
   issueDate: date("issue_date"),
   dueDate: date("due_date").notNull(),
   status: varchar("status", { length: 20 }).notNull().default('received'),
@@ -1951,8 +2019,8 @@ export const erpNote = pgTable("erp_note", {
   customerId: uuid("customer_id"),
   projectId: uuid("project_id"),
   /** 贴现息 = 票面 × 贴现率 × 剩余天数 / 360（**计息基准需财务确认**） */
-  discountInterest: numeric("discount_interest"),
-  discountRate: numeric("discount_rate"),
+  discountInterest: numeric("discount_interest", { precision: 18, scale: 2 }),
+  discountRate: numeric("discount_rate", { precision: 18, scale: 2 }),
   /**
    * D-02：贴现计息天数（贴现日 → 到期日，算头不算尾），贴现时写入。
    *
@@ -1961,7 +2029,7 @@ export const erpNote = pgTable("erp_note", {
    * 年化成本率 —— 这种数字比没有更糟。
    */
   discountDays: integer("discount_days"),
-  settledAmount: numeric("settled_amount"),
+  settledAmount: numeric("settled_amount", { precision: 18, scale: 2 }),
   settledDate: date("settled_date"),
   endorsementCounterparty: varchar("endorsement_counterparty", { length: 200 }),
   remark: text("remark"),
@@ -1993,7 +2061,7 @@ export const erpNoteLog = pgTable("erp_note_log", {
   action: varchar("action", { length: 20 }).notNull(),
   fromStatus: varchar("from_status", { length: 20 }),
   toStatus: varchar("to_status", { length: 20 }).notNull(),
-  amount: numeric("amount"),
+  amount: numeric("amount", { precision: 18, scale: 2 }),
   counterparty: varchar("counterparty", { length: 200 }),
   voucherRef: varchar("voucher_ref", { length: 100 }),
   operator: varchar("operator", { length: 64 }),
@@ -2021,7 +2089,7 @@ export const biAlertSubscription = pgTable("bi_alert_subscription", {
   userId: varchar("user_id", { length: 64 }).notNull(),
   metricKey: varchar("metric_key", { length: 50 }).notNull(),
   thresholdDirection: varchar("threshold_direction", { length: 4 }).notNull().default('gt'),
-  threshold: numeric("threshold").notNull().default('0'),
+  threshold: numeric("threshold", { precision: 18, scale: 2 }).notNull().default('0'),
   channel: varchar("channel", { length: 20 }).notNull().default('feishu'),
   enabled: integer("enabled").notNull().default(1),
   lastTriggeredAt: customTimestamptz("last_triggered_at", { precision: 3 }),
@@ -2048,7 +2116,7 @@ export const erpCostAllocation = pgTable("erp_cost_allocation", {
   code: varchar("code", { length: 20 }).notNull().unique(),
   sourceDesc: varchar("source_desc", { length: 200 }),
   costType: varchar("cost_type", { length: 20 }).default('compute'),
-  amount: numeric("amount").default('0'),
+  amount: numeric("amount", { precision: 18, scale: 2 }).default('0'),
   targetProjectId: uuid("target_project_id"),
   period: varchar("period", { length: 7 }),
   sourceRef: varchar("source_ref", { length: 100 }),
@@ -2075,7 +2143,7 @@ export const erpTimesheet = pgTable("erp_timesheet", {
   employeeName: varchar("employee_name", { length: 50 }),
   roleName: varchar("role_name", { length: 50 }),
   workDate: date("work_date"),
-  hours: numeric("hours").default('0'),
+  hours: numeric("hours", { precision: 18, scale: 6 }).default('0'),
   status: varchar("status", { length: 20 }).default('draft'),
   costGenerated: boolean("cost_generated").default(false),
   remark: text("remark"),
@@ -2099,7 +2167,7 @@ export const erpTimesheet = pgTable("erp_timesheet", {
 export const erpLaborRate = pgTable("erp_labor_rate", {
   id: uuid("id").primaryKey().defaultRandom(),
   roleName: varchar("role_name", { length: 50 }).notNull(),
-  rate: numeric("rate").default('0'),
+  rate: numeric("rate", { precision: 18, scale: 2 }).default('0'),
   effectiveFrom: date("effective_from"),
   // System field: Creation time (auto-filled, do not modify)
   createdAt: customTimestamptz("_created_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
@@ -2120,7 +2188,7 @@ export const erpProjectCost = pgTable("erp_project_cost", {
   code: varchar("code", { length: 20 }).notNull().unique(),
   projectId: uuid("project_id"),
   costType: varchar("cost_type", { length: 20 }).default('labor'),
-  amount: numeric("amount").default('0'),
+  amount: numeric("amount", { precision: 18, scale: 2 }).default('0'),
   period: varchar("period", { length: 7 }),
   occurredDate: date("occurred_date"),
   sourceRef: varchar("source_ref", { length: 100 }),
@@ -2191,7 +2259,7 @@ export const erpProjectMilestone = pgTable("erp_project_milestone", {
   remark: text("remark"),
   baselineDate: date("baseline_date"),
   forecastDate: date("forecast_date"),
-  weightPct: numeric("weight_pct").notNull().default('0'),
+  weightPct: numeric("weight_pct", { precision: 6, scale: 2 }).notNull().default('0'),
   contractMilestoneId: uuid("contract_milestone_id"),
   // System field: Creation time (auto-filled, do not modify)
   createdAt: customTimestamptz("_created_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
@@ -2205,6 +2273,14 @@ export const erpProjectMilestone = pgTable("erp_project_milestone", {
     WHEN (current_setting('app.user_id'::text, true) = ''::text) THEN NULL`),
 }, (table) => [
   index("idx_erp_project_milestone_project").on(table.projectId),
+  // B3：权重是 EVM 的分母口径，单条权重必须落在 [0, 100]。
+  // 库层兜住"绕过 service 直接写库"的路径（service 另有「Σ ≤ 100」校验，
+  // 求和约束无法用 CHECK 表达 —— 那需要触发器或物化列，代价高于收益，
+  // 且配平状态已由 `computeEvm().balanced` 显式暴露给 BI 与周预警）。
+  check(
+    "chk_project_milestone_weight_range",
+    sql`${table.weightPct} >= 0 AND ${table.weightPct} <= 100`
+  ),
 ]);
 
 export const erpProject = pgTable("erp_project", {
@@ -2218,14 +2294,14 @@ export const erpProject = pgTable("erp_project", {
   /** 项目经理系统用户 ID（工时确认等授权优先按此字段，避免同名误授权） */
   pmUserId: varchar("pm_user_id", { length: 64 }),
   deptName: varchar("dept_name", { length: 100 }),
-  budget: numeric("budget").default('0'),
+  budget: numeric("budget", { precision: 18, scale: 2 }).default('0'),
   startDate: date("start_date"),
   endDate: date("end_date"),
   progress: integer("progress").default(0),
   status: varchar("status", { length: 20 }).default('initiating'),
   remark: text("remark"),
   embedding: text("embedding"),
-  estimatedTotalCost: numeric("estimated_total_cost").notNull().default('0'),
+  estimatedTotalCost: numeric("estimated_total_cost", { precision: 18, scale: 2 }).notNull().default('0'),
   closeSummary: text("close_summary"),
   satisfaction: integer("satisfaction"),
   retrospective: text("retrospective"),
@@ -2257,9 +2333,9 @@ export const erpCalloff = pgTable("erp_calloff", {
   contractId: uuid("contract_id"),
   seq: integer("seq").default(1),
   projectId: uuid("project_id"),
-  amount: numeric("amount").default('0'),
-  quantity: numeric("quantity"),
-  unitPrice: numeric("unit_price"),
+  amount: numeric("amount", { precision: 18, scale: 2 }).default('0'),
+  quantity: numeric("quantity", { precision: 18, scale: 6 }),
+  unitPrice: numeric("unit_price", { precision: 18, scale: 6 }),
   status: varchar("status", { length: 20 }).default('ordered'),
   orderDate: date("order_date"),
   remark: text("remark"),
@@ -2283,7 +2359,7 @@ export const erpContractVersion = pgTable("erp_contract_version", {
   contractId: uuid("contract_id"),
   versionNo: integer("version_no").default(1),
   changeLog: text("change_log"),
-  changeAmount: numeric("change_amount").default('0'),
+  changeAmount: numeric("change_amount", { precision: 18, scale: 2 }).default('0'),
   // System field: Creation time (auto-filled, do not modify)
   createdAt: customTimestamptz("_created_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
   // System field: Creator (auto-filled, do not modify)
@@ -2302,7 +2378,7 @@ export const erpContractMilestone = pgTable("erp_contract_milestone", {
   id: uuid("id").primaryKey().defaultRandom(),
   contractId: uuid("contract_id"),
   name: varchar("name", { length: 200 }).notNull(),
-  amount: numeric("amount").default('0'),
+  amount: numeric("amount", { precision: 18, scale: 2 }).default('0'),
   dueCondition: varchar("due_condition", { length: 500 }),
   dueDate: date("due_date"),
   status: varchar("status", { length: 20 }).default('pending'),
@@ -2328,11 +2404,11 @@ export const erpContract = pgTable("erp_contract", {
   name: varchar("name", { length: 200 }).notNull(),
   customerId: uuid("customer_id"),
   billingModel: varchar("billing_model", { length: 20 }).default('project'),
-  amount: numeric("amount").default('0'),
-  taxRate: numeric("tax_rate").default('6'),
+  amount: numeric("amount", { precision: 18, scale: 2 }).default('0'),
+  taxRate: numeric("tax_rate", { precision: 6, scale: 2 }).default('6'),
   taxEntityId: uuid("tax_entity_id"),
-  netAmount: numeric("net_amount"),
-  taxAmount: numeric("tax_amount"),
+  netAmount: numeric("net_amount", { precision: 18, scale: 2 }),
+  taxAmount: numeric("tax_amount", { precision: 18, scale: 2 }),
   rateSource: varchar("rate_source", { length: 20 }),
   status: varchar("status", { length: 20 }).default('draft'),
   signDate: date("sign_date"),
@@ -2355,9 +2431,13 @@ export const erpContract = pgTable("erp_contract", {
 }, (table) => [
   uniqueIndex("uq_erp_contract_code").on(table.code),
   index("idx_erp_contract_customer").on(table.customerId),
+  // S5：B-02 行级权限按 tax_entity_id 过滤（`data-scope.service.ts` 的 custom 范围），
+  // 而该列此前无索引 —— 过滤条件退化为全表扫描。
+  // 对比 `fin_voucher` / `erp_invoice` 的同名列都有索引。
+  index("idx_erp_contract_tax_entity").on(table.taxEntityId),
   index("idx_contract_embedding").using("hnsw", table.embedding),
   // T8：合同税率法定档位（与迁移 chk_contract_tax_rate 一致）
-  check("chk_contract_tax_rate", sql`${table.taxRate} IS NULL OR ${table.taxRate} IN (0, 1, 3, 6, 9, 13)`),
+  check("chk_contract_tax_rate", sql`${table.taxRate} IS NULL OR ${table.taxRate} IN (0, 1, 3, 5, 6, 9, 13)`),
 ]);
 
 export const erpContractItem = pgTable("erp_contract_item", {
@@ -2368,14 +2448,14 @@ export const erpContractItem = pgTable("erp_contract_item", {
   seq: integer("seq").notNull().default(1),
   itemName: varchar("item_name", { length: 200 }).notNull(),
   unit: varchar("unit", { length: 20 }).notNull().default('项'),
-  quantity: numeric("quantity").notNull().default('1'),
-  unitPrice: numeric("unit_price").notNull().default('0'),
-  discountPct: numeric("discount_pct").notNull().default('0'),
-  taxRate: numeric("tax_rate").notNull().default('6'),
-  amount: numeric("amount").notNull().default('0'),
-  netAmount: numeric("net_amount").notNull().default('0'),
-  taxAmount: numeric("tax_amount").notNull().default('0'),
-  estUnitCost: numeric("est_unit_cost").notNull().default('0'),
+  quantity: numeric("quantity", { precision: 18, scale: 6 }).notNull().default('1'),
+  unitPrice: numeric("unit_price", { precision: 18, scale: 6 }).notNull().default('0'),
+  discountPct: numeric("discount_pct", { precision: 6, scale: 2 }).notNull().default('0'),
+  taxRate: numeric("tax_rate", { precision: 6, scale: 2 }).notNull().default('6'),
+  amount: numeric("amount", { precision: 18, scale: 2 }).notNull().default('0'),
+  netAmount: numeric("net_amount", { precision: 18, scale: 2 }).notNull().default('0'),
+  taxAmount: numeric("tax_amount", { precision: 18, scale: 2 }).notNull().default('0'),
+  estUnitCost: numeric("est_unit_cost", { precision: 18, scale: 6 }).notNull().default('0'),
   sourceType: varchar("source_type", { length: 20 }).notNull().default('manual'),
   sourceItemId: uuid("source_item_id"),
   createdAt: customTimestamptz("_created_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
@@ -2386,7 +2466,7 @@ export const erpContractItem = pgTable("erp_contract_item", {
   uniqueIndex("uq_contract_item_seq")
     .on(table.contractId, table.versionNo, table.seq)
     .where(sql`${table.isCurrent} = 1`),
-  check("chk_contract_item_tax_rate", sql`${table.taxRate} IN (0, 1, 3, 6, 9, 13)`),
+  check("chk_contract_item_tax_rate", sql`${table.taxRate} IN (0, 1, 3, 5, 6, 9, 13)`),
 ]);
 
 export const crmContact = pgTable("crm_contact", {
@@ -2418,11 +2498,11 @@ export const crmOpportunity = pgTable("crm_opportunity", {
   customerId: uuid("customer_id"),
   title: varchar("title", { length: 200 }).notNull(),
   stage: varchar("stage", { length: 20 }).default('new'),
-  amount: numeric("amount").default('0'),
+  amount: numeric("amount", { precision: 18, scale: 2 }).default('0'),
   winRate: integer("win_rate").default(0),
   owner: varchar("owner", { length: 50 }),
   expectedDate: date("expected_date"),
-  taxRate: numeric("tax_rate"),
+  taxRate: numeric("tax_rate", { precision: 6, scale: 2 }),
   contractId: uuid("contract_id"),
   /** 最终成交的报价单（一对多报价中选定的一轮） */
   wonQuotationId: uuid("won_quotation_id"),
@@ -2445,7 +2525,7 @@ export const crmOpportunity = pgTable("crm_opportunity", {
   uniqueIndex("uq_crm_opp_contract")
     .on(table.contractId)
     .where(sql`${table.contractId} IS NOT NULL`),
-  check("chk_opp_tax_rate", sql`${table.taxRate} IS NULL OR ${table.taxRate} IN (0, 1, 3, 6, 9, 13)`),
+  check("chk_opp_tax_rate", sql`${table.taxRate} IS NULL OR ${table.taxRate} IN (0, 1, 3, 5, 6, 9, 13)`),
 ]);
 
 export const crmLead = pgTable("crm_lead", {
@@ -2501,7 +2581,7 @@ export const mdEmployee = pgTable("md_employee", {
   /** 参保城市代码（工资引擎） */
   ssCityCode: varchar("ss_city_code", { length: 32 }),
   /** 社保缴费基数覆盖 */
-  ssBase: numeric("ss_base"),
+  ssBase: numeric("ss_base", { precision: 18, scale: 2 }),
   // System field: Creation time (auto-filled, do not modify)
   createdAt: customTimestamptz("_created_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
   // System field: Creator (auto-filled, do not modify)
@@ -2527,11 +2607,11 @@ export const mdSupplier = pgTable("md_supplier", {
   contactName: varchar("contact_name", { length: 50 }),
   contactPhone: varchar("contact_phone", { length: 30 }),
   bankAccount: varchar("bank_account", { length: 100 }),
-  rating: numeric("rating").default('0'),
+  rating: numeric("rating", { precision: 8, scale: 4 }).default('0'),
   status: varchar("status", { length: 20 }).default('active'),
   remark: text("remark"),
   taxEntityId: uuid("tax_entity_id"),
-  defaultTaxRate: numeric("default_tax_rate"),
+  defaultTaxRate: numeric("default_tax_rate", { precision: 6, scale: 2 }),
   // System field: Creation time (auto-filled, do not modify)
   createdAt: customTimestamptz("_created_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
   // System field: Creator (auto-filled, do not modify)
@@ -2544,7 +2624,9 @@ export const mdSupplier = pgTable("md_supplier", {
     WHEN (current_setting('app.user_id'::text, true) = ''::text) THEN NULL`),
 }, (table) => [
   uniqueIndex("uq_md_supplier_code").on(table.code),
-  check("chk_supplier_default_tax_rate", sql`${table.defaultTaxRate} IS NULL OR ${table.defaultTaxRate} IN (0, 1, 3, 6, 9, 13)`),
+  // S5：多主体隔离列此前无索引（B-02 行级权限按 tax_entity_id 过滤）
+  index("idx_md_supplier_tax_entity").on(table.taxEntityId),
+  check("chk_supplier_default_tax_rate", sql`${table.defaultTaxRate} IS NULL OR ${table.defaultTaxRate} IN (0, 1, 3, 5, 6, 9, 13)`),
 ]);
 
 export const mdCustomer = pgTable("md_customer", {
@@ -2554,12 +2636,12 @@ export const mdCustomer = pgTable("md_customer", {
   uscc: varchar("uscc", { length: 50 }),
   industry: varchar("industry", { length: 100 }),
   creditLevel: varchar("credit_level", { length: 20 }),
-  creditLimit: numeric("credit_limit").default('0'),
+  creditLimit: numeric("credit_limit", { precision: 18, scale: 2 }).default('0'),
   termsDays: integer("terms_days").default(30),
   status: varchar("status", { length: 20 }).default('active'),
   remark: text("remark"),
   taxEntityId: uuid("tax_entity_id"),
-  defaultTaxRate: numeric("default_tax_rate"),
+  defaultTaxRate: numeric("default_tax_rate", { precision: 6, scale: 2 }),
   invoiceTitle: varchar("invoice_title", { length: 200 }),
   invoiceAddress: varchar("invoice_address", { length: 300 }),
   invoicePhone: varchar("invoice_phone", { length: 40 }),
@@ -2577,8 +2659,10 @@ export const mdCustomer = pgTable("md_customer", {
     WHEN (current_setting('app.user_id'::text, true) = ''::text) THEN NULL`),
 }, (table) => [
   uniqueIndex("uq_md_customer_code").on(table.code),
+  // S5：多主体隔离列此前无索引（B-02 行级权限按 tax_entity_id 过滤）
+  index("idx_md_customer_tax_entity").on(table.taxEntityId),
   // 允许为空（空=继承纳税主体默认税率），非空必须是法定税率
-  check("chk_customer_default_tax_rate", sql`${table.defaultTaxRate} IS NULL OR ${table.defaultTaxRate} IN (0, 1, 3, 6, 9, 13)`),
+  check("chk_customer_default_tax_rate", sql`${table.defaultTaxRate} IS NULL OR ${table.defaultTaxRate} IN (0, 1, 3, 5, 6, 9, 13)`),
 ]);
 
 export const mdTaxEntity = pgTable("md_tax_entity", {
@@ -2587,8 +2671,8 @@ export const mdTaxEntity = pgTable("md_tax_entity", {
   name: varchar("name", { length: 200 }).notNull(),
   uscc: varchar("uscc", { length: 20 }),
   taxpayerType: varchar("taxpayer_type", { length: 20 }).notNull(),
-  defaultOutputRate: numeric("default_output_rate").notNull(),
-  defaultInputRate: numeric("default_input_rate").notNull(),
+  defaultOutputRate: numeric("default_output_rate", { precision: 18, scale: 2 }).notNull(),
+  defaultInputRate: numeric("default_input_rate", { precision: 18, scale: 2 }).notNull(),
   /**
    * 城建税率（百分数：市区 7 / 县镇 5 / 其他 1）。
    *
@@ -2596,6 +2680,34 @@ export const mdTaxEntity = pgTable("md_tax_entity", {
    * NULL 表示未配置 —— 计算时视为要件缺失，**拒绝出数**，不得按 0 静默计提。
    */
   urbanMaintRate: numeric("urban_maint_rate", { precision: 5, scale: 2 }),
+  /**
+   * T9：增值税申报周期 —— 小规模免征额度判定的**必要要件**。
+   *
+   * `'monthly'` = 按月申报（免征额度 10 万/月）；`'quarterly'` = 按季申报（30 万/季）。
+   * **NULL = 未声明**，此时不做免征判定（偏严，不会少缴），底稿推
+   * `small_scale_exemption_cycle_missing` 差异项提示补录。
+   *
+   * 为什么不默认 `'monthly'`：在季报主体上按月判定会**错误免征**
+   * （季度合计 > 30 万但单月都不超 10 万时）→ 少缴，方向不可接受。
+   * 详见 `2026-10-16-fix03-tax-entity-vat-filing-cycle.sql` 的论证。
+   */
+  vatFilingCycle: varchar("vat_filing_cycle", { length: 20 }),
+  /** T9：是否启用免征额度判定（0 = 一律不免征，如放弃免税权）；默认 1 */
+  vatExemptionEnabled: integer("vat_exemption_enabled").notNull().default(1),
+  /**
+   * §4.7(e)：企业所得税「小型微利企业」资格（迁移 fix07）。
+   *
+   * `1` = 已人工确认符合三项条件（应纳税所得额 ≤ 300 万、从业人数 ≤ 300、
+   * 资产总额 ≤ 5000 万）→ 享受 5% 实际税负；
+   * `0` = 已确认不符合 → 25%；
+   * **NULL = 未确认** → 按不享受处理（偏严，多缴而非少缴）。
+   *
+   * 为什么不设 DEFAULT：默认 `1` 会让所有主体在无人确认的情况下自动享受 5%，
+   * 那正是"静默少缴"。为什么不从 `taxpayerType` 推导：增值税小规模资格与
+   * 企业所得税小型微利资格是**两套标准**，判定要件完全不同
+   * （详见 `server/common/tax/income-tax.ts` 的文件头论证）。
+   */
+  citSmallMicro: boolean("cit_small_micro"),
   invoiceTitle: varchar("invoice_title", { length: 200 }),
   invoiceAddress: varchar("invoice_address", { length: 300 }),
   invoicePhone: varchar("invoice_phone", { length: 40 }),
@@ -2614,6 +2726,27 @@ export const mdTaxEntity = pgTable("md_tax_entity", {
     .on(table.isDefault)
     .where(sql`${table.isDefault} = 1`),
   check("chk_tax_entity_type", sql`${table.taxpayerType} IN ('general', 'small')`),
+  // T9：申报周期与免征开关的取值校验（与迁移 chk_tax_entity_vat_filing_cycle 一致）
+  check(
+    "chk_tax_entity_vat_filing_cycle",
+    sql`${table.vatFilingCycle} IS NULL OR ${table.vatFilingCycle} IN ('monthly', 'quarterly')`
+  ),
+  check(
+    "chk_tax_entity_vat_exemption_enabled",
+    sql`${table.vatExemptionEnabled} IN (0, 1)`
+  ),
+  /**
+   * §4.7 (g)：城建税率**只接受法定档位 {1, 5, 7}**。
+   *
+   * 原约束是 `> 0 AND <= 100`，于是**把 7% 写成小数 `0.07` 会被接受为 0.07%**
+   * → 附加税少缴 99%，而账面上完全看不出来（金额小到不像错误）。
+   * 法定档位只有三个（其他 1 / 县镇 5 / 市区 7），因此直接枚举。
+   * 对应迁移 `2026-10-16-fix04-*.sql`（先把非法值置 NULL 再收紧）。
+   */
+  check(
+    "chk_tax_entity_urban_maint_rate",
+    sql`${table.urbanMaintRate} IS NULL OR ${table.urbanMaintRate} IN (1, 5, 7)`
+  ),
 ]);
 
 // table aliases
@@ -2622,8 +2755,42 @@ export const astChangeTable = astChange;
 export const astDepreciationTable = astDepreciation;
 export const compAttachmentTable = compAttachment;
 export const compAuditLogTable = compAuditLog;
-export const compAutomationConfigTable = compAutomationConfig;
-export const compFeishuDriveConfigTable = compFeishuDriveConfig;
+/**
+ * B13（§7.2）：定时任务日粒度执行台账（幂等键）。
+ *
+ * `JobScheduler` 的会话级 advisory lock 只解决**多实例并发**，
+ * 挡不住"同一天跑第二次"（运维手工触发 / 失败重试 / 重启补跑 / 两实例错开 1 分钟）
+ * —— 那会让同一个责任人**当天收到两封一模一样的催办**，比不提醒更糟。
+ *
+ * 每个任务每天最多"认领"成功一次：`INSERT ... ON CONFLICT DO NOTHING`
+ * 抢到行才执行。同时它也是一张可查的执行台账 ——
+ * 原先"这个任务今天到底跑没跑"只能翻日志。
+ *
+ * 与 `comp_automation_config` 的分工（不要混淆）：
+ *   · `comp_automation_config`：这个任务**是否启用**（人工开关，长期有效）
+ *   · `comp_automation_run`：这个任务**今天是否已跑**（自动记账，日粒度）
+ */
+export const compAutomationRun = pgTable("comp_automation_run", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  /** 任务键，与 `BindTrigger(trigger)` 同名 */
+  taskKey: varchar("task_key", { length: 80 }).notNull(),
+  /** 业务时区日期（Asia/Shanghai）—— 与 cron 的 timeZone 一致，不能用 UTC 日期 */
+  runDate: date("run_date").notNull(),
+  /** 首次执行开始时间（重复触发不会更新它） */
+  startedAt: customTimestamptz("started_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
+  /** 执行结论：success = 正常跑完；failed = 抛错 */
+  status: varchar("status", { length: 20 }).notNull().default('success'),
+  /** 失败原因；成功时为 NULL */
+  errorMessage: text("error_message"),
+  /** 本次执行的说明（如"命中 3 条、发送 2 封"），便于无需翻日志就了解结果 */
+  detail: text("detail"),
+}, (table) => [
+  uniqueIndex("uq_comp_automation_run_task_date").on(table.taskKey, table.runDate),
+  index("idx_comp_automation_run_date").on(table.runDate),
+]);
+
+export const compAutomationRunTable = compAutomationRun;
+export const compAutomationConfigTable = compAutomationConfig;export const compFeishuDriveConfigTable = compFeishuDriveConfig;
 export const compFeishuSyncRecordTable = compFeishuSyncRecord;
 export const compProjectDriveSyncTable = compProjectDriveSync;
 export const crmContactTable = crmContact;
@@ -2693,16 +2860,16 @@ export const hrSsCityRule = pgTable("hr_ss_city_rule", {
   cityName: varchar("city_name", { length: 64 }).notNull(),
   effectiveFrom: varchar("effective_from", { length: 7 }).notNull(),
   effectiveTo: varchar("effective_to", { length: 7 }),
-  pensionEmp: numeric("pension_emp").notNull().default('8'),
-  pensionCo: numeric("pension_co").notNull().default('16'),
-  medicalEmp: numeric("medical_emp").notNull().default('2'),
-  medicalCo: numeric("medical_co").notNull().default('8'),
-  unemploymentEmp: numeric("unemployment_emp").notNull().default('0.5'),
-  unemploymentCo: numeric("unemployment_co").notNull().default('0.5'),
-  housingEmp: numeric("housing_emp").notNull().default('12'),
-  housingCo: numeric("housing_co").notNull().default('12'),
-  baseMin: numeric("base_min").notNull().default('0'),
-  baseMax: numeric("base_max").notNull().default('999999'),
+  pensionEmp: numeric("pension_emp", { precision: 18, scale: 2 }).notNull().default('8'),
+  pensionCo: numeric("pension_co", { precision: 18, scale: 2 }).notNull().default('16'),
+  medicalEmp: numeric("medical_emp", { precision: 18, scale: 2 }).notNull().default('2'),
+  medicalCo: numeric("medical_co", { precision: 18, scale: 2 }).notNull().default('8'),
+  unemploymentEmp: numeric("unemployment_emp", { precision: 18, scale: 2 }).notNull().default('0.5'),
+  unemploymentCo: numeric("unemployment_co", { precision: 18, scale: 2 }).notNull().default('0.5'),
+  housingEmp: numeric("housing_emp", { precision: 18, scale: 2 }).notNull().default('12'),
+  housingCo: numeric("housing_co", { precision: 18, scale: 2 }).notNull().default('12'),
+  baseMin: numeric("base_min", { precision: 18, scale: 2 }).notNull().default('0'),
+  baseMax: numeric("base_max", { precision: 18, scale: 2 }).notNull().default('999999'),
   createdAt: customTimestamptz("_created_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
   updatedAt: customTimestamptz("_updated_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
 }, (table) => [
@@ -3080,7 +3247,7 @@ export const mdBankAccount = pgTable("md_bank_account", {
   /** 关联会计科目编码（fin_account.code），默认 1002 银行存款 */
   accountCode: varchar("account_code", { length: 20 }),
   /** 银行对账单口径的期初余额（对账底稿用，非账套取数） */
-  openingBalance: numeric("opening_balance").notNull().default('0'),
+  openingBalance: numeric("opening_balance", { precision: 18, scale: 2 }).notNull().default('0'),
   isDefault: integer("is_default").notNull().default(0),
   status: varchar("status", { length: 20 }).notNull().default('active'),
   contactPerson: varchar("contact_person", { length: 50 }),
@@ -3111,9 +3278,9 @@ export const erpBankStatement = pgTable("erp_bank_statement", {
   bankAccountId: uuid("bank_account_id").notNull(),
   transactionDate: date("transaction_date").notNull(),
   direction: varchar("direction", { length: 10 }).notNull(),
-  amount: numeric("amount").notNull().default('0'),
+  amount: numeric("amount", { precision: 18, scale: 2 }).notNull().default('0'),
   /** 银行对账单上的交易后余额（部分银行不提供，可为空） */
-  balance: numeric("balance"),
+  balance: numeric("balance", { precision: 18, scale: 2 }),
   counterpartyName: varchar("counterparty_name", { length: 200 }),
   counterpartyAccount: varchar("counterparty_account", { length: 64 }),
   summary: varchar("summary", { length: 500 }),
@@ -3125,7 +3292,7 @@ export const erpBankStatement = pgTable("erp_bank_statement", {
   bizType: varchar("biz_type", { length: 20 }),
   bizId: uuid("biz_id"),
   bizCode: varchar("biz_code", { length: 50 }),
-  matchScore: numeric("match_score"),
+  matchScore: numeric("match_score", { precision: 8, scale: 4 }),
   matchedAt: customTimestamptz("matched_at", { precision: 3 }),
   matchedBy: varchar("matched_by", { length: 64 }),
   importBatch: varchar("import_batch", { length: 64 }),
@@ -3144,6 +3311,11 @@ export const erpBankStatement = pgTable("erp_bank_statement", {
   uniqueIndex("uq_erp_bank_statement_dedupe").on(table.bankAccountId, table.dedupeKey),
   index("idx_erp_bank_statement_account_date").on(table.bankAccountId, table.transactionDate),
   index("idx_erp_bank_statement_status").on(table.bankAccountId, table.matchStatus),
+  // S5：`matchStatistic()` 在**不带** bank_account_id 时按 match_status 分组
+  // （`bank-statement.service.ts:234-238`），而上面那条复合索引的前导列
+  // `bank_account_id` 不在 WHERE 里 → 索引不可用、退化为全表扫描。
+  // 保留复合索引（服务带账号的查询），另加单列索引。
+  index("idx_erp_bank_statement_match_status").on(table.matchStatus),
   index("idx_erp_bank_statement_transaction_no").on(table.bankAccountId, table.transactionNo),
   index("idx_erp_bank_statement_biz").on(table.bizType, table.bizId),
 ]);
@@ -3156,8 +3328,8 @@ export const erpBankStatementMatch = pgTable("erp_bank_statement_match", {
   bizId: uuid("biz_id").notNull(),
   bizCode: varchar("biz_code", { length: 50 }),
   matchType: varchar("match_type", { length: 20 }).notNull().default('auto'),
-  score: numeric("score"),
-  amount: numeric("amount"),
+  score: numeric("score", { precision: 8, scale: 4 }),
+  amount: numeric("amount", { precision: 18, scale: 2 }),
   remark: varchar("remark", { length: 500 }),
   matchedAt: customTimestamptz("matched_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
   matchedBy: varchar("matched_by", { length: 64 }),

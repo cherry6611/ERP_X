@@ -16,7 +16,24 @@ export type OpportunityStage = 'new' | 'following' | 'quoting' | 'negotiating' |
 export type ContractStatus = 'draft' | 'approving' | 'active' | 'performing' | 'completed' | 'closed' | 'terminated';
 export type BillingModel = 'project' | 'quantity' | 'subscription' | 'framework';
 export type MilestoneStatus = 'pending' | 'reached';
-export type ProjectStatus = 'initiating' | 'executing' | 'delivering' | 'accepting' | 'closed';
+/**
+ * 项目状态。
+ *
+ * B6（§7.2）：新增 'cancelled'（取消/终止）终态。
+ *
+ * 原状态集 initiating / executing / delivering / accepting / closed
+ * 里，前四个**全是死胡同**（没有任何出口动作）：
+ *   · 误建或中途取消的项目永远卡住；
+ *   · 	ryCompleteContract 要求"同合同下全部项目 closed"，
+ *     于是**一个卡住的项目让整个合同永远无法回写 completed**。
+ */
+export type ProjectStatus =
+  | 'initiating'
+  | 'executing'
+  | 'delivering'
+  | 'accepting'
+  | 'closed'
+  | 'cancelled';
 export type ChangeType = 'scope' | 'budget' | 'schedule';
 export type ChangeStatus = 'pending' | 'approved' | 'rejected';
 export type CostType =
@@ -30,9 +47,20 @@ export type CostType =
 export type TimesheetStatus = 'draft' | 'submitted' | 'confirmed';
 export type RevenueMethod = 'progress' | 'milestone' | 'quantity' | 'subscription';
 export type AdjustType = 'discount' | 'return' | 'other';
-export type ArStatus = 'open' | 'partial' | 'settled';
+/**
+ * B1：应收终态。新增 `'voided'`（作废）。
+ *
+ * 原状态集没有退出路径 —— 一张误录的 100 万应收无法撤销，会**每天**污染
+ * 现金流预测、账龄与催款、客户信用额度、BI 报表四个下游。作废是**不可逆**的
+ * 终态，前置条件：`settledAmount = 0` 且无有效发票引用（见 `ArService.voidAr`）。
+ */
+export type ArStatus = 'open' | 'partial' | 'settled' | 'voided';
 export type ReceiptStatus = 'unmatched' | 'partial' | 'matched' | 'voided';
-export type ApStatus = 'pending' | 'approved' | 'partial' | 'paid';
+/**
+ * B1：应付终态。新增 `'voided'`（作废）。前置条件：`paidAmount = 0`、
+ * 无未作废付款单、无有效进项发票引用（见 `ApService.voidAp`）。
+ */
+export type ApStatus = 'pending' | 'approved' | 'partial' | 'paid' | 'voided';
 export type PaymentStatus = 'pending' | 'approved' | 'rejected' | 'paid' | 'voided';
 export type InvoiceType = 'vat_special' | 'vat_normal' | 'electronic';
 export type InvoiceStatus = 'issued' | 'voided';
@@ -292,6 +320,19 @@ export interface CreateQuotationDto {
 }
 
 export interface UpdateQuotationDto {
+  /**
+   * 客户。
+   *
+   * ⚠️ 原先**漏了这个字段**，导致"编辑报价单时改客户"被**静默丢弃**：
+   * 前端编辑弹窗的「客户」下拉是可改的，提交走 `CreateQuotationDto`，
+   * 而 PATCH 端点的 body 类是 `CreateQuotationBodyDto`（实现 Create 契约），
+   * 因此 `customerId` 能通过 `forbidNonWhitelisted` 校验、**不会 400** ——
+   * 但服务端 `update()` 的 patch 里没有它，于是请求成功、提示"已更新"，
+   * 而客户仍是原值。使用者以为改成功了，之后按报价单转合同时会带到**错的客户**。
+   *
+   * 补齐后与 `title` / `opportunityId` 同一处理方式（`!== undefined` 才 patch）。
+   */
+  customerId?: string;
   opportunityId?: string;
   title?: string;
   quoteDate?: string;
@@ -598,6 +639,21 @@ export interface ProjectChainOverview {
   quotations: ChainQuotationItem[];
   milestones: ChainMilestoneItem[];
   revenueByPeriod: ChainRevenuePeriod[];
+  /**
+   * 已确认收入的**含税**合计（= `revenueByPeriod` 各行 `amount` 之和）。
+   *
+   * 注意与 `revenueNetTotal` 的区别：`erp_project_revenue.amount` 存的是**价税合计**，
+   * 而项目核算口径（毛利/毛利率、`recognizedRevenue`）用的是**不含税净额**
+   * （按合同税率拆分，见 `projects.service.ts` 的 accounting 查询）。
+   * 两个数在含税项目上必然不相等，界面必须分别标注，否则同一个项目会出现
+   * 两个数值不同但同名的"已确认收入"。
+   */
+  revenueGrossTotal: number;
+  /**
+   * 已确认收入的**不含税净额**合计（按合同税率拆分）。
+   * 与 `accounting.recognizedRevenue` 同口径，可直接与成本相减算毛利。
+   */
+  revenueNetTotal: number;
   costByType: ChainCostTypeItem[];
   periodExpense: number;
   invoices: ChainInvoiceItem[];
@@ -797,6 +853,45 @@ export interface UnbilledItem {
   unbilledAmount: number;
 }
 
+/**
+ * N-3 / B-4：收入→应收→凭证 三方对账自检的缺口类型。
+ *
+ * - `missing_ar`          ：有合同却查不到应收单（收入确认时应收未落库）
+ * - `ar_amount_mismatch`  ：应收金额 ≠ 已确认收入金额（两条链路金额口径分叉）
+ * - `missing_voucher`     ：既无凭证、也不在补偿队列（凭证彻底缺失）
+ * - `voucher_pending`     ：凭证在 `comp_voucher_job` 队列中待重试（可由重试任务自愈）
+ */
+export type RevenueChainGapKind =
+  | 'missing_ar'
+  | 'ar_amount_mismatch'
+  | 'missing_voucher'
+  | 'voucher_pending';
+
+export interface RevenueChainGap {
+  revenueId: string;
+  code: string;
+  projectId: string;
+  projectName: string;
+  contractId: string | null;
+  period: string;
+  amount: number;
+  gapKind: RevenueChainGapKind;
+  /** 中文说明，直接可展示（含存在的另一侧金额等） */
+  detail: string;
+}
+
+export interface RevenueChainReconcileResult {
+  /** 本次检查限定的期间；未指定时为 null（全量） */
+  period: string | null;
+  /** 纳入检查的已确认收入笔数 */
+  checked: number;
+  /** 缺口条数（= gaps.length，便于前端免遍历判断） */
+  gapCount: number;
+  /** 是否全部三方一致 */
+  consistent: boolean;
+  gaps: RevenueChainGap[];
+}
+
 /* ========== 应收应付 ========== */
 
 export interface ArItem {
@@ -815,6 +910,12 @@ export interface ArItem {
   source: string;
   overdue: boolean;
   ownerUserId: string | null;
+  /** B1：作废原因（仅 `status='voided'` 有值） */
+  voidReason: string | null;
+  /** B1：作废时间（ISO 字符串） */
+  voidedAt: string | null;
+  /** B1：作废操作人 */
+  voidedBy: string | null;
   remark: string | null;
   createdAt: string;
 }
@@ -846,6 +947,12 @@ export interface ApItem {
   status: ApStatus;
   source: string;
   sourceRef: string | null;
+  /** B1：作废原因（仅 `status='voided'` 有值） */
+  voidReason: string | null;
+  /** B1：作废时间（ISO 字符串） */
+  voidedAt: string | null;
+  /** B1：作废操作人 */
+  voidedBy: string | null;
   remark: string | null;
   createdAt: string;
 }
@@ -900,6 +1007,26 @@ export interface InvoiceItem {
   certificationStatus: InvoiceCertificationStatus;
   /** C-01：勾选所属税款所属期 YYYY-MM */
   certificationPeriod: string | null;
+  /**
+   * P0-C / P0-D：该发票是否为**红字发票**（冲减票）。
+   *
+   * 由 `sourceRef` 存在且金额为负判定。红字发票参与增值税底稿的销项/进项汇总
+   * （负数即冲减），但**不可**被勾选认证（认证路径会拒绝）。
+   */
+  isRedLetter: boolean;
+  /**
+   * P0-C：该发票所属期是否已有**已确认**的增值税申报底稿。
+   *
+   * `true` 时不可作废（跨月/已申报只能开红字发票），前端据此禁用「作废」按钮
+   * 并提示改走红字流程 —— 而不是让用户点了才报错。
+   */
+  declaredPeriodConfirmed: boolean;
+  /** B1 / P0-C：作废原因 */
+  voidReason: string | null;
+  /** B1 / P0-C：作废时间（ISO 字符串） */
+  voidedAt: string | null;
+  /** B1 / P0-C：作废操作人 */
+  voidedBy: string | null;
   remark: string | null;
   createdAt: string;
   /** 软提示，如开票额超过已确认收入 */
@@ -1057,6 +1184,16 @@ export interface ProjectFinancialHealthItem {
   cpi: number | null;
   eac: number | null;
   overdueMilestoneCount: number;
+  /**
+   * B3：里程碑权重合计（仅计权重 > 0 的里程碑）。
+   *
+   * 与 `milestoneWeightBalanced` 一起把"进度基准是否配平"暴露到前端：
+   * 权重和 ≠ 100 时 SPI/CPI 本身仍是有效比值（分母已归一化），
+   * 但它**不再等价于"完成百分比"** —— 只看 SPI 会误判。
+   */
+  milestoneWeightTotal: number;
+  /** B3：|Σ权重 − 100| ≤ 0.01。false 时前端必须显示"进度基准未配平"提示 */
+  milestoneWeightBalanced: boolean;
 }
 
 export interface ProjectFinancialHealthSummary {
@@ -1171,7 +1308,13 @@ export interface CreateLeadDto {
 
 export interface UpdateLeadDto {
   status?: LeadStatus;
-  customerId?: string;
+  /**
+   * 关联客户。`null` = **解除关联**（PATCH 语义：`undefined` 才是不改）。
+   *
+   * 为什么需要 `null`：转商机要求线索已关联客户，而跟进弹窗的客户下拉里
+   * 必然有"未关联"这一档；只有允许显式清空，界面才与服务端状态一致。
+   */
+  customerId?: string | null;
   followNote?: string;
   nextDate?: string;
   remark?: string;
@@ -1227,11 +1370,41 @@ export interface UpdateContractDto {
   amount?: number;
   taxRate?: number;
   taxEntityId?: string;
+  /**
+   * 合同客户。
+   *
+   * ⚠️ 服务端**只允许 `draft` 状态**修改（与 `amount` 同一判据，见
+   * `server/modules/contracts/contract-update-guard.ts`）：客户一改，
+   * 已开具的发票与已登记的应收仍挂在**原客户**上，而
+   * `applyWriteoffInTx`（`server/modules/finance/ar.service.ts`）有
+   * 「回款客户与应收客户不一致，不可核销」的守卫 —— 改了会让既有应收**无法核销**。
+   * 非 draft 会被 400 拒绝（可读中文原因）。
+   */
+  customerId?: string;
+  /**
+   * 计费模式。与 `name` / `taxRate` 同级：属**普通**可改字段，
+   * 但已关闭/已终止（冻结状态）的合同不可改。
+   */
+  billingModel?: BillingModel;
+  /** 签订日期；`null` 表示**清空**，`undefined` 表示不改（PATCH 语义） */
+  signDate?: string | null;
   owner?: string;
   paymentTerms?: string;
-  startDate?: string;
-  endDate?: string;
+  /** 开始日期；`null` 表示**清空**，`undefined` 表示不改 */
+  startDate?: string | null;
+  /** 结束日期；`null` 表示**清空**，`undefined` 表示不改 */
+  endDate?: string | null;
   remark?: string;
+  /*
+   * ⚠️ 这里**有意没有** `milestones`（新建用的 `CreateContractDto` 有）。
+   *
+   * 里程碑已有独立的写入路径 —— `POST /api/contracts/:id/milestones`（登记）与
+   * `PATCH /api/contracts/milestones/:id`（达成/改名/改额），前端入口是合同详情页的
+   * 「登记里程碑」弹窗。若把里程碑并进本契约，同一份数据就有了**两条写入路径**：
+   * 编辑表单提交的是**打开弹窗那一刻的旧快照**，会覆盖掉期间在详情页刚登记/刚达成的
+   * 里程碑（谁后写入谁生效），且"改里程碑"到底走状态机还是走全量覆盖将无法判定。
+   * 故本契约只承载合同**表头**字段。
+   */
 }
 
 export type ContractStatusAction = 'submit' | 'approve' | 'reject' | 'start' | 'complete' | 'close' | 'terminate';
@@ -1265,7 +1438,20 @@ export interface CreateProjectDto {
   remark?: string;
 }
 
-export type ProjectStatusAction = 'approve' | 'deliver' | 'accept' | 'close';
+/**
+ * B6：项目状态动作。
+ *
+ * cancel（取消/终止）与 eopen（反结项）是本轮新增的**退出路径** ——
+ * 原表只有 4 条正向流转，导致项目一旦进入任一非终态就无法退出，
+ * 且已结项无法撤回（详见 projects.transform.ts 的 PROJECT_STATUS_FLOW）。
+ */
+export type ProjectStatusAction =
+  | 'approve'
+  | 'deliver'
+  | 'accept'
+  | 'close'
+  | 'cancel'
+  | 'reopen';
 
 export interface UpdateProjectDto {
   progress?: number;
@@ -1430,6 +1616,29 @@ export interface CreateReceiptDto {
   method?: string;
   source?: string;
   remark?: string;
+  /**
+   * 登记回款时**直接指定要核销的应收单**（可选）。
+   *
+   * ## 为什么需要它
+   *
+   * 项目详情页的「登记回款」弹窗要求使用者**必选**一张应收单
+   * （`receiptSchema.arId` 为 `min(1)`），并显示「该应收单未回款 ¥X」。
+   * 但契约里原先**没有这个字段**，提交的 DTO 也不含它 —— 于是那个必选项
+   * 被**静默丢弃**：生成的回款单状态是 `unmatched`，与所选应收单毫无关联，
+   * 而使用者以为这笔钱已经回款到那张单上了。
+   *
+   * ## 语义
+   *
+   * 传了它就表示"这笔回款就是要核销这张应收"：服务端在**同一事务内**
+   * 创建回款并核销该应收（核销金额即 `amount`），回款状态随之变为
+   * `matched` / `partial`。不传则维持原行为（登记为 `unmatched`，
+   * 之后再单独核销）。
+   *
+   * 校验与独立「核销」入口**共用同一份实现**
+   * （`ArService.applyWriteoffInTx`），因此作废应收、客户不一致、
+   * 超额核销这些守卫一条都不会少。
+   */
+  arId?: string;
 }
 
 export interface ArWriteoffDto {
@@ -1543,6 +1752,30 @@ export interface UpdateInvoiceDto {
   invoiceNo?: string;
   arId?: string | null;
   remark?: string;
+  /**
+   * ## 登记后编辑（用户要求）
+   *
+   * 下面这些字段原先**不可编辑** —— 发票登记时录错金额/税率/日期，只能作废重开。
+   * 现按本仓既有的记账哲学放开：**仅当该发票的记账凭证尚未过账时**可改，
+   * 改动后服务端会重建凭证（作废旧草稿 + 重新生成）。
+   *
+   * 判据与文案见 `server/modules/finance/invoice-edit-guard.ts`（含 9 条断言）：
+   * - 凭证 `draft` / 无凭证 / 已作废 → 可改，且重建凭证
+   * - 凭证 `posted` → **拒绝**，提示「先作废该发票（会生成冲回凭证）再重新登记」
+   *
+   * 这条限制来自 `voucher.controller.ts:317` 的既有约定：
+   * *「仅草稿凭证可改（已过账凭证的分录摘要属于已入账信息，改动需走红冲）」*。
+   * 已过账还允许改，会让明细账与发票台账永久对不上 —— 而使用者以为自己只是改了张单子。
+   */
+  amount?: number;
+  taxRate?: number;
+  invoiceDate?: string;
+  invoiceType?: InvoiceType;
+  direction?: InvoiceDirection;
+  projectId?: string | null;
+  contractId?: string | null;
+  supplierId?: string | null;
+  apId?: string | null;
 }
 
 /* ========== 人力资源（二期A） ========== */
@@ -1551,7 +1784,28 @@ export type EmployeeStatus = 'probation' | 'active' | 'resigned';
 export type LeaveType = 'annual' | 'sick' | 'personal';
 export type LeaveRequestStatus = 'pending' | 'approved' | 'rejected';
 export type AttendanceStatus = 'present' | 'absent' | 'late' | 'leave';
-export type PayrollStatus = 'draft' | 'submitted' | 'approved' | 'rejected';
+/**
+ * 工资单状态。
+ *
+ * B12（§7.2）：新增 'paid'（已发放）与 'voided'（作废）两个**终态**。
+ *
+ * 原状态集到 pproved 就停了 —— 而"已批准"只表示**同意发**，
+ * 不表示**已经发了**。后果：
+ *   · 无法区分"批准了但还没打款"和"已打款"，出纳只能靠线下表格跟踪；
+ *   · 现金流出预测里工资是"按最近已审批周期应发总额"估的，
+ *     与实际是否已付无关（这一点对预测无妨，但对账龄/对账有害）；
+ *   · 误批准的工资单**没有任何退出路径**（与 B1 的应收/应付同源问题）。
+ *
+ * oided 的前置条件是"尚未发放"（llocationGenerated 与凭证需一并处理），
+ * 因为已发放的工资单作废涉及资金追回，不是系统能单方面决定的事。
+ */
+export type PayrollStatus =
+  | 'draft'
+  | 'submitted'
+  | 'approved'
+  | 'rejected'
+  | 'paid'
+  | 'voided';
 export type CandidateStage = 'pending' | 'interview' | 'offer' | 'hired' | 'rejected';
 export type AppraisalStatus = 'draft' | 'confirmed';
 export type TrainingStatus = 'planned' | 'done';
@@ -1819,7 +2073,16 @@ export interface CreatePayrollDto {
   remark?: string;
 }
 
-export type PayrollAction = 'submit' | 'approve' | 'reject';
+/**
+ * B12：工资单动作。
+ *
+ * pay = 标记已发放（pproved → paid）；oid = 作废（pproved → voided）。
+ *
+ * 原实现只有 submit/approve/reject，于是 pproved 是死胡同：
+ *   · "批准了但还没打款"与"已经打款"在系统里无法区分，出纳靠线下表格跟踪；
+ *   · 误批准的工资单没有撤销路径（只能反审批或线下处理）。
+ */
+export type PayrollAction = 'submit' | 'approve' | 'reject' | 'pay' | 'void';
 
 export interface CreateRecruitReqDto {
   title: string;
@@ -1926,7 +2189,25 @@ export interface OffboardResult {
 
 export type ExpenseApplyType = 'travel' | 'purchase';
 export type ExpenseApplyStatus = 'pending' | 'approved' | 'rejected' | 'closed';
-export type ExpenseClaimStatus = 'pending' | 'escalated' | 'approved' | 'rejected';
+/**
+ * 报销单状态。
+ *
+ * B12（§7.2）：新增 'paid'（已支付）与 'voided'（作废）。
+ *
+ * 原状态集到 pproved 即停，而已批准的报销单在 in-expense.service.ts
+ * 里会**同事务生成一张 rp_ap_bill（source_ref='expense:<单号>'）**。
+ * 那张应付单有自己的生命周期（pending → paid），但**报销单本身永远停在 approved**
+ * —— 于是"这笔报销到底付了没有"在报销台账里查不到，只能去应付台账反查。
+ * 更糟的是误批准的报销单无法作废（B1 同源问题），只能靠作废应付单绕过，
+ * 而作废应付单**不会**同步报销单状态，两者从此不一致。
+ */
+export type ExpenseClaimStatus =
+  | 'pending'
+  | 'escalated'
+  | 'approved'
+  | 'rejected'
+  | 'paid'
+  | 'voided';
 
 export interface BudgetItem {
   id: string;
@@ -2027,7 +2308,13 @@ export interface CreateExpenseClaimDto {
   remark?: string;
 }
 
-export type ExpenseClaimAction = 'approve' | 'reject';
+/**
+ * B12：报销单动作。
+ *
+ * pay = 标记已支付（与应付单 paid 同步）；oid = 作废（仅未支付时可作废）。
+ * 原实现只有 pprove / eject，导致 pproved 是一个**没有出口**的状态。
+ */
+export type ExpenseClaimAction = 'approve' | 'reject' | 'pay' | 'void';
 
 /* ========== 采购（二期B） ========== */
 
@@ -2076,6 +2363,27 @@ export interface PurOrderItem {
   orderDate: string | null;
   acceptedQuantity: number;
   acceptDate: string | null;
+  /**
+   * **已验收金额**（= 该订单所有有效验收应付之和，含税）。
+   *
+   * ## 为什么必须由服务端给
+   *
+   * 验收单打印件原先自己算 `unitPrice * acceptedQuantity` 并**一次性取整**，
+   * 而服务端 `PurService.acceptOrder` 是**逐次验收各自取整**后落
+   * `erp_ap_bill.amount`。两者在单价超过两位小数时必然分叉：
+   *   · 单价 0.333、分 3 次各验 1 → 打印件 1.00（0.333×3 = 0.999），
+   *     实际应付 0.33×3 = **0.99**；
+   *   · 单价 2.675、一次验完 → 打印件 2.67（`(2.675).toFixed(2)`），
+   *     实际应付 `round2(2.675)` = **2.68**（同一列表格的「订单金额」列也显示
+   *     2.68，即打印件与列表自相矛盾）。
+   *
+   * 客户端**拿不到每次验收的金额**（本接口原先只有 `acceptedQuantity` /
+   * `acceptDate` 两个汇总字段），所以正确修法只能是服务端把已验收金额算好发下来。
+   *
+   * ⚠️ **不要改成"客户端按单价×数量重算"** —— 那会重新引入取整顺序差异，
+   * 正是本次要消除的形态。
+   */
+  acceptedAmount: number;
   status: PurOrderStatus;
   remark: string | null;
   createdAt: string;
@@ -2426,6 +2734,22 @@ export interface UpdateDatasetDto {
   name?: string;
   source?: string;
   maskLevel?: string;
+  /**
+   * 关联合同（PATCH 三态语义）。
+   *
+   * 与 `CreateDatasetDto.contractId`（只增不改）不同，这里**允许显式 `null`**：
+   * 数据集可能不再挂靠任何合同（合同作废/数据转内部使用），
+   * 这与 `UpdateInvoiceDto.arId?: string | null` 是同一个先例 —— 传 `null` 即清除关联。
+   *
+   * 三态口径（服务端 `data-asset.service.ts#updateDataset` 严格按此实现）：
+   * · 传 UUID  → 校验合同存在后写入；
+   * · 传 `null` → 清除关联；
+   * · 不传（`undefined`）→ **保持原值不动**。
+   *
+   * ⚠️ 前端**不能**把 `contractId` 折成 `values.contractId || undefined`：
+   * 那样"清空"会变成"不传"，清除操作被静默丢弃。
+   */
+  contractId?: string | null;
   status?: DatasetStatus;
   remark?: string;
 }
@@ -3013,10 +3337,50 @@ export interface ContractListParams {
   customerId?: string;
 }
 
+/**
+ * 审计日志查询条件。
+ *
+ * ⚠️ 所有条件都必须在 **SQL 层**生效（`where`），不能在取回结果后再过滤：
+ * 原实现的 `action` 是"先按 limit 取最新 N 行、再在内存里 filter"，
+ * 于是同一次查询的条数会随分页大小变化（limit=100 得 2 行、limit=200 得 12 行，
+ * 而库里实际有 93 条 update）—— 审计查询给出**不确定的答案**比慢更危险。
+ */
 export interface AuditListParams {
   objectType?: string;
   action?: string;
+  /** 操作人：妙搭 userId 原文，或 `anonymous` / `system` 等非用户主体 */
+  actor?: string;
+  /** 起始日期（含），`YYYY-MM-DD`，按业务时区 */
+  dateFrom?: string;
+  /** 结束日期（含），`YYYY-MM-DD`，按业务时区 */
+  dateTo?: string;
   limit?: number;
+}
+
+/** 审计日志列表（带总数，供界面显示"共 N 条"；N 是筛选后的真实条数） */
+export interface AuditLogListResult {
+  items: AuditLog[];
+  /** 满足筛选条件的总条数（不受 limit 影响） */
+  total: number;
+  /** 本次返回的条数（= min(total, limit)） */
+  returned: number;
+}
+
+/** 审计日志导出结果（CSV 由服务端生成，客户端只负责下载） */
+export interface AuditLogExportResult {
+  csv: string;
+  /** CSV 中的数据行数（不含表头） */
+  rowCount: number;
+  /** 命中条数超过导出上限而为 true（CSV 只含最新的上限条） */
+  truncated: boolean;
+  /** 命中总数，供界面提示"已导出 200 / 共 1500" */
+  total: number;
+}
+
+/** 审计日志操作人选项（筛选下拉用） */
+export interface AuditActorOption {
+  actor: string;
+  count: number;
 }
 
 export interface AssetListParams {
@@ -3095,6 +3459,32 @@ export interface TaxEntity {
    * 可选可保证老数据与既有对象字面量都不受影响。
    */
   urbanMaintRate?: number | null;
+  /**
+   * T9：增值税申报周期 —— 小规模免征额度判定的**必要要件**。
+   *
+   * `'monthly'`（按月，免征额度 10 万）/ `'quarterly'`（按季，30 万）/ `null`（未声明）。
+   *
+   * 未声明时底稿**不做免征判定**（按偏严口径不减免，不会少缴），并推
+   * `small_scale_exemption_cycle_missing` 差异项提示补录 ——
+   * 否则主体会长期多缴而无人察觉。
+   */
+  vatFilingCycle?: 'monthly' | 'quarterly' | null;
+  /** T9：是否启用免征额度判定；`false` = 一律不免征（如放弃免税权） */
+  vatExemptionEnabled?: boolean;
+  /**
+   * §4.7(e)：企业所得税「小型微利企业」资格。
+   *
+   * 	rue = 已人工确认符合三项条件（应纳税所得额 ≤ 300 万、从业人数 ≤ 300、
+   * 资产总额 ≤ 5000 万）→ 享受 **5%** 实际税负；
+   * alse = 已确认不符合 → 25%；
+   * **null / 未提供 = 未确认** → 按不享受处理（偏严：多缴而非少缴）。
+   *
+   * 为什么是"人工确认"而不是系统自动判定：条件②③需要从业人数与资产总额，
+   * 这两个数在本仓分别属于人资与资产模块，主体资料里没有；
+   * 在这里猜会在人数/资产超标时**错误享受 5%**（实打实的少缴 + 滞纳金）。
+   * 条件①（≤300 万）由 `computeIncomeTax` 自行判断并在超门槛时自动降级。
+   */
+  citSmallMicro?: boolean | null;
   invoiceTitle: string | null;
   invoiceAddress: string | null;
   invoicePhone: string | null;
@@ -3432,6 +3822,15 @@ export interface VatDeclarationLine {
   ledgerAmount: number;
   difference: number;
   explained: boolean;
+  /**
+   * 该行是否可与其它行**相加**得出一个有意义的小计。
+   *
+   * 第 17 行（上期留抵）与第 20 行（期末留抵）是**减项/余额**，与第 1 行的
+   * 不含税销售额、第 11/12/13 行的税额**不同量纲**：把它们一起求和会得到
+   * 「销售额 + 税额 − 留抵」这种没有任何会计含义的数字。
+   * 前端表尾据本字段只汇总可加行，见 `TaxDeclarationPage` 的 `summable` 过滤。
+   */
+  summable: boolean;
 }
 
 export interface VatDeclarationResult {
@@ -3442,9 +3841,52 @@ export interface VatDeclarationResult {
   lines: VatDeclarationLine[];
   outputTaxFromInvoices: number;
   inputTaxFromInvoices: number;
+  /**
+   * P0-A：本期已登记但**未勾选认证**的进项税额（专票）。
+   *
+   * 这部分税额依法不得在当期抵扣（国家税务总局公告 2019 年第 45 号），
+   * 因此**不计入** `inputTaxFromInvoices`，单独列出供财务核对
+   * 「台账进项总额 = 可抵扣进项 + 待认证进项」。
+   */
+  uncertifiedInputTax: number;
+  /** P0-A：未认证进项发票张数（用于文案） */
+  uncertifiedInvoiceCount: number;
   outputTaxFromLedger: number;
   inputTaxFromLedger: number;
   previousCredit: number;
+  /**
+   * P0-B：上期留抵的取数来源。
+   *
+   * - `confirmed_declaration`：取自**上期已确认底稿**的 `closing_credit`（权威）；
+   * - `ledger_estimate`：上期底稿未确认，按总账 222102/222101 余额推算（**估数**）。
+   *
+   * 两者对"防重复抵扣"的可靠性不同，前端需据此提示。
+   */
+  previousCreditSource: 'confirmed_declaration' | 'ledger_estimate';
+  /**
+   * T8：本期**未开票收入**的不含税额（已确认收入 − 已开销项发票净额）。
+   *
+   * 底稿原先销项 100% 来自发票台账，这部分**零申报**（少缴增值税）。
+   * 现已计入申报表第 1 行销售额；其销项税额因收入台账无税率列而按 0 计，
+   * 通过 `unbilled_revenue_tax_pending` 差异项提示人工确认。
+   */
+  unbilledRevenueNet: number;
+  /**
+   * T9：小规模免征额度判定结果。
+   *
+   * - `within`：额度内，已免征教育费附加与地方教育附加（城建税仍征）；
+   * - `beyond`：超出额度，照征；
+   * - `unknown`：**要件缺失（未声明申报周期等），按偏严口径未减免** ——
+   *   这一态会让主体长期多缴，必须在界面上明确提示补录要件。
+   * - `not_applicable`：非小规模纳税人，或主体已关闭免征判定。
+   */
+  smallScaleExemption:
+    | 'within'
+    | 'beyond'
+    | 'unknown'
+    | 'not_applicable';
+  /** T9：免征额度未判定时的原因（`smallScaleExemption = 'unknown'` 时有值） */
+  smallScaleExemptionReason: string | null;
   payableTax: number;
   closingCredit: number;
   reconciled: boolean;
@@ -3454,6 +3896,41 @@ export interface VatDeclarationResult {
     amount: number;
     reason: string | null;
   }>;
+  /**
+   * 附加税费（城建税 / 教育费附加 / 地方教育附加）。
+   *
+   * `blocked = true` 表示**要件缺失、拒绝出数**（如主体未配城建税率），
+   * 此时 `blockedReason` 有值且下面三个金额不可用 —— 不可当作 0 处理。
+   */
+  surcharge: {
+    blocked: boolean;
+    blockedReason: string | null;
+    /** 主体城建税率（百分数，7/5/1）；null = 未配置 */
+    urbanMaintRate: number | null;
+    urbanMaint: number;
+    education: number;
+    localEducation: number;
+    total: number;
+    /** 仅为「合法的 0」出现（期末留抵 / 免税） */
+    skippedReason: string | null;
+    /** 本次适用的减免，逐条可解释 */
+    adjustments: string[];
+    /**
+     * 计提凭证状态：`created` = 凭证已就绪（含重复确认命中去重）；
+     * `skipped` = 本期无附加税可提（留抵 / 免税）；`failed` = 生成失败已进补偿队列；
+     * `not_attempted` = 尚未确认（底稿预览）。
+     */
+    accrualVoucher: 'created' | 'skipped' | 'failed' | 'not_attempted';
+  };
+  /**
+   * T-S3：月末转出未交增值税凭证状态（借 222103 / 贷 222104）。
+   *
+   * `created` = 结转凭证已就绪（含重复确认命中去重）；
+   * `skipped` = 本期无税可转（期末留抵 / 免税）；
+   * `failed` = 生成失败已进补偿队列；
+   * `not_attempted` = 尚未确认（底稿预览）。
+   */
+  transferVoucher: 'created' | 'skipped' | 'failed' | 'not_attempted';
   generatedAt: string;
   generatedBy: string | null;
 }
@@ -3484,6 +3961,14 @@ export interface EmployeeTaxDeductionItem {
   startMonth: number;
   endMonth: number | null;
   remark: string | null;
+  /** 赡养老人：是否独生子女。null = 未声明（历史数据），下次编辑必须声明 */
+  isOnlyChild: boolean | null;
+  /** 赡养老人：非独生子女本人分摊额（元/月，上限 1500） */
+  shareAmount: number | null;
+  /** 子女教育 / 婴幼儿照护：人数，上限 = 标准 × 人数 */
+  dependentCount: number;
+  /** 本人扣除比例（0~1，父母各扣 50% 填 0.5） */
+  shareRatio: number;
 }
 
 export interface UpsertTaxDeductionDto {
@@ -3494,6 +3979,14 @@ export interface UpsertTaxDeductionDto {
   startMonth?: number;
   endMonth?: number | null;
   remark?: string;
+  /** 赡养老人必填：是否独生子女 */
+  isOnlyChild?: boolean | null;
+  /** 非独生子女赡养老人必填：本人分摊额（元/月） */
+  shareAmount?: number | null;
+  /** 子女教育 / 婴幼儿照护：人数，默认 1 */
+  dependentCount?: number;
+  /** 本人扣除比例，默认 1 */
+  shareRatio?: number;
 }
 
 export interface PayrollTaxPreview {
@@ -3872,6 +4365,54 @@ export interface VoucherSourceRef {
 /** A-11：凭证行备注编辑入参 */
 export interface UpdateVoucherLineDto {
   summary?: string;
+}
+
+/* ========== B-1 / REQ-BE-01：凭证主体归属自检 ========== */
+
+/**
+ * 未归属纳税主体的凭证（逐张下钻用）。
+ *
+ * 这些凭证**不会出现在任何主体的报表里**（`fin_voucher.tax_entity_id IS NULL`），
+ * 因此必须在界面上显式暴露，否则等同于“凭证静默消失”。
+ */
+export interface UnassignedEntityVoucher {
+  id: string;
+  code: string;
+  period: string;
+  voucherDate: string;
+  /** `NULL` 在视图/接口里统一归一为 `(manual)` */
+  sourceType: string;
+  sourceRef: string | null;
+  summary: string;
+  /** 该凭证借方合计（单边口径，与视图一致） */
+  totalDebit: number;
+}
+
+/** 未归属凭证的「期间 × 来源类型」聚合行 */
+export interface UnassignedEntityGroup {
+  period: string;
+  sourceType: string;
+  voucherCount: number;
+  totalDebit: number;
+}
+
+/**
+ * 凭证主体归属自检结果（GET /api/voucher/unassigned-entity）。
+ *
+ * `consistent = voucherCount === 0` 表示本期无缺口；前端据此决定是否弹提示。
+ */
+export interface UnassignedEntityCheckResult {
+  /** 本次检查限定的期间；未指定为 null（全量） */
+  period: string | null;
+  /** 本次检查限定的来源类型；未指定为 null（全部） */
+  sourceType: string | null;
+  voucherCount: number;
+  totalDebit: number;
+  consistent: boolean;
+  /** 按「期间 + 来源类型」聚合（与视图 `v_fin_voucher_unassigned_entity` 同口径） */
+  groups: UnassignedEntityGroup[];
+  /** 逐张明细（下钻），按期间 + 凭证编码排序 */
+  vouchers: UnassignedEntityVoucher[];
 }
 
 /* ========== 批次一 A 线补充契约：模板行 / 年结留痕 / 申报历史 / 试算平衡 ========== */
@@ -4271,11 +4812,6 @@ export interface BindFeishuContactDto {
   openId: string;
   unionId?: string;
   name?: string;
-}
-
-/** 员工/客户/供应商启停入参（PATCH .../status） */
-export interface SetEntityStatusDto {
-  status: 'active' | 'inactive';
 }
 
 /* ========== 批次三 D-08：固定资产减值、处置与全生命周期 ========== */

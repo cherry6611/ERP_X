@@ -160,9 +160,9 @@ export const ROUTE_CAPABILITY_RULES: RouteCapabilityRule[] = [
   },
   {
     prefix: 'api/data-asset',
-    read: 'audit',
+    read: 'data_asset',
     write: null,
-    note: '数据资产沿用 audit 能力码（既有 NAV_CAPABILITY 约定）',
+    note: '数据资产：已从 audit 分离为独立能力码（仍仅 admin —— 该模块无行级范围）',
   },
   {
     prefix: 'api/notifications',

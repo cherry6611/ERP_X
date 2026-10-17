@@ -195,6 +195,27 @@ describe('C-05 退货分录', () => {
     expect(isBalanced(lines)).toBe(true);
   });
 
+  it('T-S4：净额科目可指定为原采购入账科目（费用化 6602 / 资本化 1601）', () => {
+    // 费用化采购退货：贷方必须是 6602 而不是 1403，否则费用只借不冲
+    const expenseLines = purchaseReturnLines(1000, 60, { netAccountCode: '6602' });
+    expect(isBalanced(expenseLines)).toBe(true);
+    expect(expenseLines.find((l) => l.accountCode === '6602')?.credit).toBe(1000);
+    expect(expenseLines.find((l) => l.accountCode === '1403')).toBeUndefined();
+    expect(expenseLines.find((l) => l.accountCode === '2202')?.debit).toBe(1060);
+    expect(expenseLines.find((l) => l.accountCode === '222102')?.credit).toBe(60);
+
+    // 设备资本化退货：贷方必须是 1601 固定资产
+    const assetLines = purchaseReturnLines(1000, 60, { netAccountCode: '1601' });
+    expect(isBalanced(assetLines)).toBe(true);
+    expect(assetLines.find((l) => l.accountCode === '1601')?.credit).toBe(1000);
+    expect(assetLines.find((l) => l.accountCode === '6602')).toBeUndefined();
+  });
+
+  it('T-S4：未指定净额科目时回落 1403（旧行为，仅用于无原凭证的兜底）', () => {
+    const lines = purchaseReturnLines(1000, 60);
+    expect(lines.find((l) => l.accountCode === '1403')?.credit).toBe(1000);
+  });
+
   it('销售退货：借 6001 净额 + 借 222101 税额 / 贷 1122 含税，且借贷平衡', () => {
     const lines = salesReturnLines(1000, 60);
     expect(isBalanced(lines)).toBe(true);

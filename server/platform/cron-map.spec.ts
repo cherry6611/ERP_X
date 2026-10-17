@@ -17,6 +17,8 @@ describe('cron map', () => {
       // C-04 / D-02：票据到期提醒（每日 09:00）
       'note_due_reminder_daily',
       'project_drive_sync_daily',
+      // S4：凭证补偿对账（每 15 分钟重放失败队列）
+      'reconcile_voucher_ar',
       // B-07：数据保留与归档（每日 03:30）
       'retention_daily',
       'session_cleanup_daily',

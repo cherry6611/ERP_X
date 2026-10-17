@@ -1,4 +1,5 @@
 import { splitTax } from '@shared/tax';
+import { round2 } from '@server/common/utils/number';
 import {
   ACCOUNT_ACCUM_DEPRECIATION,
   ACCOUNT_ADMIN_EXPENSE,
@@ -20,9 +21,6 @@ import {
   ACCOUNT_VAT_OUTPUT,
 } from './account-codes';
 
-function round2(value: number): number {
-  return Math.round(value * 100) / 100;
-}
 
 export interface PostingLine {
   /** 语义科目编码（可为汇总科目，由 AccountResolverService 下钻到末级） */
@@ -48,18 +46,30 @@ export function outputIssueLines(gross: number, rate: number): PostingLine[] {
 }
 
 /**
- * ⚠️ **方案 A 下为死代码，禁止接线到销项作废路径。**
+ * ⚠️ **现役用于「收入冲回」；禁止接线到销项发票作废路径。**
  *
- * 本函数是「销项开票即确认收入」时代的分录。方案 A 之后，收入确认是唯一收入入口，
- * 销项开票只登记台账、**不生成任何凭证**（见 `finance/invoice.service.ts` 开票路径），
- * 因此销项发票作废时**不能**生成本函数的分录 —— 那会把该发票从未入账的
- * 6001 / 222101 / 1122 反向冲掉，等于凭空冲减「收入确认」已确认的收入（比原缺陷更严重）。
+ * ## 它现在是活代码（原注释自称"死代码"，会误导后来者删掉它）
+ *
+ * 审计 §4.2 复核结论：本函数有**两处真实调用**，都在收入侧：
+ *   · `revenues.service.ts:336` —— `revenue-reverse:{code}` 收入冲回
+ *   · `revenues.service.ts:386` —— `revenue-adjust:{code}` 收入调整冲回
+ * 因为收入确认（`revenues.service.ts:200`）用的是 `outputIssueLines`
+ * （借 1122 / 贷 6001 + 贷 222101），其冲回**必须**是等额反向，
+ * 这正是本函数的分录。`posting.spec.ts:69-76` 用「红冲分录是正向分录的等额反向」
+ * 钉死了这一点。**删除它会直接破坏收入冲回。**
+ *
+ * ## 为什么不能接到销项发票作废
+ *
+ * 本函数是「销项开票即确认收入」时代的分录。方案 A 之后收入确认是唯一收入入口，
+ * 销项开票只登记台账、**不生成任何凭证**，因此销项发票作废时**不能**用本分录 ——
+ * 那会把该发票从未入账的 6001 / 222101 / 1122 反向冲掉，等于凭空冲减
+ * 「收入确认」已确认的收入（比原缺陷更严重）。
  *
  * 现状下进项（`inputVoidLines`）必须冲、销项不必冲，这个"不对称"是正确的：
  * 进项开票时入了账（借库存/进项税、贷应付），销项开票时没入账。
- * 两者在底稿层面的口径差异由增值税底稿显式披露，而不是靠补一笔假凭证去"抹平"。
- *
- * 保留函数仅为兼容既有单测对分录方向的锁定；新代码不要调用。
+ * 两者在底稿层面的口径差异由增值税底稿显式披露（见
+ * `vat-declaration.service.ts` 的 `uncertified_input_pending` /
+ * `sales_not_invoiced` 差异项），而不是靠补一笔假凭证去"抹平"。
  */
 export function outputVoidLines(gross: number, rate: number): PostingLine[] {
   const { net, tax } = splitTax(gross, rate);
@@ -173,14 +183,6 @@ export function cashReceiptLines(amount: number): PostingLine[] {
   ];
 }
 
-/** 工资计提：借 6401 主营业务成本，贷 2211 应付职工薪酬。 */
-export function payrollAccrualLines(amount: number): PostingLine[] {
-  return [
-    { accountCode: ACCOUNT_COST_MAIN, debit: amount },
-    { accountCode: ACCOUNT_PAYROLL_PAYABLE, credit: amount },
-  ];
-}
-
 /* ========== D-08：固定资产减值与处置（口径需财务确认，见迁移注释） ========== */
 
 /**
@@ -204,9 +206,16 @@ export interface AssetDisposalInput {
   accumulatedDepreciation: number;
   /** 已计提减值准备 */
   impairmentProvision: number;
-  /** 处置收入（不含税）；报废/捐赠为 0 */
+  /**
+   * 处置收入（**不含税**净额）；报废/捐赠为 0。
+   *
+   * 与 `outputTax` 的分工必须严格区分（历史上这里出过一次错，见下方 gainLoss 推导注释）：
+   *   · `disposalIncome` = 不含税净额（如价税合计 53,000、销项税 3,000 → 50,000）
+   *   · `outputTax`      = 从价税合计中倒算出的销项税额
+   * 银行实收 = `disposalIncome + outputTax`。
+   */
   disposalIncome: number;
-  /** 销项税额（处置收入倒算）；无收入为 0 */
+  /** 销项税额（由价税合计倒算）；无收入为 0 */
   outputTax: number;
   /** sale=出售转让 / scrap=报废 / donate=捐赠 */
   disposalType: 'sale' | 'scrap' | 'donate';
@@ -228,9 +237,17 @@ export interface AssetDisposalPosting {
  *              1603 贷方余额（净收益）→ 贷 6301 营业外收入
  *
  * 净损益推导（单测据此断言）：
- *   gainLoss = 处置收入 − 销项税 − (原值 − 累计折旧 − 减值准备)
- *            = disposalIncome − outputTax − netBookValue
- * 净损失走 6711、净收益走 6301，金额恒为 |gainLoss|。
+ *   gainLoss = 处置收入(不含税) − 净值 = disposalIncome − netBookValue
+ *
+ * ⚠️ `outputTax` **不进入** gainLoss：销项税是代收代缴的价外税，从买方收进来、
+ * 全额交给税务局，既不是收益也不是费用。这一点曾经写错成
+ * `disposalIncome − outputTax − netBookValue`，同时 1603 只按不含税入账，
+ * 后果有两个且都不报错：
+ *   ① 出售当期损益被凭空少计一个税额（本函数返回的 gainLoss 与账面 6301/6711 不符）；
+ *   ② 分录**借贷不平** —— 借 1002(含税) vs 贷 1603(不含税) + 贷 222101(税) 少了
+ *      「结转清理余额」那一笔的找平量，差额恰为 outputTax。
+ * 正确写法是：1603 贷记不含税收入、gainLoss 不含税、银行借记价税合计，
+ * 三笔一起自然平衡（单测 '出售有销项税' 用 debitTotal === creditTotal 钉死）。
  */
 export function assetDisposalLines(input: AssetDisposalInput): AssetDisposalPosting {
   const {
@@ -243,7 +260,7 @@ export function assetDisposalLines(input: AssetDisposalInput): AssetDisposalPost
   const netBookValue = round2(
     originalValue - accumulatedDepreciation - impairmentProvision
   );
-  const gainLoss = round2(disposalIncome - outputTax - netBookValue);
+  const gainLoss = round2(disposalIncome - netBookValue);
 
   const lines: PostingLine[] = [];
   // ① 转入清理：把原值、累计折旧、减值准备同时转出到 1603
@@ -273,15 +290,30 @@ export function assetDisposalLines(input: AssetDisposalInput): AssetDisposalPost
     lines.push({ accountCode: ACCOUNT_FIXED_ASSET, credit: originalValue });
   }
   // ② 处置收入（出售转让或报废变卖收入）
-  if (disposalIncome > 0) {
+  //
+  // 1603 固定资产清理 的贷方记**不含税处置收入**（`disposalIncome` 本身就按不含税传入，
+  // 由调用方用 `splitTax(价税合计, 税率).net` 拆出）。银行按**价税合计**入账，
+  // 销项税单列 222101。三者关系：
+  //     借 1002 银行存款 = disposalIncome + outputTax
+  //     贷 1603 清理     = disposalIncome
+  //     贷 222101 销项税 = outputTax
+  // 于是 1603 的贷方恰为不含税收入，与 ③ 结转的 gainLoss 一起把 1603 轧平为 0。
+  //
+  // 反例（曾经的真实写法）：把 `disposalIncome` 当成含税收入、在 1603 里再减一次
+  // outputTax 贷记 —— 那样 1603 少贷一个税额，凭证**借贷不平**（差额 = outputTax），
+  // 且 gainLoss 被少计一个税额。`posting-asset.spec.ts` 已用
+  // `debitTotal(lines) === creditTotal(lines)` 钉死，不允许回归。
+  if (disposalIncome > 0 || outputTax > 0) {
     lines.push({
       accountCode: ACCOUNT_BANK_PRIMARY,
       debit: round2(disposalIncome + outputTax),
     });
-    lines.push({
-      accountCode: ACCOUNT_FIXED_ASSET_DISPOSAL,
-      credit: disposalIncome,
-    });
+    if (disposalIncome !== 0) {
+      lines.push({
+        accountCode: ACCOUNT_FIXED_ASSET_DISPOSAL,
+        credit: round2(disposalIncome),
+      });
+    }
     if (outputTax > 0) {
       lines.push({ accountCode: ACCOUNT_VAT_OUTPUT, credit: outputTax });
     }

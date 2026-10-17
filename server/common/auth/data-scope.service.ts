@@ -1,4 +1,4 @@
-import { ForbiddenException, Inject, Injectable, Logger } from '@nestjs/common';
+import { ForbiddenException, Inject, Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { DRIZZLE_DATABASE, type PostgresJsDatabase } from '@server/platform';
 import { and, eq, inArray, or, sql, type SQL } from 'drizzle-orm';
 import type { PgColumn } from 'drizzle-orm/pg-core';
@@ -9,6 +9,7 @@ import {
   sysUser,
 } from '@server/database/schema';
 import type { RequestActor } from '@server/common/auth/actor';
+import { isProductionRuntime } from '@server/common/utils/runtime-env';
 
 /* ==========================================================================
  * B-02 数据级权限（行级可见范围）
@@ -36,16 +37,35 @@ export type DataScopeType =
    */
   | 'none';
 
-/** B-02：可配置数据权限的资源类型（与迁移里的 chk_sys_data_scope_resource 一致） */
+/** B-02：可配置数据权限的资源类型（与迁移 chk_sys_data_scope_resource 一致） */
 export const DATA_SCOPE_RESOURCES = [
   'project',
   'customer',
   'finance_ledger',
   'employee',
   'attendance',
+  /** B-2：凭证（口径 fin_voucher.tax_entity_id，仅支持 all/custom） */
+  'voucher',
+  /** B-2：账簿（同上；`finance_ledger` 保留给对账单） */
+  'ledger',
+  /** B-2：法定报表（同上） */
+  'report',
+  /** B-2：项目成本（口径 erp_project_cost.project_id） */
+  'cost',
+  /** B-2：项目收入（口径 erp_project_revenue.project_id） */
+  'revenue',
 ] as const;
 
 export type DataScopeResource = (typeof DATA_SCOPE_RESOURCES)[number];
+
+/**
+ * B-2：以**纳税主体**为维度的会计资料资源。
+ *
+ * 这三类资源（凭证/账簿/报表）的表里只有 `tax_entity_id`，没有责任人/部门列，
+ * 因此只支持 `all` 与 `custom`（custom_ids = 纳税主体 id）。
+ * 配成 `self` / `dept` / `dept_and_child` 时只能 fail-closed —— 见 `applyTaxEntityScope`。
+ */
+export const TAX_ENTITY_RESOURCES = ['voucher', 'ledger', 'report'] as const;
 
 export const DATA_SCOPE_TYPES: readonly DataScopeType[] = [
   'all',
@@ -71,8 +91,15 @@ export interface ResolvedScope {
   resourceType: string;
   scope: DataScopeType;
   customIds: string[];
-  /** 结论来源：bypass（管理员）/ config（命中配置）/ policy（未配置时按策略拒绝）/ default（未配置，放行给既有规则） */
-  from: 'bypass' | 'config' | 'policy' | 'default';
+  /**
+   * 结论来源：
+   * - `bypass`：管理员，直接全量；
+   * - `config`：命中 `sys_data_scope` 配置行；
+   * - `policy`：未配置时按 `DATA_SCOPE_UNCONFIGURED_POLICY` 判定；
+   * - `default`：未配置，放行给既有规则（`scope: 'all'`）；
+   * - `unassigned_role`：**登录但未分配任何角色** —— S-3 起一律 fail-closed 返回空集。
+   */
+  from: 'bypass' | 'config' | 'policy' | 'default' | 'unassigned_role';
 }
 
 /** 过滤条件的执行上下文（部门集合已按 scope 需要展开） */
@@ -213,6 +240,93 @@ export function pickScopeColumn(
   return columns.primary;
 }
 
+/* ==========================================================================
+ * B-2：会计资料（凭证/账簿/报表）的纳税主体可见范围
+ * ========================================================================== */
+
+/**
+ * 纳税主体维度的可见范围（已从 `ResolvedScope` 翻译出来，与库无关，可直接单测）。
+ *
+ * 为什么不复用 `applyScope`：`applyScope` 对 `dept` 会回落到 `primary` 列上过滤，
+ * 而凭证没有部门列——回落会静默把“按部门隔离”变成“按某个无关列隔离”，
+ * 过滤器看起来生效、实际不过滤（或恒空）。会计资料上这种“猜出来”的过滤器比拒绝更危险。
+ */
+export type TaxEntityFilter =
+  | { kind: 'unrestricted' }
+  | { kind: 'entities'; taxEntityIds: string[] }
+  | { kind: 'denied' };
+
+/**
+ * 把已解析的范围翻译为纳税主体可见范围。
+ *
+ * - `all`   → 不限
+ * - `custom`→ 显式列出的纳税主体 id（**空列表 = 拒绝**，不是“全部”）
+ * - `none` / `self` / `dept` / `dept_and_child` → 拒绝（会计资料没有这些维度）
+ */
+export function applyTaxEntityScope(scope: ResolvedScope): TaxEntityFilter {
+  if (scope.scope === 'all') return { kind: 'unrestricted' };
+  if (scope.scope === 'custom') {
+    const ids = uniqueStrings(scope.customIds);
+    return ids.length === 0
+      ? { kind: 'denied' }
+      : { kind: 'entities', taxEntityIds: ids };
+  }
+  return { kind: 'denied' };
+}
+
+/**
+ * 把纳税主体可见范围翻译成 SQL 条件（`undefined` = 不加条件；`1 = 0` = 空集）。
+ *
+ * 列表类接口（凭证列表）用这个；单值接口（账簿/报表的出数主体）用 `narrowTaxEntityId`。
+ */
+export function taxEntityScopeCondition(
+  column: ScopeColumn,
+  filter: TaxEntityFilter
+): SQL | undefined {
+  if (filter.kind === 'unrestricted') return undefined;
+  if (filter.kind === 'denied') return SCOPE_FAIL_CLOSED;
+  return scopeIn(column, filter.taxEntityIds);
+}
+
+/** `narrowTaxEntityId` 的结论 */
+export type TaxEntityNarrowResult =
+  | { ok: true; taxEntityId: string | undefined }
+  | { ok: false; message: string };
+
+/**
+ * 把“请求中的纳税主体”收敛到“实际允许的主体”。
+ *
+ * 报表/账簿接口一次只出一份主体报告（`taxEntityId` 是单值），
+ * 所以范围允许多个主体时**不能自己挑一个**（挑错等于给错主体的报表），
+ * 而是要求调用方显式指定；只允许一个主体时才替调用方填上。
+ */
+export function narrowTaxEntityId(
+  filter: TaxEntityFilter,
+  requested: string | undefined,
+  label = '纳税主体'
+): TaxEntityNarrowResult {
+  if (filter.kind === 'unrestricted') {
+    return { ok: true, taxEntityId: requested };
+  }
+  if (filter.kind === 'denied') {
+    return {
+      ok: false,
+      message: `没有查看该会计资料的数据权限（没有可访问的${label}）`,
+    };
+  }
+  const ids = filter.taxEntityIds;
+  if (requested) {
+    return ids.includes(requested)
+      ? { ok: true, taxEntityId: requested }
+      : { ok: false, message: `没有查看${label} ${requested} 的数据权限` };
+  }
+  if (ids.length === 1) return { ok: true, taxEntityId: ids[0] };
+  return {
+    ok: false,
+    message: `当前数据权限可访问多个${label}，请在筛选条件中显式指定其中一个`,
+  };
+}
+
 interface DepartmentRow {
   id: string;
   name: string;
@@ -246,15 +360,62 @@ const DEPARTMENT_CACHE_MS = 60_000;
  * 这样"未配置"与"显式配置为 all"在语义上可区分（审计与排障需要）。
  */
 @Injectable()
-export class DataScopeService {
+export class DataScopeService implements OnModuleInit {
   private readonly logger = new Logger(DataScopeService.name);
   private departmentCache: DepartmentCache | null = null;
   /** 已告警过的资源类型（避免每次请求都刷日志） */
   private readonly unconfiguredDenyWarned = new Set<string>();
+  /** S-3：无角色用户的 fail-closed 告警只打一次（避免每请求刷日志） */
+  private unassignedRoleWarned = false;
 
   constructor(
     @Inject(DRIZZLE_DATABASE) private readonly db: PostgresJsDatabase
   ) {}
+
+  /**
+   * 启动期数据权限覆盖核查（S2 收口）。
+   *
+   * 不强制、不影响已配置资源行为，仅做**告警与可观测**：
+   * 1. 生产环境若未设 `DATA_SCOPE_UNCONFIGURED_POLICY=deny`，未配置资源将 fail-open（全量暴露），
+   *    此处强烈提示运维补齐环境变量（默认已是 deny，但显式声明可避免误配 allow）。
+   * 2. 会计资料类（voucher/ledger/report）一旦未登记任何行级权限配置，在 deny 策略下对非 admin
+   *    返回空集——属预期的安全收紧，但需运维先确认配置已就绪，否则列表会变空。故此处列出未配置项。
+   */
+  async onModuleInit(): Promise<void> {
+    // 用 fail-safe 判定（非显式开发即生产）：NODE_ENV 误配成 'prod' 时
+    // 这条安全告警不能静默消失，否则运维永远不知道自己在 fail-open。
+    const isProd = isProductionRuntime();
+    if (isProd && this.unconfiguredPolicy() !== 'deny') {
+      this.logger.warn(
+        '生产环境未设置 DATA_SCOPE_UNCONFIGURED_POLICY=deny：未配置行级权限的资源将 fail-open（全量暴露）。' +
+          '请设置该环境变量以默认 fail-closed。',
+      );
+    }
+    try {
+      const rows = await this.db
+        .select({ resourceType: sysDataScope.resourceType })
+        .from(sysDataScope)
+        .where(eq(sysDataScope.enabled, 1));
+      const configured = new Set(rows.map((row) => row.resourceType));
+      const accountingUnconfigured = TAX_ENTITY_RESOURCES.filter(
+        (resource) => !configured.has(resource),
+      );
+      if (accountingUnconfigured.length > 0) {
+        this.logger.warn(
+          `会计资料类资源未登记任何行级权限配置：${accountingUnconfigured.join(', ')}。` +
+            '在 DATA_SCOPE_UNCONFIGURED_POLICY=deny 下，这些资源对非 admin 角色将返回空集；' +
+            '若需授权，请先在 sys_data_scope 登记配置。',
+        );
+      }
+      this.logger.log(
+        `数据权限启动校验完成：已启用行级权限的资源 ${[...configured].join(', ') || '（无）'}`,
+      );
+    } catch (error) {
+      this.logger.warn(
+        `数据权限启动校验跳过（DB 暂不可用）：${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
 
   /* ==================== 配置解析 ==================== */
 
@@ -298,7 +459,36 @@ export class DataScopeService {
       customIds: [],
       from: 'default',
     };
-    if (roleList.length === 0) return fallback;
+    // ── S-3（§6.5.1）：**无角色用户必须 fail-closed，而不是拿 `scope: 'all'`** ──
+    //
+    // 原实现在这里 `return fallback`（`scope: 'all'`）**提前返回**，绕过了下方全部
+    // fail-closed 逻辑（`:414-422` 的默认 deny 策略、`:486-531` 对会计资料类
+    // "未配置即返回 scope:'none'"）。
+    //
+    // 触发条件真实存在：`shared/rbac.ts` 对**无角色**用户仍授予 `_default` 能力
+    // （`dashboard` / `drive` / `settings_appearance`），因此这样的人**能登录、
+    // 能进业务接口**。一旦其访问带数据权限的接口，就会拿到"全量可见"——
+    // 比任何有角色但被收窄的用户权限**更宽**，正好与最小权限相反。
+    //
+    // 修法：无角色 → `scope: 'none'`（空集）。这与 `TAX_ENTITY_RESOURCES`
+    // 未配置时的拒绝方向一致，且登录本身不受影响（能力矩阵仍按 `_default` 判定）。
+    if (roleList.length === 0) {
+      if (!this.unassignedRoleWarned) {
+        this.unassignedRoleWarned = true;
+        this.logger.warn(
+          '检测到无角色用户的资源访问请求：已按 fail-closed 返回空集（scope=none）。' +
+            '这类账号仍持有 _default 能力（dashboard/drive/settings_appearance），' +
+            '但不应对任何带行级权限的业务数据可见。如需授权请分配角色。'
+        );
+      }
+      return {
+        roleCode: null,
+        resourceType,
+        scope: 'none',
+        customIds: [],
+        from: 'unassigned_role',
+      };
+    }
 
     const rows = await this.db
       .select({
@@ -315,15 +505,43 @@ export class DataScopeService {
         )
       );
     if (rows.length === 0) {
-      // 未命中配置。P1-7：默认改为 fail-closed，但**只在"该资源类型已启用行级权限"时**收紧。
+      // 未命中配置时的默认策略，分两种情况（缺一不可）：
       //
-      // 为什么加这个前置条件：`sys_data_scope` 在没有任何配置行的环境（新环境、演示库）里
-      // 若直接返回 'none'，所有列表会瞬间变空，看起来像全站故障而不是权限生效。
-      // 因此判据是"这个资源类型已经有配置行了"——一旦开始用行级权限，
-      // 没被显式授权的角色就不能再看到全部数据。
+      // (a) **会计资料类（voucher/ledger/report）默认 fail-closed**。
+      //     理由：这三类是"按纳税主体隔离"最敏感的资产（凭证、账簿、法定报表）。
+      //     原实现的 fail-closed 只在"该资源类型已有配置行"时才生效，等于
+      //     **只要没人配置过，就永远不收紧** —— 而 `sys_data_scope` 里
+      //     voucher/ledger/report 恰恰**从未种子化**（e01 迁移有意留空），
+      //     于是"默认全量可见"成了事实上的永久状态。多主体部署下，
+      //     子公司财务能直接看到母公司全部凭证与报表，且没有任何告警。
+      //     现在改为：未配置该资源 → 会计资料一律拒绝（空集 / 403），
+      //     需要放开的角色必须**显式**登记配置行（当前 access 因此可审计、可撤销）。
       //
-      // 逃生开关：`DATA_SCOPE_UNCONFIGURED_POLICY=allow` 可退回原行为（排障用）。
+      // (b) 其它资源维持"已启用才收紧"，避免新环境/演示库因无配置行而全站列表变空
+      //     （那看起来像故障而不是权限生效）。
+      //
+      // 逃生开关：`DATA_SCOPE_UNCONFIGURED_POLICY=allow` 对 (a)(b) 同时放开（排障用）。
       if (this.unconfiguredPolicy() === 'deny') {
+        const isAccounting = (
+          TAX_ENTITY_RESOURCES as readonly string[]
+        ).includes(resourceType);
+        if (isAccounting) {
+          if (!this.unconfiguredDenyWarned.has(resourceType)) {
+            this.unconfiguredDenyWarned.add(resourceType);
+            this.logger.warn(
+              `会计资料资源 ${resourceType} 未登记任何行级权限配置 → 按 fail-closed 拒绝（空集/403）。` +
+                `如需授权角色访问，请登记 sys_data_scope 配置行；` +
+                `临时排障可设 DATA_SCOPE_UNCONFIGURED_POLICY=allow。`
+            );
+          }
+          return {
+            roleCode: null,
+            resourceType,
+            scope: 'none',
+            customIds: [],
+            from: 'policy',
+          };
+        }
         const inUse = await this.db
           .select({ roleCode: sysDataScope.roleCode })
           .from(sysDataScope)
@@ -421,6 +639,55 @@ export class DataScopeService {
       );
     }
     return condition;
+  }
+
+  /**
+   * B-2：解析会计资料的纳税主体可见范围。
+   *
+   * `from === 'default'`（未配置）与 `bypass`（admin）→ 不限，与既有惯例一致：
+   * 新资源类型在业务方确认可见主体之前不改变行为（迁移 e01 不种子化配置行）。
+   * `from === 'policy'`（该资源已启用行级权限但本角色未配置）→ 由
+   * `applyTaxEntityScope` 转成 `denied`（fail-closed）。
+   */
+  async taxEntityScopeFor(
+    resourceType: DataScopeResource,
+    actor: RequestActor
+  ): Promise<TaxEntityFilter> {
+    const resolved = await this.resolveScope(actor.roles ?? [], resourceType);
+    if (resolved.from === 'default' || resolved.from === 'bypass') {
+      return { kind: 'unrestricted' };
+    }
+    const filter = applyTaxEntityScope(resolved);
+    if (filter.kind === 'denied') {
+      this.logger.warn(
+        `会计资料数据权限拒绝：resource=${resourceType} user=${actor.userId} ` +
+          `role=${resolved.roleCode ?? '-'} scope=${resolved.scope} ` +
+          `（voucher/ledger/report 仅支持 all|custom（纳税主体））`
+      );
+    }
+    return filter;
+  }
+
+  /**
+   * B-2：解析 + 收敛纳税主体，越权或不明确时抛 403。
+   *
+   * 这是账簿/报表/凭证接口的唯一推荐入口：返回的 id 直接当作 SQL 过滤条件使用。
+   */
+  async narrowTaxEntityIdFor(
+    resourceType: DataScopeResource,
+    actor: RequestActor,
+    requested?: string,
+    label?: string
+  ): Promise<string | undefined> {
+    const filter = await this.taxEntityScopeFor(resourceType, actor);
+    const narrowed = narrowTaxEntityId(filter, requested || undefined, label);
+    if (!narrowed.ok) {
+      this.logger.warn(
+        `越权访问被拦截：resource=${resourceType} user=${actor.userId} requested=${requested ?? '-'} ${narrowed.message}`
+      );
+      throw new ForbiddenException(narrowed.message);
+    }
+    return narrowed.taxEntityId;
   }
 
   /**

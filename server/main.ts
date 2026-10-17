@@ -21,6 +21,10 @@ import { AppModule } from './app.module';
 import { PG_CLIENT } from '@server/platform';
 import { bindRateLimitSql } from '@server/common/security/rate-limit';
 import { PostgresRateLimitStore } from '@server/common/security/pg-rate-limit.store';
+import {
+  allowWeakSecrets,
+  isProductionRuntime,
+} from '@server/common/utils/runtime-env';
 
 /** D7：LOG_DIR 已设置时，在控制台之外追加 JSON Lines 到文件 */
 class JsonFileLogger extends ConsoleLogger {
@@ -77,8 +81,20 @@ class JsonFileLogger extends ConsoleLogger {
  * SECRET_ENC_KEY 缺失会让飞书密钥写入直接失败（且失败点分散在业务里，排查成本高）。
  * 这里在启动阶段一次性 fail-fast，避免"带病上线"。
  */
+/**
+ * 修复 S1：原先仅在 NODE_ENV === 'production' 时才强制密钥强度。
+ * 若生产被误配为 'prod'/空值/漏配，弱/空 JWT 密钥会被允许，攻击者可伪造管理员会话。
+ *
+ * 现改为**统一走 `runtime-env.ts` 的 fail-safe 判定**：
+ * 只有显式 `NODE_ENV=development` 才降级，其余（含未设置）一律按生产强制。
+ * `ALLOW_WEAK_SECRETS=true` 仅能在显式开发环境生效 —— 它不再是一个能整体关掉
+ * 生产密钥校验的开关（原来 `NODE_ENV=prod` + `ALLOW_WEAK_SECRETS=true`
+ * 会让 `abortOnError` 与密钥校验一起失效，等于一把钥匙全开）。
+ */
 function assertProductionSecrets(logger: Logger): void {
-  const isProd = process.env.NODE_ENV === 'production';
+  const env = (process.env.NODE_ENV ?? '').trim() || '（未设置）';
+  const allowWeak = allowWeakSecrets();
+  const enforce = isProductionRuntime();
   const jwt = process.env.JWT_SECRET ?? '';
   const enc = process.env.SECRET_ENC_KEY ?? '';
   const weakJwt = new Set([
@@ -90,7 +106,7 @@ function assertProductionSecrets(logger: Logger): void {
     'your_secret',
     'dev-secret',
   ]);
-  if (isProd) {
+  if (enforce) {
     const problems: string[] = [];
     if (jwt.length < 32 || weakJwt.has(jwt.toLowerCase())) {
       problems.push('JWT_SECRET 缺失或强度不足（须 ≥32 字符且非样例值）');
@@ -99,24 +115,30 @@ function assertProductionSecrets(logger: Logger): void {
       problems.push('SECRET_ENC_KEY 缺失或强度不足（须 ≥16 字符且非样例值）');
     }
     if (problems.length > 0) {
-      logger.error(`生产环境密钥校验失败：${problems.join('；')}`);
-      throw new Error(`生产环境密钥校验失败：${problems.join('；')}`);
+      logger.error(
+        `密钥校验失败（NODE_ENV=${env} 按生产标准执行）：${problems.join('；')}` +
+          '。本地开发请显式设置 NODE_ENV=development。'
+      );
+      throw new Error(`密钥校验失败：${problems.join('；')}`);
     }
-    logger.log('生产环境密钥校验通过');
+    logger.log(`密钥校验通过（NODE_ENV=${env} 按生产标准执行）`);
     return;
   }
   if (jwt.length < 32) {
-    logger.warn('开发环境 JWT_SECRET 强度不足（<32 字符），上线前请更换');
+    logger.warn('JWT_SECRET 强度不足（<32 字符），上线前请更换');
   }
   if (enc.length === 0) {
-    logger.warn('开发环境未配置 SECRET_ENC_KEY，飞书密钥写入功能不可用');
+    logger.warn('未配置 SECRET_ENC_KEY，飞书密钥写入功能不可用');
+  }
+  if (allowWeak) {
+    logger.warn('ALLOW_WEAK_SECRETS=true：已显式允许弱密钥，仅限本地开发，禁止用于任何非开发环境');
   }
 }
 
 async function bootstrap() {
   const logDir = process.env.LOG_DIR?.trim();
   const app = await NestFactory.create<NestExpressApplication>(AppModule, {
-    abortOnError: process.env.NODE_ENV !== 'development',
+    abortOnError: isProductionRuntime(),
     bodyParser: false,
     ...(logDir ? { logger: new JsonFileLogger(logDir) } : {}),
   });
@@ -194,6 +216,26 @@ async function bootstrap() {
   );
   app.use(expressStatic(join(process.cwd(), 'dist/client')));
   const logger = new Logger('Bootstrap');
+
+  // M9：显式 CORS 策略，避免「同源隐性可用但不可审计」。
+  // 默认不开启跨域（同源部署最安全）；需独立部署前端时以 CORS_ORIGIN 显式声明允许来源。
+  // 任何非 Allowed 来源都会被浏览器拦截，且携带 credentials 时不允许 '*'。
+  const corsOrigin = process.env.CORS_ORIGIN?.trim();
+  if (corsOrigin) {
+    const origins = corsOrigin
+      .split(',')
+      .map((origin) => origin.trim())
+      .filter(Boolean);
+    app.enableCors({
+      origin: origins,
+      credentials: true,
+      methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+      allowedHeaders: ['Content-Type', 'Authorization'],
+    });
+    logger.log(`已启用 CORS，允许来源：${origins.join(', ')}`);
+  } else {
+    logger.log('CORS 未启用（默认仅同源）：跨域部署前端请配置 CORS_ORIGIN');
+  }
   assertProductionSecrets(logger);
   const host = process.env.SERVER_HOST || 'localhost';
   const port = Number(process.env.SERVER_PORT || '3000');

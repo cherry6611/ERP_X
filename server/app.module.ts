@@ -2,6 +2,7 @@ import { APP_FILTER } from '@nestjs/core';
 import { Module } from '@nestjs/common';
 import { PlatformModule } from './platform';
 import { ActorAccessModule } from './common/auth/actor-access.module';
+import { DataScopeModule } from './common/auth/data-scope.module';
 
 import { AuthModule } from './modules/auth/auth.module';
 import { HealthModule } from './modules/health/health.module';
@@ -49,6 +50,8 @@ import { ReturnModule } from './modules/returns/return.module';
     // 平台 Module，提供平台能力
     PlatformModule.forRoot(),
     ActorAccessModule,
+    // B-02：数据级权限（@Global），DataScopeService 供各业务模块 service 注入；缺失会导致 CostsService 等无法解析
+    DataScopeModule,
     AuthModule,
     HealthModule,
     FilesModule,

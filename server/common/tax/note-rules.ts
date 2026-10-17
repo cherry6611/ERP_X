@@ -45,6 +45,7 @@ import {
   ACCOUNT_FINANCE_EXPENSE,
 } from './account-codes';
 import type { PostingLine } from './posting';
+import { round2 } from '@server/common/utils/number';
 
 /** 票据类型 */
 export const NOTE_TYPES = ['bank', 'commercial'] as const;
@@ -171,9 +172,6 @@ export function discountDays(discountDate: string, dueDate: string): number {
   return days > 0 ? days : 0;
 }
 
-function round2(value: number): number {
-  return Math.round(value * 100) / 100;
-}
 
 export interface DiscountInput {
   /** 票面金额 */
