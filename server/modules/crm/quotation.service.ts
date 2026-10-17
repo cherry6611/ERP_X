@@ -21,6 +21,11 @@ import {
 } from '@server/database/schema';
 import { generateBizCode } from '@server/common/utils/biz-code';
 import { round2 } from '@server/common/utils/number';
+import {
+  contractLineAmount,
+  quotationTotals,
+  rawLineAmount,
+} from './quotation-totals';
 import { TaxResolverService } from '@server/modules/tax/tax-resolver.service';
 import { splitTax } from '@shared/tax';
 import { NotificationsService } from '@server/modules/notifications/notifications.service';
@@ -57,12 +62,13 @@ export class QuotationService {
     private readonly taxResolver: TaxResolverService
   ) {}
 
+  /** 行金额**不取整**；取整时机由 `quotation-totals` 的口径决定（见该模块文件头） */
   private lineAmount(item: {
     quantity: number;
     unitPrice: number;
     discountPct: number;
   }): number {
-    return item.quantity * item.unitPrice * (1 - item.discountPct / 100);
+    return rawLineAmount(item);
   }
 
   /**
@@ -113,27 +119,8 @@ export class QuotationService {
     items: QuotationItemInput[],
     discountPct: number
   ): { totalAmount: number; estimatedCost: number; grossAmount: number } {
-    const headerFactor = 1 - discountPct / 100;
-    let gross = 0;
-    let total = 0;
-    let cost = 0;
-    for (const item of items) {
-      const line = this.lineAmount({
-        quantity: item.quantity,
-        unitPrice: item.unitPrice,
-        discountPct: item.discountPct ?? 0,
-      });
-      // 行金额：逐行取整（报价单行金额本身要落库，必须自洽）
-      gross += round2(line);
-      // 整单折扣：逐行施加并取整 —— **与 `convertLineAmount` 完全同口径**
-      total += round2(line * headerFactor);
-      cost += item.quantity * (item.estUnitCost ?? 0);
-    }
-    return {
-      grossAmount: round2(gross),
-      totalAmount: round2(total),
-      estimatedCost: round2(cost),
-    };
+    /* 口径与推导全部在 `./quotation-totals`（纯函数 + 22 条断言，含用户确认的 111.42） */
+    return quotationTotals(items, discountPct);
   }
 
   /** 转合同明细行金额：行折扣后再乘整单折扣，与 computeTotals 同口径 */
@@ -141,8 +128,7 @@ export class QuotationService {
     item: { quantity: number; unitPrice: number; discountPct: number },
     headerDiscountPct: number,
   ): number {
-    const line = this.lineAmount(item);
-    return round2(line * (1 - headerDiscountPct / 100));
+    return contractLineAmount(item, headerDiscountPct);
   }
 
   private toQuotation(
