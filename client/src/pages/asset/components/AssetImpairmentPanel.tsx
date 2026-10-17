@@ -24,6 +24,14 @@ import { useAsyncData } from '@client/src/hooks/useAsyncData';
 import * as assetApi from '@client/src/api/asset';
 import { getApiErrorMessage } from '@client/src/utils/api-error-message';
 import { confirmDanger } from '@client/src/utils/confirmDanger';
+// B-01：写操作（计提减值会生成凭证、删除减值记录）必须按能力显隐。
+// `pur_asset` 在矩阵中对 finance_viewer / project_manager 是 `r`，
+// 后端写接口要求 `rw` —— 不加这一层会让只读角色看到点了必然 403 的按钮。
+import { CanCapabilityWrite } from '@client/src/platform/auth';
+// 业务时区（Asia/Shanghai）取"今天"与"本月"：`toISOString()` 走 UTC，
+// 北京时间 00:00–08:00 会取到**前一天/上一月**，减值凭证可能被记进上个期间
+// （或被服务端 `assertPeriodOpen` 以"期间已关账"拒绝，且原因看不出来）。
+import { currentPeriod, todayIso } from '@client/src/utils/format';
 import type {
   AssetImpairmentItem,
   AssetItem,
@@ -43,12 +51,8 @@ import type {
 const ImpairmentPanel: React.FC = () => {
   const [open, setOpen] = useState(false);
   const [assetId, setAssetId] = useState<string>('');
-  const [testDate, setTestDate] = useState<string>(
-    new Date().toISOString().slice(0, 10),
-  );
-  const [period, setPeriod] = useState<string>(
-    new Date().toISOString().slice(0, 7),
-  );
+  const [testDate, setTestDate] = useState<string>(todayIso());
+  const [period, setPeriod] = useState<string>(currentPeriod());
   const [recoverableAmount, setRecoverableAmount] = useState<string>('');
   const [remark, setRemark] = useState<string>('');
   const [preview, setPreview] = useState<ImpairmentTestPreview | null>(null);
@@ -130,15 +134,17 @@ const ImpairmentPanel: React.FC = () => {
           减值损失 = 账面价值 − 可收回金额（下限 0）；账面价值 = 原值 − 累计折旧 − 已计提减值。
           凭证：借 6701 资产减值损失 / 贷 1604 固定资产减值准备。
         </p>
-        <Button
-          type="button"
-          onClick={() => {
-            setPreview(null);
-            setOpen(true);
-          }}
-        >
-          计提减值
-        </Button>
+        <CanCapabilityWrite capability="pur_asset">
+          <Button
+            type="button"
+            onClick={() => {
+              setPreview(null);
+              setOpen(true);
+            }}
+          >
+            计提减值
+          </Button>
+        </CanCapabilityWrite>
       </div>
 
       <DataBoundary
@@ -191,14 +197,16 @@ const ImpairmentPanel: React.FC = () => {
                     )}
                   </td>
                   <td className="p-2">
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="ghost"
-                      onClick={() => remove(item)}
-                    >
-                      删除
-                    </Button>
+                    <CanCapabilityWrite capability="pur_asset">
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => remove(item)}
+                      >
+                        删除
+                      </Button>
+                    </CanCapabilityWrite>
                   </td>
                 </tr>
               ))}

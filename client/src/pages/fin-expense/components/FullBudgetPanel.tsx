@@ -9,6 +9,7 @@ import { Input } from '@client/src/components/ui/input';
 import { Label } from '@client/src/components/ui/label';
 import * as budgetApi from '@client/src/api/fin-budget';
 import { getApiErrorMessage } from '@client/src/utils/api-error-message';
+import { currentBizYear } from '@client/src/utils/format';
 import { cn } from '@client/src/lib/utils';
 import type {
   BudgetForecastResult,
@@ -44,7 +45,15 @@ function money(value: number): string {
  *    否则使用者会以为它是精确值。
  */
 const FullBudgetPanel: React.FC = () => {
-  const currentYear = String(new Date().getFullYear());
+  /*
+   * 时区修正：预算年必须取**业务时区**的年份。
+   *
+   * 原为 `String(new Date().getFullYear())` —— 浏览器本地时区。元旦前后
+   * 跨时区用户会拿到上一年/下一年，而服务端的预算与期间闸门全按
+   * Asia/Shanghai，表现为"默认选中的年份查不到数据"。
+   * 详见 `utils/format.ts` 的 `currentBizYear`。
+   */
+  const currentYear = currentBizYear();
   const [year, setYear] = useState(currentYear);
   const [asOf, setAsOf] = useState('');
   const [overview, setOverview] = useState<FullBudgetOverview | null>(null);
@@ -185,16 +194,22 @@ const FullBudgetPanel: React.FC = () => {
         </div>
         <div className="flex items-end gap-2">
           <div className="grid gap-1">
-            <Label className="text-xs">年度</Label>
+            <Label className="text-xs" htmlFor="full-budget-year">
+              年度
+            </Label>
             <Input
+              id="full-budget-year"
               className="w-24"
               value={year}
               onChange={(event) => setYear(event.target.value)}
             />
           </div>
           <div className="grid gap-1">
-            <Label className="text-xs">截止期间（可选，YYYY-MM）</Label>
+            <Label className="text-xs" htmlFor="full-budget-as-of">
+              截止期间（可选，YYYY-MM）
+            </Label>
             <Input
+              id="full-budget-as-of"
               className="w-40"
               value={asOf}
               placeholder="保留空=按数据自然截止"

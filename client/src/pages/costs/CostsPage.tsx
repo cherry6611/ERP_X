@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import ReactECharts from 'echarts-for-react';
+import { EChart } from '@client/src/components/EChart';
 import type { EChartsOption } from 'echarts';
 import PageShell from '@client/src/components/PageShell';
 import { DataState } from '@client/src/components/DataState';
@@ -15,7 +15,10 @@ import { seriesColor } from '@client/src/theme/tokens';
 import { formatMoney } from '@client/src/utils/format';
 import { CHART_COLORS } from '@client/src/utils/chart-colors';
 import type { CostDimension, CostDimensionSummary } from '@shared/api.interface';
-import CostsTab from './CostsTab';
+import { History, Plus, Upload } from 'lucide-react';
+import { Button } from '@client/src/components/ui/button';
+import { CanCapabilityWrite } from '@client/src/platform/auth';
+import CostsTab, { type CostsTabHandle } from './CostsTab';
 import TimesheetsTab from './TimesheetsTab';
 import RatesTab from './RatesTab';
 import AllocationTab from './AllocationTab';
@@ -120,7 +123,7 @@ const CostDimensionAnalysisSection: React.FC = () => {
         skeleton="card"
       >
         <div role="img" aria-label="多维成本分析图">
-          <ReactECharts option={option} theme="ud" className="h-[300px] w-full" />
+          <EChart option={option} className="h-[300px] w-full" />
         </div>
         <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
           {items.map((item: CostDimensionSummary) => (
@@ -139,8 +142,47 @@ const CostDimensionAnalysisSection: React.FC = () => {
 
 const CostsPage: React.FC = () => {
   const [tab, setTab] = useState('items');
+  /*
+   * ⚠️ 必须用**回调 ref + state**，不能用 `useRef` + 直接读 `.current`。
+   *
+   * 原因（我自己踩过）：`useRef` 的赋值**不触发重渲染**。`CostsTab` 只在
+   * 「成本归集」Tab 挂载，切走时 ref 变 null、切回时重新挂载 —— 但父组件
+   * 不会因为 ref 变化而重渲染，于是页头动作**切回来就不出现了**
+   * （实测：切到「工时登记」后按钮消失 ✓，切回「成本归集」后仍是空 ✗）。
+   *
+   * 回调 ref 在挂载/卸载时都会被调用，借此把句柄写进 state，父组件才会重渲染。
+   */
+  const [costsHandle, setCostsHandle] = useState<CostsTabHandle | null>(null);
+  const attachCostsTab = React.useCallback((h: CostsTabHandle | null) => {
+    setCostsHandle(h);
+  }, []);
+  const handle = costsHandle;
+
   return (
-    <PageShell title="成本核算" description="成本归集六类、工时×费率折算、角色费率与公共成本分摊">
+    <PageShell
+      title="成本核算"
+      description="成本归集六类、工时×费率折算、角色费率与公共成本分摊"
+      actions={
+        handle ? (
+          <>
+            <CanCapabilityWrite capability="projects_write">
+              <Button onClick={() => handle.openCreateDialog()}>
+                <Plus className="h-4 w-4" />
+                归集成本
+              </Button>
+            </CanCapabilityWrite>
+            <Button variant="outline" onClick={() => handle.openSyncConfirm()}>
+              <Upload className="h-4 w-4" />
+              同步到多维表格
+            </Button>
+            <Button variant="outline" onClick={() => handle.openSyncRecords()}>
+              <History className="h-4 w-4" />
+              同步记录
+            </Button>
+          </>
+        ) : null
+      }
+    >
       <Tabs value={tab} onValueChange={setTab}>
         <TabsList>
           <TabsTrigger value="items">成本归集</TabsTrigger>
@@ -150,7 +192,8 @@ const CostsPage: React.FC = () => {
           <TabsTrigger value="analysis">多维分析</TabsTrigger>
         </TabsList>
         <TabsContent value="items">
-          <CostsTab />
+          {/* showToolbar=false：页头已有这三个动作，避免同一页出现两处 */}
+          <CostsTab ref={attachCostsTab} showToolbar={false} />
         </TabsContent>
         <TabsContent value="timesheets">
           <TimesheetsTab />

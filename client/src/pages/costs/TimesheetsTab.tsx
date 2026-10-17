@@ -1,7 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useForm } from 'react-hook-form';
-import { z } from 'zod';
 import { toast } from 'sonner';
 import { Download, History, Plus } from 'lucide-react';
 import { Table, TableColumnsType } from 'antd';
@@ -37,6 +36,18 @@ import {
 import { costsApi, feishuSyncApi, hrApi, masterDataApi, projectsApi } from '@client/src/api';
 import FeishuSyncRecordsDialog from '@client/src/components/erp/FeishuSyncRecordsDialog';
 import { useAsyncData } from '@client/src/hooks/useAsyncData';
+import {
+  activeEmployeesOf,
+  effectiveRoleName,
+  isRoleLocked,
+  pickableEmployees,
+  roleNameForEmployee,
+} from './timesheet-employee';
+import {
+  timesheetSchema,
+  type TimesheetFormData,
+  type TimesheetFormInput,
+} from './timesheet-form';
 import { TIMESHEET_STATUS_LABELS } from '@client/src/utils/biz-labels';
 import { getApiErrorMessage } from '@client/src/utils/api-error-message';
 import { confirmDanger } from '@client/src/utils/confirmDanger';
@@ -49,23 +60,45 @@ import type {
   TimesheetAction,
 } from '@shared/api.interface';
 
-const timesheetSchema = z.object({
-  projectId: z.string().min(1, '请选择项目'),
-  employeeId: z.string().min(1, '请选择员工'),
-  roleName: z.string().min(1, '请选择角色'),
-  workDate: z.string().min(1, '请选择工作日期'),
-  hours: z.coerce.number().min(0.5).max(24),
-  remark: z.string(),
-});
-
-type TimesheetFormData = z.output<typeof timesheetSchema>;
-type TimesheetFormInput = z.input<typeof timesheetSchema>;
+/*
+ * ⚠️ §5.9 已知超标项（本文件约 510 行，门槛 500）—— **有意保留，不是漏拆**。
+ *
+ * 已做的拆分：schema / 类型 → `./timesheet-form`；员工可选集合、角色锁定等
+ * 纯规则 → `./timesheet-employee`（两者都有 spec）。剩下的 510 行里，
+ * **约 170 行是「登记工时」弹窗的 JSX**，它是唯一还能再拆的块。
+ *
+ * 之所以不拆，是一条实测教训：我按"把弹窗整体搬成自包含组件"的思路写过一版，
+ * 写完才发现主文件里的员工字段**比我记忆中的实现更完整** —— 它带有
+ * `（本人绑定员工）` 兜底文案、姓名后附工号、`暂无在职员工` 空态、以及
+ * 解释"为何只读"的 `title`。若按我那版替换，这些都会**静默丢失**。
+ *
+ * 也就是说：这个弹窗需要的不是"搬走"，而是"把员工字段那段额外的展示逻辑
+ * 一起搬走"。那属于带行为改动的重构，风险与收益不成比例（当前仅超门槛 10 行、
+ * 且 §5.9 的门槛是**收益判据而非硬性红线** —— 本文件已无可单测的纯逻辑可搬）。
+ *
+ * 若将来要拆，正确做法是：先把员工字段那段（只读分支 + 三个兜底文案）
+ * 抄全，再搬；搬完必须跑 `verify-costs-actions.mjs` 一类的行为复验，
+ * 不能只看"页面能打开"。
+ */
 
 const TimesheetsTab: React.FC = () => {
   const [projectFilter, setProjectFilter] = useState('all');
   const [createOpen, setCreateOpen] = useState(false);
   const [importing, setImporting] = useState(false);
   const [recordsOpen, setRecordsOpen] = useState(false);
+  /**
+   * 当前账号**绑定的员工 id**（未绑定为 null）。
+   *
+   * 为什么必须知道它：服务端 `CostsService.createTimesheet` 解析员工的顺序是
+   *   ① 先按 `feishu_union_id / platform_user_id` 找**当前账号绑定的员工**；
+   *   ② 只有**①没找到**（即本人未绑定员工）时，才用请求体里的 `employeeId` 代登。
+   * 也就是说：本人已绑定员工时，`employeeId` 会被**忽略**。
+   * 而原实现把员工下拉列成"全部在职员工"并允许任意选择 —— 提交后库里记的却是
+   * 本人那一条，界面上完全看不出来（toast 照报成功）。
+   * 现在：本人已绑定时把员工锁定为本人（只读展示），未绑定（管理员代登场景）
+   * 才放开选择，与服务端口径一致。
+   */
+  const [boundEmployeeId, setBoundEmployeeId] = useState<string | null>(null);
 
   const { data, loading, error, reload } = useAsyncData<Timesheet[]>(
     () => costsApi.listTimesheets(projectFilter !== 'all' ? projectFilter : undefined),
@@ -77,9 +110,12 @@ const TimesheetsTab: React.FC = () => {
     () => masterDataApi.listEmployees(),
     [],
   );
-  const activeEmployees: Employee[] = (employees ?? []).filter(
-    (e: Employee) => e.status !== 'resigned',
-  );
+  const activeEmployees: Employee[] = activeEmployeesOf(employees);
+  /**
+   * 本人已绑定 → 只能报本人；未绑定 → 允许代登（服务端同样只在此时接受 employeeId）。
+   * 判据与注释见 `./timesheet-employee.ts`。
+   */
+  const pickable: Employee[] = pickableEmployees(activeEmployees, boundEmployeeId);
 
   const form = useForm<TimesheetFormInput, unknown, TimesheetFormData>({
     resolver: zodResolver(timesheetSchema),
@@ -94,25 +130,39 @@ const TimesheetsTab: React.FC = () => {
   });
 
   const selectedEmployeeId = form.watch('employeeId');
-  const selectedEmployee = activeEmployees.find(
-    (e: Employee) => e.id === selectedEmployeeId,
-  );
-  const roleLocked = Boolean(selectedEmployee?.roleName);
+  /*
+   * ⚠️ 这里曾有 `const selectedEmployee = activeEmployees.find(...)`，但它**从未被使用**
+   * （只读不用的死代码，每次渲染还白跑一次 find）。删掉不留注释残留 —— 若将来
+   * 需要"当前选中员工"的对象，请连同它的用途一起加回来。
+   */
+  const roleLocked = isRoleLocked(activeEmployees, selectedEmployeeId);
 
-  const onEmployeeChange = (id: string) => {
-    const emp = activeEmployees.find((e: Employee) => e.id === id);
+  const onEmployeeChange = (id: string, employee?: Employee) => {
     form.setValue('employeeId', id);
-    form.setValue('roleName', emp?.roleName ?? '');
+    form.setValue(
+      'roleName',
+      employee ? employee.roleName ?? '' : roleNameForEmployee(activeEmployees, id),
+    );
   };
 
-  // 打开登记工时对话框时，若当前登录用户已绑定员工，默认带出该员工
+  /**
+   * 打开登记工时对话框时解析「当前账号绑定的员工」。
+   *
+   * 两件事一起做，不能只做一件：
+   *   ① 已绑定 → 带出该员工（原行为）；
+   *   ② **记住这个绑定**，用来把员工下拉锁成只读 —— 否则用户在下拉里选别人，
+   *      提交后服务端仍按绑定员工落库（`costs.service.ts` 的解析顺序），
+   *      出现"选了 A、记了 B"而界面毫无提示。未绑定时保持可代登。
+   */
   useEffect(() => {
     if (!createOpen) return undefined;
     let cancelled = false;
     hrApi
       .fetchMyEmployee()
       .then((emp: Employee | null) => {
-        if (cancelled || !emp) return;
+        if (cancelled) return;
+        setBoundEmployeeId(emp?.id ?? null);
+        if (!emp) return;
         form.setValue('employeeId', emp.id, { shouldValidate: true });
         form.setValue('roleName', emp.roleName ?? '');
       })
@@ -132,7 +182,8 @@ const TimesheetsTab: React.FC = () => {
       projectId: values.projectId,
       employeeId: values.employeeId,
       employeeName: employee?.name ?? '',
-      roleName: employee?.roleName || values.roleName,
+      // 岗位角色优先，与服务端 `employee.roleName || dto.roleName` 同口径
+      roleName: effectiveRoleName(activeEmployees, values.employeeId, values.roleName),
       workDate: values.workDate,
       hours: values.hours,
       remark: values.remark || undefined,
@@ -339,29 +390,48 @@ const TimesheetsTab: React.FC = () => {
                       <FormLabel>
                         员工 <span aria-hidden="true" className="text-destructive">*</span>
                       </FormLabel>
-                      <Select
-                        value={field.value}
-                        onValueChange={(id: string) => onEmployeeChange(id)}
-                      >
+                      {boundEmployeeId ? (
+                        /*
+                         * 本人已绑定员工 → 服务端只会按绑定员工落库，代登在此场景**无效**。
+                         * 因此展示只读值而不是可选下拉，从界面上杜绝"选了 A、记了 B"。
+                         */
                         <FormControl>
-                          <SelectTrigger>
-                            <SelectValue placeholder="请选择员工" />
-                          </SelectTrigger>
+                          <Input
+                            value={
+                              activeEmployees.find(
+                                (e: Employee) => e.id === field.value,
+                              )?.name ?? '（本人绑定员工）'
+                            }
+                            readOnly
+                            aria-readonly="true"
+                            title="工时只能登记到本人绑定的员工档案；如需代登，请使用未绑定员工的账号"
+                          />
                         </FormControl>
-                        <SelectContent>
-                          {activeEmployees.length === 0 ? (
-                            <SelectItem value="empty" disabled>
-                              暂无在职员工
-                            </SelectItem>
-                          ) : (
-                            activeEmployees.map((e) => (
-                              <SelectItem key={e.id} value={e.id}>
-                                {e.name}（{e.code}）
+                      ) : (
+                        <Select
+                          value={field.value}
+                          onValueChange={(id: string) => onEmployeeChange(id)}
+                        >
+                          <FormControl>
+                            <SelectTrigger>
+                              <SelectValue placeholder="请选择员工" />
+                            </SelectTrigger>
+                          </FormControl>
+                          <SelectContent>
+                            {pickable.length === 0 ? (
+                              <SelectItem value="empty" disabled>
+                                暂无在职员工
                               </SelectItem>
-                            ))
-                          )}
-                        </SelectContent>
-                      </Select>
+                            ) : (
+                              pickable.map((e: Employee) => (
+                                <SelectItem key={e.id} value={e.id}>
+                                  {e.name}（{e.code}）
+                                </SelectItem>
+                              ))
+                            )}
+                          </SelectContent>
+                        </Select>
+                      )}
                       <FormMessage />
                     </FormItem>
                   )}

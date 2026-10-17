@@ -1,30 +1,39 @@
+/**
+ * 报销单台账（§5.9 / F8）。
+ *
+ * 主文件只做**布局编排 + 筛选区 + 列定义 + 行内动作**；「新增报销单」弹窗
+ * （表单 schema / 默认值 / `useForm` / 提交处理 / 全部表单 JSX）已抽到
+ * `./dialogs/CreateExpenseClaimDialog.tsx`，抽出后本文件在 500 非空行以内。
+ *
+ * ## 抽出时保持不动的三件事
+ *
+ * ① **重置时机**：原实现的表单重置在**创建成功之后**（`toast.success(…)` →
+ *    `setCreateOpen(false)` → `form.reset(EMPTY_FORM)` → `await reload()` →
+ *    `navigate(…)`），**没有** reset-on-open —— 抽出后仍没有，触发点与顺序
+ *    逐字不变；「取消」按钮与 ESC / 点遮罩关闭同样不重置。
+ * ② **弹窗挂载方式**：`<CreateExpenseClaimDialog/>` **无条件**渲染（与原
+ *    `<Dialog>` 一致），不写成 `{createOpen && …}`；条件挂载会丢掉子组件里
+ *    常驻的 `operating` / `form`，并改变 `Dialog` 的挂载时机。
+ * ③ **`createOpen` 留在本文件**：它的两个触发点分居两侧
+ *    （工具栏按钮 `setCreateOpen(true)`、子组件成功后 `setCreateOpen(false)`），
+ *    故按**同名 props** 透传，而不是把 state 搬进子组件再回调用 `useEffect` 同步。
+ *
+ * 数据查询（`claims` / `departments` / `projects` / `applies`）仍全部留在本文件
+ * —— `projects` 被筛选下拉与弹窗共用，`departments` / `approvedApplies` 供弹窗使用。
+ *
+ * ## 列定义**有意**未抽走
+ *
+ * `columns` 依赖本文件的 `navigate` / `doAction`（行内动作），抽走必须把这两个
+ * 回调一并作为 props 传下去，而收益只是行数；§5.9 的拆分判据是"零耦合的纯函数
+ * 先搬"，本文件的列定义并非零耦合，故保留在此。
+ */
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { zodResolver } from '@hookform/resolvers/zod';
-import { useForm } from 'react-hook-form';
-import { z } from 'zod';
 import { toast } from 'sonner';
 import { Plus } from 'lucide-react';
 import { Table, TableColumnsType } from 'antd';
 import { CanCapability, CanCapabilityWrite } from '@client/src/platform/auth';
-import DateField from '@client/src/components/erp/DateField';
 import { Button } from '@client/src/components/ui/button';
-import {
-  Dialog,
-  DialogContent,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@client/src/components/ui/dialog';
-import {
-  Form,
-  FormControl,
-  FormField,
-  FormItem,
-  FormLabel,
-  FormMessage,
-} from '@client/src/components/ui/form';
-import { Input } from '@client/src/components/ui/input';
 import { Label } from '@client/src/components/ui/label';
 import {
   Select,
@@ -34,14 +43,12 @@ import {
   SelectValue,
 } from '@client/src/components/ui/select';
 import { finExpenseApi, hrApi, projectsApi } from '@client/src/api';
-import { sendApprovalNotification } from '@client/src/api/notifications';
 import { useAsyncData } from '@client/src/hooks/useAsyncData';
 import { confirmDanger } from '@client/src/utils/confirmDanger';
 import { formatMoney } from '@client/src/utils/format';
-import AttachmentHint from '@client/src/components/attachments/AttachmentHint';
 import FinStatusBadge, { CLAIM_STATUS_LABELS } from './FinStatusBadge';
+import CreateExpenseClaimDialog from './dialogs/CreateExpenseClaimDialog';
 import type {
-  CreateExpenseClaimDto,
   Department,
   ExpenseApplyItem,
   ExpenseClaimAction,
@@ -49,30 +56,6 @@ import type {
   PagedResult,
   Project,
 } from '@shared/api.interface';
-
-const NONE = 'none';
-
-const claimSchema = z.object({
-  applyId: z.string(),
-  departmentId: z.string(),
-  projectId: z.string(),
-  expenseCategory: z.string().min(1, '请填写费用科目'),
-  amount: z.coerce.number().min(0, '报销金额不能为负'),
-  expenseDate: z.string().optional(),
-  remark: z.string(),
-});
-
-type ClaimFormData = z.infer<typeof claimSchema>;
-
-const EMPTY_FORM: ClaimFormData = {
-  applyId: NONE,
-  departmentId: NONE,
-  projectId: NONE,
-  expenseCategory: '',
-  amount: 0,
-  expenseDate: undefined,
-  remark: '',
-};
 
 const PAGE_SIZE = 20;
 
@@ -90,7 +73,6 @@ const ExpenseClaimPanel: React.FC = () => {
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [projectFilter, setProjectFilter] = useState<string>('all');
   const [createOpen, setCreateOpen] = useState(false);
-  const [operating, setOperating] = useState(false);
 
   const { data, loading, error, reload } = useAsyncData<
     PagedResult<ExpenseClaimItem>
@@ -116,47 +98,6 @@ const ExpenseClaimPanel: React.FC = () => {
   );
 
   const approvedApplies = applies?.items ?? [];
-
-  const form = useForm<z.input<typeof claimSchema>, unknown, ClaimFormData>({
-    resolver: zodResolver(claimSchema),
-    defaultValues: EMPTY_FORM,
-  });
-
-  const onSubmit = form.handleSubmit(async (values) => {
-    const dto: CreateExpenseClaimDto = {
-      applyId: values.applyId !== NONE ? values.applyId : undefined,
-      departmentId:
-        values.departmentId !== NONE ? values.departmentId : undefined,
-      projectId: values.projectId !== NONE ? values.projectId : undefined,
-      expenseCategory: values.expenseCategory,
-      amount: values.amount,
-      expenseDate: values.expenseDate || undefined,
-      remark: values.remark || undefined,
-    };
-    setOperating(true);
-    try {
-      const item = await finExpenseApi.createClaim(dto);
-      void sendApprovalNotification({
-        bizType: 'expense',
-        bizCode: item.code,
-        title: '报销审批待办',
-        content: `报销单 ${item.code} 已提交审批，金额 ${formatMoney(item.amount)}`,
-      });
-      toast.success(
-        item.status === 'escalated'
-          ? '报销单已提交（超预算，进入升级审批）'
-          : '报销单已提交',
-      );
-      setCreateOpen(false);
-      form.reset(EMPTY_FORM);
-      await reload();
-      navigate(`/fin-expense/claims/${item.id}`, { state: { item } });
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : '提交失败');
-    } finally {
-      setOperating(false);
-    }
-  });
 
   const doAction = async (item: ExpenseClaimItem, action: ExpenseClaimAction) => {
     if (action === 'reject') {
@@ -271,6 +212,34 @@ const ExpenseClaimPanel: React.FC = () => {
               </Button>
             </CanCapabilityWrite>
           ) : null}
+          {/*
+            B12（§7.2）：`approved` 原先在界面上**没有任何后续动作** ——
+            "这笔报销付了没有"无处标记、误批准也无从撤销。
+            现在补齐两个出口，与后端状态机一致：
+              · 标记支付：仅当对应应付单已支付时后端才放行（避免账上先标已付、钱还没出）
+              · 作废：仅未支付时可作废，且会**同事务作废对应应付单**
+          */}
+          {record.status === 'approved' ? (
+            <CanCapabilityWrite capability="finance_write">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => void doAction(record, 'pay')}
+                aria-label={`标记报销单已支付 ${record.code}`}
+              >
+                标记支付
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="text-destructive"
+                onClick={() => void doAction(record, 'void')}
+                aria-label={`作废报销单 ${record.code}`}
+              >
+                作废
+              </Button>
+            </CanCapabilityWrite>
+          ) : null}
         </div>
       ),
     },
@@ -357,183 +326,15 @@ const ExpenseClaimPanel: React.FC = () => {
         }}
       />
 
-      <Dialog open={createOpen} onOpenChange={setCreateOpen}>
-        <DialogContent className="sm:max-w-xl">
-          <DialogHeader>
-            <DialogTitle>新增报销单</DialogTitle>
-          </DialogHeader>
-          <p className="text-sm text-muted-foreground">
-            报销金额超预算时单据将进入升级审批；关联申请时金额不得超过申请额。
-          </p>
-          <Form {...form}>
-            <form onSubmit={onSubmit} className="space-y-4">
-              <div className="flex flex-wrap gap-4">
-                <FormField
-                  control={form.control}
-                  name="applyId"
-                  render={({ field }) => (
-                    <FormItem className="flex-1">
-                      <FormLabel>关联费用申请</FormLabel>
-                      <Select value={field.value} onValueChange={field.onChange}>
-                        <FormControl>
-                          <SelectTrigger>
-                            <SelectValue placeholder="不关联申请" />
-                          </SelectTrigger>
-                        </FormControl>
-                        <SelectContent>
-                          <SelectItem value={NONE}>不关联申请</SelectItem>
-                          {approvedApplies.map((apply: ExpenseApplyItem) => (
-                            <SelectItem key={apply.id} value={apply.id}>
-                              {apply.code}（{apply.expenseCategory} /{' '}
-                              {formatMoney(apply.amount)}）
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-                <FormField
-                  control={form.control}
-                  name="expenseDate"
-                  render={({ field }) => (
-                    <FormItem className="flex-1">
-                      <FormLabel>费用日期</FormLabel>
-                      <DateField value={field.value} onChange={field.onChange} />
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-              </div>
-              <div className="flex flex-wrap gap-4">
-                <FormField
-                  control={form.control}
-                  name="departmentId"
-                  render={({ field }) => (
-                    <FormItem className="flex-1">
-                      <FormLabel>部门</FormLabel>
-                      <Select value={field.value} onValueChange={field.onChange}>
-                        <FormControl>
-                          <SelectTrigger>
-                            <SelectValue placeholder="不限部门" />
-                          </SelectTrigger>
-                        </FormControl>
-                        <SelectContent>
-                          <SelectItem value={NONE}>不限部门</SelectItem>
-                          {(departments ?? []).map((dept: Department) => (
-                            <SelectItem key={dept.id} value={dept.id}>
-                              {dept.name}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-                <FormField
-                  control={form.control}
-                  name="projectId"
-                  render={({ field }) => (
-                    <FormItem className="flex-1">
-                      <FormLabel>项目</FormLabel>
-                      <Select value={field.value} onValueChange={field.onChange}>
-                        <FormControl>
-                          <SelectTrigger>
-                            <SelectValue placeholder="不限项目" />
-                          </SelectTrigger>
-                        </FormControl>
-                        <SelectContent>
-                          <SelectItem value={NONE}>不限项目</SelectItem>
-                          {(projects ?? []).map((proj: Project) => (
-                            <SelectItem key={proj.id} value={proj.id}>
-                              {proj.code} - {proj.name}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-              </div>
-              <div className="flex flex-wrap gap-4">
-                <FormField
-                  control={form.control}
-                  name="expenseCategory"
-                  render={({ field }) => (
-                    <FormItem className="flex-1">
-                      <FormLabel>
-                        费用科目{' '}
-                        <span aria-hidden="true" className="text-destructive">
-                          *
-                        </span>
-                      </FormLabel>
-                      <FormControl>
-                        <Input placeholder="如：差旅费" {...field} />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-                <FormField
-                  control={form.control}
-                  name="amount"
-                  render={({ field }) => (
-                    <FormItem className="flex-1">
-                      <FormLabel>
-                        报销金额（元）{' '}
-                        <span aria-hidden="true" className="text-destructive">
-                          *
-                        </span>
-                      </FormLabel>
-                      <FormControl>
-                        <Input
-                          type="number"
-                          min={0}
-                          value={String(field.value ?? '')}
-                          onChange={field.onChange}
-                          onBlur={field.onBlur}
-                          name={field.name}
-                          ref={field.ref}
-                        />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-              </div>
-              <FormField
-                control={form.control}
-                name="remark"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>备注</FormLabel>
-                    <FormControl>
-                      <Input placeholder="选填" {...field} />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-              <AttachmentHint text="保存后将自动打开详情，可在其中上传发票、行程单、票据等附件" />
-              <DialogFooter>
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={() => setCreateOpen(false)}
-                >
-                  取消
-                </Button>
-                <Button type="submit" disabled={operating}>
-                  {operating ? '提交中...' : '提交报销单'}
-                </Button>
-              </DialogFooter>
-            </form>
-          </Form>
-        </DialogContent>
-      </Dialog>
+      <CreateExpenseClaimDialog
+        createOpen={createOpen}
+        setCreateOpen={setCreateOpen}
+        departments={departments}
+        projects={projects}
+        approvedApplies={approvedApplies}
+        reload={reload}
+        navigate={navigate}
+      />
 
     </div>
   );

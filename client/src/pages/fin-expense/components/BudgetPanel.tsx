@@ -3,7 +3,7 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { useForm } from 'react-hook-form';
 import { z } from 'zod';
 import { toast } from 'sonner';
-import { Pencil, Plus } from 'lucide-react';
+import { Plus } from 'lucide-react';
 import { Table, TableColumnsType } from 'antd';
 import { CanCapability, CanCapabilityWrite } from '@client/src/platform/auth';
 import { Button } from '@client/src/components/ui/button';
@@ -24,7 +24,6 @@ import {
 } from '@client/src/components/ui/form';
 import { Input } from '@client/src/components/ui/input';
 import { Label } from '@client/src/components/ui/label';
-import { Progress } from '@client/src/components/ui/progress';
 import {
   Select,
   SelectContent,
@@ -34,7 +33,8 @@ import {
 } from '@client/src/components/ui/select';
 import { finBudgetApi, hrApi, projectsApi } from '@client/src/api';
 import { useAsyncData } from '@client/src/hooks/useAsyncData';
-import { currentPeriod, formatMoney } from '@client/src/utils/format';
+import { currentPeriod } from '@client/src/utils/format';
+import { budgetColumns } from './budget-columns';
 import type {
   BudgetItem,
   CreateBudgetDto,
@@ -131,7 +131,19 @@ const BudgetPanel: React.FC = () => {
       if (editTarget) {
         await finBudgetApi.updateBudget(editTarget.id, {
           budgetAmount: values.budgetAmount,
-          remark: values.remark || undefined,
+          /*
+           * 空串**必须原样发出**，不能折成 undefined。
+           *
+           * 原先写 `values.remark || undefined`，于是使用者把「备注」清空后：
+           * 空串 → undefined → JSON 序列化时**整个键消失** →
+           * 服务端 `if (dto.remark !== undefined) patch.remark = dto.remark`
+           * 判为"未提供该字段" → **备注没被清掉**。而界面已经 toast
+           * 「预算已更新」，且弹窗文案明写「仅可调整预算金额与备注」——
+           * 使用者以为清空了，实际旧备注还在。
+           *
+           * 服务端 DTO 是 `remark?: string`（可空串），所以发空串即"清空"。
+           */
+          remark: values.remark,
         });
         toast.success('预算已更新');
       } else {
@@ -160,101 +172,7 @@ const BudgetPanel: React.FC = () => {
 
   const items = data?.items ?? [];
 
-  const columns: TableColumnsType<BudgetItem> = [
-    { title: '编号', dataIndex: 'code', fixed: 'left', width: 150 },
-    { title: '期间', dataIndex: 'period', width: 90 },
-    {
-      title: '部门',
-      dataIndex: 'departmentName',
-      width: 130,
-      render: (v: string | null) => v ?? '不限',
-    },
-    {
-      title: '项目',
-      dataIndex: 'projectName',
-      width: 180,
-      render: (v: string | null, record) =>
-        v ?? (record.projectId ? '未知项目' : '不限'),
-    },
-    { title: '费用科目', dataIndex: 'expenseCategory', width: 120 },
-    {
-      title: '预算金额',
-      dataIndex: 'budgetAmount',
-      width: 130,
-      align: 'right',
-      render: (v: number) => formatMoney(v),
-    },
-    {
-      title: '已占用',
-      dataIndex: 'occupiedAmount',
-      width: 130,
-      align: 'right',
-      render: (v: number) => formatMoney(v),
-    },
-    {
-      title: '已执行',
-      dataIndex: 'executedAmount',
-      width: 130,
-      align: 'right',
-      render: (v: number) => formatMoney(v),
-    },
-    {
-      title: '可用金额',
-      dataIndex: 'availableAmount',
-      width: 130,
-      align: 'right',
-      render: (v: number) => (
-        <span className={v < 0 ? 'text-destructive font-medium' : ''}>
-          {formatMoney(v)}
-        </span>
-      ),
-    },
-    {
-      title: '执行率',
-      key: 'usage',
-      width: 150,
-      render: (_v: unknown, record) => {
-        const used = record.occupiedAmount + record.executedAmount;
-        const rate =
-          record.budgetAmount > 0
-            ? Math.min(100, (used / record.budgetAmount) * 100)
-            : 0;
-        return (
-          <div className="flex items-center gap-2">
-            <Progress value={rate} className="w-16" />
-            <span className="text-xs text-muted-foreground">
-              {rate.toFixed(0)}%
-            </span>
-          </div>
-        );
-      },
-    },
-    {
-      title: '备注',
-      dataIndex: 'remark',
-      width: 140,
-      render: (v: string | null) => v ?? '-',
-    },
-    {
-      title: '操作',
-      key: 'action',
-      fixed: 'right',
-      width: 90,
-      render: (_v: unknown, record) => (
-        <CanCapabilityWrite capability="finance_write">
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => openEdit(record)}
-            aria-label={`编辑预算 ${record.code}`}
-          >
-            <Pencil className="mr-1 h-3.5 w-3.5" />
-            编辑
-          </Button>
-        </CanCapabilityWrite>
-      ),
-    },
-  ];
+  const columns: TableColumnsType<BudgetItem> = budgetColumns({ openEdit });
 
   return (
     <div className="flex flex-col gap-4">

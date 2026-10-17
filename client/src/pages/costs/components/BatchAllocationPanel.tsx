@@ -4,7 +4,10 @@ import { Plus, Trash2, Wand2 } from 'lucide-react';
 import { SectionTitle } from '@client/src/components/SectionTitle';
 import { Button } from '@client/src/components/ui/button';
 import { Input } from '@client/src/components/ui/input';
-import { Label } from '@client/src/components/ui/label';
+import {
+  FieldLabel,
+  useFieldId,
+} from '@client/src/components/erp/FieldLabel';
 import {
   Select,
   SelectContent,
@@ -16,6 +19,7 @@ import { costsApi } from '@client/src/api';
 import { formatMoney } from '@client/src/utils/format';
 import { getApiErrorMessage } from '@client/src/utils/api-error-message';
 import { COST_TYPE_LABELS } from '@client/src/utils/biz-labels';
+import { newRowKey } from '@client/src/utils/row-key';
 import type {
   CostType,
   CreateCostAllocationBatchDto,
@@ -23,8 +27,22 @@ import type {
 } from '@shared/api.interface';
 
 interface Row {
+  /**
+   * 行身份（P-2：不得用数组下标作 React key）。
+   *
+   * 本表可“增加一行 / 删除行”：用下标作 key 时 React 会按位置复用 DOM，
+   * 删中间一行后，后面各行的输入框会被复用成上一行的节点 —— 表现为
+   * “删了第 2 行，第 3 行的权重跑到第 2 行”这类不报错但会错报。
+   * 必须在**创建行时**生成并随行保存；在渲染时生成等于每次重渲染 key 都变，
+   * 反而退化成比下标更差的行为。
+   */
+  rowKey: string;
   projectId: string;
   weight: string;
+}
+
+function newRow(): Row {
+  return { rowKey: newRowKey(), projectId: '', weight: '1' };
 }
 
 /**
@@ -49,11 +67,12 @@ const BatchAllocationPanel: React.FC<{
   const [period, setPeriod] = useState('');
   const [costType, setCostType] = useState<CostType>('compute');
   const [amount, setAmount] = useState('');
-  const [rows, setRows] = useState<Row[]>([
-    { projectId: '', weight: '1' },
-    { projectId: '', weight: '1' },
-  ]);
+  const [rows, setRows] = useState<Row[]>([newRow(), newRow()]);
   const [submitting, setSubmitting] = useState(false);
+  // P2-3：字段 id 由 useFieldId 统一生成（React.useId 保证全页唯一）
+  const sourceDescId = useFieldId('alloc-source');
+  const periodId = useFieldId('alloc-period');
+  const amountId = useFieldId('alloc-amount');
 
   const totalAmount = Number(amount);
   const weights = rows.map((r) => Number(r.weight));
@@ -144,10 +163,7 @@ const BatchAllocationPanel: React.FC<{
       );
       setSourceDesc('');
       setAmount('');
-      setRows([
-        { projectId: '', weight: '1' },
-        { projectId: '', weight: '1' },
-      ]);
+      setRows([newRow(), newRow()]);
       await onDone();
     } catch (err) {
       toast.error(getApiErrorMessage(err, '分摊失败'));
@@ -167,8 +183,9 @@ const BatchAllocationPanel: React.FC<{
 
       <div className="flex flex-wrap items-end gap-3">
         <div className="grid gap-1">
-          <Label className="text-xs">来源说明</Label>
+          <FieldLabel htmlFor={sourceDescId}>来源说明</FieldLabel>
           <Input
+            id={sourceDescId}
             className="w-56"
             value={sourceDesc}
             placeholder="如：2026-10 公共云资源"
@@ -176,8 +193,9 @@ const BatchAllocationPanel: React.FC<{
           />
         </div>
         <div className="grid gap-1">
-          <Label className="text-xs">期间</Label>
+          <FieldLabel htmlFor={periodId}>期间</FieldLabel>
           <Input
+            id={periodId}
             className="w-28"
             value={period}
             placeholder="YYYY-MM"
@@ -185,12 +203,12 @@ const BatchAllocationPanel: React.FC<{
           />
         </div>
         <div className="grid gap-1">
-          <Label className="text-xs">成本类型</Label>
+          <FieldLabel>成本类型</FieldLabel>
           <Select
             value={costType}
             onValueChange={(v) => setCostType(v as CostType)}
           >
-            <SelectTrigger className="w-32">
+            <SelectTrigger className="w-32" aria-label="成本类型">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -203,8 +221,9 @@ const BatchAllocationPanel: React.FC<{
           </Select>
         </div>
         <div className="grid gap-1">
-          <Label className="text-xs">待分摊总额</Label>
+          <FieldLabel htmlFor={amountId}>待分摊总额</FieldLabel>
           <Input
+            id={amountId}
             className="w-32"
             inputMode="decimal"
             value={amount}
@@ -215,9 +234,9 @@ const BatchAllocationPanel: React.FC<{
       </div>
 
       <div className="flex flex-col gap-2">
-        <Label className="text-xs">分摊目标与权重</Label>
+        <span className="text-xs font-medium">分摊目标与权重</span>
         {rows.map((row, index) => (
-          <div key={index} className="flex items-center gap-2">
+          <div key={row.rowKey} className="flex items-center gap-2">
             <Select
               value={row.projectId || undefined}
               onValueChange={(v) =>
@@ -226,7 +245,7 @@ const BatchAllocationPanel: React.FC<{
                 )
               }
             >
-              <SelectTrigger className="w-64">
+              <SelectTrigger className="w-64" aria-label={`分摊目标 ${index + 1}`}>
                 <SelectValue placeholder="选择项目" />
               </SelectTrigger>
               <SelectContent>
@@ -271,7 +290,7 @@ const BatchAllocationPanel: React.FC<{
             variant="outline"
             size="sm"
             onClick={() =>
-              setRows((prev) => [...prev, { projectId: '', weight: '1' }])
+              setRows((prev) => [...prev, newRow()])
             }
           >
             <Plus className="mr-1 h-4 w-4" />

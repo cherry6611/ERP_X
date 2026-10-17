@@ -1,7 +1,4 @@
 import React, { useState } from 'react';
-import { zodResolver } from '@hookform/resolvers/zod';
-import { useForm } from 'react-hook-form';
-import { z } from 'zod';
 import { toast } from 'sonner';
 import type { LucideIcon } from 'lucide-react';
 import {
@@ -41,18 +38,9 @@ import {
 import {
   Dialog,
   DialogContent,
-  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from '@client/src/components/ui/dialog';
-import {
-  Form,
-  FormControl,
-  FormField,
-  FormItem,
-  FormLabel,
-  FormMessage,
-} from '@client/src/components/ui/form';
 import { Input } from '@client/src/components/ui/input';
 import { Label } from '@client/src/components/ui/label';
 import {
@@ -63,6 +51,7 @@ import {
   SelectValue,
 } from '@client/src/components/ui/select';
 import { costsApi, feishuSyncApi, projectsApi } from '@client/src/api';
+import CreateCostDialog from './components/CreateCostDialog';
 import FeishuSyncRecordsDialog from '@client/src/components/erp/FeishuSyncRecordsDialog';
 import { useAsyncData } from '@client/src/hooks/useAsyncData';
 import { useListQuery } from '@client/src/hooks/useListQuery';
@@ -73,7 +62,7 @@ import {
   exportRowsToXlsx,
   type ExcelSheetColumn,
 } from '@client/src/components/excel/excel-utils';
-import type { CostItem, CostType, CreateCostDto, Project } from '@shared/api.interface';
+import type { CostItem, Project } from '@shared/api.interface';
 
 const COST_TYPE_ICONS: Record<string, LucideIcon> = {
   labor: Users,
@@ -109,26 +98,49 @@ const COST_EXPORT_COLUMNS: ExcelSheetColumn<CostItem>[] = [
   { header: '供应商', value: (row: CostItem) => row.supplierName ?? '' },
 ];
 
-const costSchema = z.object({
-  projectId: z.string().min(1, '请选择项目'),
-  costType: z.string().min(1, '请选择成本类型'),
-  amount: z.coerce.number().min(1, '金额必须大于 0'),
-  sourceRef: z.string().min(1, '请填写来源摘要'),
-  remark: z.string(),
-});
+/**
+ * 本 Tab 暴露给父页面页头（`PageShell.actions`）的动作句柄。
+ *
+ * ## 为什么用 ref 句柄，而不是把 state 提升到 `CostsPage`
+ *
+ * 「归集成本 / 同步到多维表格 / 同步记录」这三个动作的**弹窗与提交逻辑都在本文件**
+ * （三个 `useState` + `CreateCostDialog` + `FeishuSyncRecordsDialog` + 同步确认框，
+ * 合计约 60 行）。提升 state 意味着把这些一起搬进 `CostsPage`，而 `CostsPage`
+ * 只负责「页头 + 5 个 Tab 切换」，不该知道成本归集的内部细节。
+ *
+ * 句柄只暴露"打开"这一个意图，父子耦合面最小：
+ *   · 页头按钮由父页面渲染（符合 `PageShell.actions` 规范）；
+ *   · 弹窗与状态仍归本 Tab 所有（符合"数据内部自取"的既有约定）。
+ */
+export interface CostsTabHandle {
+  openCreateDialog: () => void;
+  openSyncConfirm: () => void;
+  openSyncRecords: () => void;
+  /** 同步按钮的禁用态（同步中），供页头按钮消费 */
+  isSyncing: () => boolean;
+}
 
-type CostFormData = z.output<typeof costSchema>;
-type CostFormInput = z.input<typeof costSchema>;
+const CostsTab = React.forwardRef<CostsTabHandle, { showToolbar?: boolean }>(
+  ({ showToolbar = true }, ref) => {
+    const { q, setQ, debouncedQ, debouncing } = useListQuery();
+    const [projectFilter, setProjectFilter] = useState<string>('all');
+    const [typeFilter, setTypeFilter] = useState<string>('all');
+    const [createOpen, setCreateOpen] = useState(false);
+    const [syncing, setSyncing] = useState(false);
+    const [syncConfirm, setSyncConfirm] = useState(false);
+    const [recordsOpen, setRecordsOpen] = useState(false);
+    const [attachmentTarget, setAttachmentTarget] = useState<CostItem | null>(null);
 
-const CostsTab: React.FC = () => {
-  const { q, setQ, debouncedQ, debouncing } = useListQuery();
-  const [projectFilter, setProjectFilter] = useState<string>('all');
-  const [typeFilter, setTypeFilter] = useState<string>('all');
-  const [createOpen, setCreateOpen] = useState(false);
-  const [syncing, setSyncing] = useState(false);
-  const [syncConfirm, setSyncConfirm] = useState(false);
-  const [recordsOpen, setRecordsOpen] = useState(false);
-  const [attachmentTarget, setAttachmentTarget] = useState<CostItem | null>(null);
+    React.useImperativeHandle(
+      ref,
+      () => ({
+        openCreateDialog: () => setCreateOpen(true),
+        openSyncConfirm: () => setSyncConfirm(true),
+        openSyncRecords: () => setRecordsOpen(true),
+        isSyncing: () => syncing,
+      }),
+      [syncing],
+    );
 
   const { data, loading, error, reload } = useAsyncData<CostItem[]>(
     () =>
@@ -158,30 +170,6 @@ const CostsTab: React.FC = () => {
   }, [data, debouncedQ]);
   const { data: summary } = useAsyncData(() => costsApi.getCostSummary(), []);
   const { data: projects } = useAsyncData<Project[]>(() => projectsApi.listProjects(), []);
-
-  const form = useForm<CostFormInput, unknown, CostFormData>({
-    resolver: zodResolver(costSchema),
-    defaultValues: { projectId: '', costType: 'compute', amount: 0, sourceRef: '', remark: '' },
-  });
-
-  const onSubmit = form.handleSubmit(async (values) => {
-    const dto: CreateCostDto = {
-      projectId: values.projectId,
-      costType: values.costType as CostType,
-      amount: values.amount,
-      sourceRef: values.sourceRef,
-      remark: values.remark || undefined,
-    };
-    try {
-      await costsApi.createCost(dto);
-      toast.success('成本已归集');
-      setCreateOpen(false);
-      form.reset({ projectId: '', costType: 'compute', amount: 0, sourceRef: '', remark: '' });
-      await reload();
-    } catch (err) {
-      toast.error(getApiErrorMessage(err, '归集失败'));
-    }
-  });
 
   const handleSyncToBase = async () => {
     setSyncing(true);
@@ -322,6 +310,17 @@ const CostsTab: React.FC = () => {
             </SelectContent>
           </Select>
         </div>
+        {/*
+          ⚠️ 这三个是**改变数据的主动作**，按规定应落在页头 `PageShell.actions`，
+          不该长在筛选区里（`AGENTS.md`：PageShell 的 `actions` 插槽放页头右侧主操作）。
+
+          但它们的弹窗与提交逻辑都归本文件所有，所以做法是：
+            · `showToolbar` 为假时（默认，由 `CostsPage` 传 `false`）**不渲染**这里；
+            · 页头由父页面渲染按钮，点到时通过 `ref` 句柄回调本文件的 opener。
+          保留 `showToolbar` 真值分支是为了**单测/独立复用**本组件时仍自带工具栏。
+        */}
+        {showToolbar ? (
+          <>
         <CanCapabilityWrite capability="projects_write">
           <Button onClick={() => setCreateOpen(true)}>
             <Plus className="h-4 w-4" />
@@ -349,6 +348,8 @@ const CostsTab: React.FC = () => {
           <History className="h-4 w-4" />
           同步记录
         </Button>
+          </>
+        ) : null}
       </FilterBar>
       <DataState
         loading={loading}
@@ -369,131 +370,12 @@ const CostsTab: React.FC = () => {
         />
       </DataState>
 
-      <Dialog open={createOpen} onOpenChange={setCreateOpen}>
-        <DialogContent className={dialogSize.md}>
-          <DialogHeader>
-            <DialogTitle>归集成本</DialogTitle>
-          </DialogHeader>
-          <Form {...form}>
-            <form onSubmit={onSubmit} className="space-y-4">
-              <FormField
-                control={form.control}
-                name="projectId"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>
-                      项目 <span aria-hidden="true" className="text-destructive">*</span>
-                    </FormLabel>
-                    <Select onValueChange={field.onChange} value={field.value}>
-                      <FormControl>
-                        <SelectTrigger>
-                          <SelectValue placeholder="请选择项目" />
-                        </SelectTrigger>
-                      </FormControl>
-                      <SelectContent>
-                        {(projects ?? []).map((p) => (
-                          <SelectItem key={p.id} value={p.id}>
-                            {p.name}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-              <div className="flex gap-4">
-                <FormField
-                  control={form.control}
-                  name="costType"
-                  render={({ field }) => (
-                    <FormItem className="flex-1">
-                      <FormLabel>
-                        成本类型 <span aria-hidden="true" className="text-destructive">*</span>
-                      </FormLabel>
-                      <Select onValueChange={field.onChange} value={field.value}>
-                        <FormControl>
-                          <SelectTrigger>
-                            <SelectValue placeholder="请选择" />
-                          </SelectTrigger>
-                        </FormControl>
-                        <SelectContent>
-                          {Object.entries(COST_TYPE_LABELS).map(([value, label]) => (
-                            <SelectItem key={value} value={value}>
-                              {label}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-                <FormField
-                  control={form.control}
-                  name="amount"
-                  render={({ field }) => {
-                    const costType = form.watch('costType');
-                    const isLabor =
-                      costType === 'labor' || costType === 'flex_labor';
-                    return (
-                      <FormItem className="flex-1">
-                        <FormLabel>
-                          {isLabor ? '金额（不含税）' : '金额（含税）'}{' '}
-                          <span aria-hidden="true" className="text-destructive">*</span>
-                        </FormLabel>
-                        <FormControl>
-                          <Input
-                            type="number"
-                            min={0}
-                            value={String(field.value ?? '')}
-                            onChange={field.onChange}
-                            onBlur={field.onBlur}
-                            name={field.name}
-                            ref={field.ref}
-                          />
-                        </FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    );
-                  }}
-                />
-              </div>
-              <FormField
-                control={form.control}
-                name="sourceRef"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>
-                      来源摘要 <span aria-hidden="true" className="text-destructive">*</span>
-                    </FormLabel>
-                    <FormControl>
-                      <Input placeholder="如：10 月云资源账单" {...field} />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-              <FormField
-                control={form.control}
-                name="remark"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>备注</FormLabel>
-                    <FormControl>
-                      <Input placeholder="备注" {...field} />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-              <DialogFooter>
-                <Button type="submit">保存</Button>
-              </DialogFooter>
-            </form>
-          </Form>
-        </DialogContent>
-      </Dialog>
+      <CreateCostDialog
+        open={createOpen}
+        onOpenChange={setCreateOpen}
+        projects={projects}
+        onSaved={reload}
+      />
 
       <FeishuSyncRecordsDialog
         open={recordsOpen}
@@ -543,7 +425,10 @@ const CostsTab: React.FC = () => {
         </AlertDialogContent>
       </AlertDialog>
     </div>
-  );
-};
+    );
+  },
+);
+
+CostsTab.displayName = 'CostsTab';
 
 export default CostsTab;

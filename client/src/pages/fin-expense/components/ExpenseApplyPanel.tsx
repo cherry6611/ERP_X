@@ -1,30 +1,32 @@
+/**
+ * 费用申请台账（§5.9 / F8）。
+ *
+ * 主文件只做**布局编排 + 筛选区 + 列定义 + 行内动作**；「新增申请」弹窗
+ * （表单 schema / 默认值 / `useForm` / 提交处理 / 全部表单 JSX）已抽到
+ * `./dialogs/CreateExpenseApplyDialog.tsx`。
+ *
+ * ## 抽出时保持不动的三件事
+ *
+ * ① **重置时机**：原实现的表单重置在**创建成功之后**（弹窗内
+ *    `toast.success` → `setCreateOpen(false)` → `form.reset(EMPTY_FORM)`），
+ *    **没有** reset-on-open —— 抽出后仍没有，触发点与顺序逐字不变。
+ * ② **弹窗挂载方式**：`<CreateExpenseApplyDialog/>` **无条件**渲染（与原
+ *    `<Dialog>` 一致），不写成 `{createOpen && …}`；条件挂载会丢掉子组件里
+ *    常驻的 `operating` / `form`。
+ * ③ **`createOpen` 留在本文件**：它的两个触发点分居两侧
+ *    （工具栏按钮 `setCreateOpen(true)`、子组件成功后 `setCreateOpen(false)`），
+ *    故按**同名 props** 透传，而不是把 state 搬进子组件再回调用 `useEffect` 同步。
+ *
+ * 数据查询（`applies` / `departments` / `projects`）仍全部留在本文件 ——
+ * `projects` 被筛选下拉与弹窗共用，`departments` 供弹窗使用，均为同名 props 下传。
+ */
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { zodResolver } from '@hookform/resolvers/zod';
-import { useForm } from 'react-hook-form';
-import { z } from 'zod';
 import { toast } from 'sonner';
 import { Plus } from 'lucide-react';
 import { Table, TableColumnsType } from 'antd';
 import { CanCapability, CanCapabilityWrite } from '@client/src/platform/auth';
-import DateField from '@client/src/components/erp/DateField';
 import { Button } from '@client/src/components/ui/button';
-import {
-  Dialog,
-  DialogContent,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@client/src/components/ui/dialog';
-import {
-  Form,
-  FormControl,
-  FormField,
-  FormItem,
-  FormLabel,
-  FormMessage,
-} from '@client/src/components/ui/form';
-import { Input } from '@client/src/components/ui/input';
 import { Label } from '@client/src/components/ui/label';
 import {
   Select,
@@ -33,49 +35,19 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@client/src/components/ui/select';
-import { Textarea } from '@client/src/components/ui/textarea';
 import { finExpenseApi, hrApi, projectsApi } from '@client/src/api';
 import { useAsyncData } from '@client/src/hooks/useAsyncData';
 import { confirmDanger } from '@client/src/utils/confirmDanger';
 import { formatMoney } from '@client/src/utils/format';
-import AttachmentHint from '@client/src/components/attachments/AttachmentHint';
 import FinStatusBadge, { APPLY_STATUS_LABELS } from './FinStatusBadge';
+import CreateExpenseApplyDialog from './dialogs/CreateExpenseApplyDialog';
 import type {
-  CreateExpenseApplyDto,
   Department,
   ExpenseApplyAction,
   ExpenseApplyItem,
   PagedResult,
   Project,
 } from '@shared/api.interface';
-
-const NONE = 'none';
-
-const applySchema = z.object({
-  applyType: z.string().min(1, '请选择申请类型'),
-  title: z.string().min(1, '请填写申请标题'),
-  departmentId: z.string(),
-  projectId: z.string(),
-  expenseCategory: z.string().min(1, '请填写费用科目'),
-  amount: z.coerce.number().min(0, '申请金额不能为负'),
-  expectDate: z.string().optional(),
-  reason: z.string(),
-  remark: z.string(),
-});
-
-type ApplyFormData = z.infer<typeof applySchema>;
-
-const EMPTY_FORM: ApplyFormData = {
-  applyType: 'travel',
-  title: '',
-  departmentId: NONE,
-  projectId: NONE,
-  expenseCategory: '',
-  amount: 0,
-  expectDate: undefined,
-  reason: '',
-  remark: '',
-};
 
 const PAGE_SIZE = 20;
 
@@ -93,7 +65,6 @@ const ExpenseApplyPanel: React.FC = () => {
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [projectFilter, setProjectFilter] = useState<string>('all');
   const [createOpen, setCreateOpen] = useState(false);
-    const [operating, setOperating] = useState(false);
 
   const { data, loading, error, reload } = useAsyncData<
     PagedResult<ExpenseApplyItem>
@@ -113,39 +84,6 @@ const ExpenseApplyPanel: React.FC = () => {
     () => projectsApi.listProjects(),
     [],
   );
-
-  const form = useForm<z.input<typeof applySchema>, unknown, ApplyFormData>({
-    resolver: zodResolver(applySchema),
-    defaultValues: EMPTY_FORM,
-  });
-
-  const onSubmit = form.handleSubmit(async (values) => {
-    const dto: CreateExpenseApplyDto = {
-      applyType: values.applyType as 'travel' | 'purchase',
-      title: values.title,
-      departmentId:
-        values.departmentId !== NONE ? values.departmentId : undefined,
-      projectId: values.projectId !== NONE ? values.projectId : undefined,
-      expenseCategory: values.expenseCategory,
-      amount: values.amount,
-      expectDate: values.expectDate || undefined,
-      reason: values.reason || undefined,
-      remark: values.remark || undefined,
-    };
-    setOperating(true);
-    try {
-      const created = await finExpenseApi.createApply(dto);
-      toast.success('费用申请已提交');
-      setCreateOpen(false);
-      form.reset(EMPTY_FORM);
-      await reload();
-      navigate(`/fin-expense/applies/${created.id}`, { state: { item: created } });
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : '提交失败');
-    } finally {
-      setOperating(false);
-    }
-  });
 
   const doAction = async (item: ExpenseApplyItem, action: ExpenseApplyAction) => {
     if (action === 'reject') {
@@ -359,212 +297,14 @@ const ExpenseApplyPanel: React.FC = () => {
         }}
       />
 
-      <Dialog open={createOpen} onOpenChange={setCreateOpen}>
-        <DialogContent className="sm:max-w-xl">
-          <DialogHeader>
-            <DialogTitle>新增费用申请</DialogTitle>
-          </DialogHeader>
-          <Form {...form}>
-            <form onSubmit={onSubmit} className="space-y-4">
-              <div className="flex flex-wrap gap-4">
-                <FormField
-                  control={form.control}
-                  name="applyType"
-                  render={({ field }) => (
-                    <FormItem className="flex-1">
-                      <FormLabel>
-                        申请类型{' '}
-                        <span aria-hidden="true" className="text-destructive">
-                          *
-                        </span>
-                      </FormLabel>
-                      <Select value={field.value} onValueChange={field.onChange}>
-                        <FormControl>
-                          <SelectTrigger>
-                            <SelectValue placeholder="请选择" />
-                          </SelectTrigger>
-                        </FormControl>
-                        <SelectContent>
-                          <SelectItem value="travel">差旅</SelectItem>
-                          <SelectItem value="purchase">采购</SelectItem>
-                        </SelectContent>
-                      </Select>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-                <FormField
-                  control={form.control}
-                  name="title"
-                  render={({ field }) => (
-                    <FormItem className="flex-1">
-                      <FormLabel>
-                        标题{' '}
-                        <span aria-hidden="true" className="text-destructive">
-                          *
-                        </span>
-                      </FormLabel>
-                      <FormControl>
-                        <Input placeholder="如：北京客户现场交付差旅" {...field} />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-              </div>
-              <div className="flex flex-wrap gap-4">
-                <FormField
-                  control={form.control}
-                  name="departmentId"
-                  render={({ field }) => (
-                    <FormItem className="flex-1">
-                      <FormLabel>部门</FormLabel>
-                      <Select value={field.value} onValueChange={field.onChange}>
-                        <FormControl>
-                          <SelectTrigger>
-                            <SelectValue placeholder="不限部门" />
-                          </SelectTrigger>
-                        </FormControl>
-                        <SelectContent>
-                          <SelectItem value={NONE}>不限部门</SelectItem>
-                          {(departments ?? []).map((dept: Department) => (
-                            <SelectItem key={dept.id} value={dept.id}>
-                              {dept.name}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-                <FormField
-                  control={form.control}
-                  name="projectId"
-                  render={({ field }) => (
-                    <FormItem className="flex-1">
-                      <FormLabel>项目</FormLabel>
-                      <Select value={field.value} onValueChange={field.onChange}>
-                        <FormControl>
-                          <SelectTrigger>
-                            <SelectValue placeholder="不限项目" />
-                          </SelectTrigger>
-                        </FormControl>
-                        <SelectContent>
-                          <SelectItem value={NONE}>不限项目</SelectItem>
-                          {(projects ?? []).map((proj: Project) => (
-                            <SelectItem key={proj.id} value={proj.id}>
-                              {proj.code} - {proj.name}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-              </div>
-              <div className="flex flex-wrap gap-4">
-                <FormField
-                  control={form.control}
-                  name="expenseCategory"
-                  render={({ field }) => (
-                    <FormItem className="flex-1">
-                      <FormLabel>
-                        费用科目{' '}
-                        <span aria-hidden="true" className="text-destructive">
-                          *
-                        </span>
-                      </FormLabel>
-                      <FormControl>
-                        <Input placeholder="如：差旅费" {...field} />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-                <FormField
-                  control={form.control}
-                  name="amount"
-                  render={({ field }) => (
-                    <FormItem className="flex-1">
-                      <FormLabel>
-                        申请金额（元）{' '}
-                        <span aria-hidden="true" className="text-destructive">
-                          *
-                        </span>
-                      </FormLabel>
-                      <FormControl>
-                        <Input
-                          type="number"
-                          min={0}
-                          value={String(field.value ?? '')}
-                          onChange={field.onChange}
-                          onBlur={field.onBlur}
-                          name={field.name}
-                          ref={field.ref}
-                        />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-                <FormField
-                  control={form.control}
-                  name="expectDate"
-                  render={({ field }) => (
-                    <FormItem className="flex-1">
-                      <FormLabel>期望日期</FormLabel>
-                      <DateField value={field.value} onChange={field.onChange} />
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-              </div>
-              <FormField
-                control={form.control}
-                name="reason"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>申请事由</FormLabel>
-                    <FormControl>
-                      <Textarea rows={2} placeholder="选填" {...field} />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-              <FormField
-                control={form.control}
-                name="remark"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>备注</FormLabel>
-                    <FormControl>
-                      <Input placeholder="选填" {...field} />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-              <AttachmentHint text="保存后将自动打开详情，可在其中上传费用发票、票据凭证等附件" />
-              <DialogFooter>
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={() => setCreateOpen(false)}
-                >
-                  取消
-                </Button>
-                <Button type="submit" disabled={operating}>
-                  {operating ? '提交中...' : '提交申请'}
-                </Button>
-              </DialogFooter>
-            </form>
-          </Form>
-        </DialogContent>
-      </Dialog>
-
+      <CreateExpenseApplyDialog
+        createOpen={createOpen}
+        setCreateOpen={setCreateOpen}
+        departments={departments}
+        projects={projects}
+        reload={reload}
+        navigate={navigate}
+      />
     </div>
   );
 };

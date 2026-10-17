@@ -3,68 +3,29 @@ import { toast } from 'sonner';
 import PageShell from '@client/src/components/PageShell';
 import { Badge } from '@client/src/components/ui/badge';
 import { Button } from '@client/src/components/ui/button';
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@client/src/components/ui/dialog';
-import { Input } from '@client/src/components/ui/input';
-import { Label } from '@client/src/components/ui/label';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@client/src/components/ui/select';
-import DataBoundary from '@client/src/components/erp/DataBoundary';
-import StatCard from '@client/src/components/erp/StatCard';
 import { useAsyncData } from '@client/src/hooks/useAsyncData';
 import * as notesApi from '@client/src/api/notes';
 import { getApiErrorMessage } from '@client/src/utils/api-error-message';
-import { cn } from '@client/src/lib/utils';
+// B-01：票据登记与状态动作（持有/背书/贴现/到期收款/拒付）后端均为
+// `@CanCapability('finance_write')`，前端必须同口径显隐，否则 finance_viewer
+// 会看到点了必然 403 的按钮。
+import { CanCapabilityWrite } from '@client/src/platform/auth';
+// 业务时区取"今天"：票据贴现/到期日按 UTC 取会在北京时间凌晨偏一天
+import { todayIso } from '@client/src/utils/format';
+import NoteActionDialog from './components/NoteActionDialog';
+import NoteCreateDialog from './components/NoteCreateDialog';
+import NotesRegisterDeepPanel from './components/NotesRegisterDeepPanel';
+import NotesRegisterLedger from './components/NotesRegisterLedger';
+import NotesRegisterSummary from './components/NotesRegisterSummary';
+import NotesStatusFilter from './components/NotesStatusFilter';
+import NotesTable from './components/NotesTable';
 import type {
   NoteAction,
   NoteDiscountPreview,
   NoteDueAlert,
   NoteItem,
   NoteRegisterResult,
-  NoteStatus,
-  NoteType,
 } from '@shared/api.interface';
-
-const STATUS_TONE: Record<NoteStatus, string> = {
-  received: 'bg-slate-100 text-slate-700',
-  held: 'bg-sky-100 text-sky-700',
-  endorsed: 'bg-violet-100 text-violet-700',
-  discounted: 'bg-amber-100 text-amber-800',
-  settled: 'bg-emerald-100 text-emerald-700',
-  dishonored: 'bg-rose-100 text-rose-700',
-};
-
-const STATUS_LABELS: Record<NoteStatus, string> = {
-  received: '已收到',
-  held: '持有中',
-  endorsed: '已背书',
-  discounted: '已贴现',
-  settled: '已结清',
-  dishonored: '已拒付',
-};
-
-const TYPE_LABELS: Record<NoteType, string> = {
-  bank: '银行承兑',
-  commercial: '商业承兑',
-};
-
-function money(value: number): string {
-  return value.toLocaleString('zh-CN', {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  });
-}
 
 /**
  * C-04 / D-02：应收应付票据工作台。
@@ -76,6 +37,34 @@ function money(value: number): string {
  *    把息费、到账额和将生成的分录提前摊开，是避免算错钱最有效的手段。
  * 3. **备查簿与到期预警同页**：票据管理的核心动作就是"看哪些快到期了"，
  *    分到两个页面会让人忘记看预警。
+ *
+ * ## §5.9（F8）：本文件现在只做**布局编排**（原 934 行 → 约 300 行）
+ *
+ * 上一轮的教训是"只搬纯声明不够 —— JSX 才是体量所在"（`ApTab.tsx` 991 → 391）。
+ * 本轮照同样的办法，把页面拆成下面这些部分，**每段 JSX 逐字搬运、只去一层缩进**：
+ *
+ * | 原位置 | 去向 | 承担什么 |
+ * |---|---|---|
+ * | `STATUS_TONE` / `TYPE_LABELS` / `money` | `note-format.ts`（+ spec） | 零 React 依赖的展示口径，搬走即**可单测** |
+ * | 指标卡 + 到期预警条 | `components/NotesRegisterSummary.tsx` | 只读 `register` / `alerts` |
+ * | 状态筛选行 | `components/NotesStatusFilter.tsx` | 受控筛选（值仍归父组件：它是查询参数） |
+ * | 票据台账表格 + 空态 | `components/NotesTable.tsx` | 只读列表与字典，动作回调交给父组件 |
+ * | 票据备查簿两张表 | `components/NotesRegisterLedger.tsx` | 只读 `register` |
+ * | 备查簿深化（D-02） | `components/NotesRegisterDeepPanel.tsx` | 只读 `deep` |
+ * | 「登记票据」弹窗 | `components/NoteCreateDialog.tsx` | **自持**五个输入值 / `busy` / `submitCreate` |
+ * | 「票据流转」弹窗 | `components/NoteActionDialog.tsx` | JSX + 两个派生值（state 仍在父组件，理由见该文件） |
+ *
+ * **本文件保留**：五路数据查询（`useAsyncData`）、`reloadAll`、以及流转弹窗的
+ * state 与三个处理器（`openAction` / `runDiscountPreview` / `submitAction`）——
+ * 也就是"页面级编排"。流转弹窗的 state 之所以留在这一层而非搬进子组件，
+ * 是因为 `openAction` 在**行内按钮点击的那一刻**重置其中四个字段，
+ * 搬走后这个重置点只能变成副作用或强制重挂载（都是行为变更），
+ * 详见 `components/NoteActionDialog.tsx` 的说明。
+ *
+ * ⚠️ 拆分**不改行为**：所有弹窗都**无条件挂载**（`{open && <X/>}` 会让
+ * "取消后重开仍保留上次输入"这一行为消失）；重置时机一律保持原样
+ * （登记弹窗是**写成功后**清空，流转弹窗是**打开时**清四个字段、
+ * 且 `discountDate` 任何时机都不清）。
  */
 const NotesPage: React.FC = () => {
   const [statusFilter, setStatusFilter] = useState<string>('outstanding');
@@ -84,19 +73,10 @@ const NotesPage: React.FC = () => {
   const [actionKind, setActionKind] = useState<NoteAction>('hold');
   const [counterparty, setCounterparty] = useState('');
   const [discountRate, setDiscountRate] = useState('');
-  const [discountDate, setDiscountDate] = useState(
-    new Date().toISOString().slice(0, 10),
-  );
+  const [discountDate, setDiscountDate] = useState(todayIso());
   const [remark, setRemark] = useState('');
   const [preview, setPreview] = useState<NoteDiscountPreview | null>(null);
   const [busy, setBusy] = useState(false);
-
-  // 新建表单
-  const [noteNo, setNoteNo] = useState('');
-  const [noteType, setNoteType] = useState<NoteType>('bank');
-  const [amount, setAmount] = useState('');
-  const [dueDate, setDueDate] = useState('');
-  const [drawer, setDrawer] = useState('');
 
   const { data: dict } = useAsyncData(() => notesApi.getNoteDictionaries(), []);
   const { data: register, reload: reloadRegister } =
@@ -129,65 +109,11 @@ const NotesPage: React.FC = () => {
     [statusFilter],
   );
 
-  const allNotes: NoteItem[] = notes?.items ?? [];
-  const rows =
-    statusFilter === 'outstanding'
-      ? allNotes.filter(
-          (note) => note.status !== 'settled' && note.status !== 'dishonored',
-        )
-      : allNotes;
-  const alertRows = alerts ?? [];
-  const actionOptions = (dict?.actions ?? []).filter((item) => {
-    if (!actionTarget) return false;
-    if (actionTarget.status === 'settled' || actionTarget.status === 'dishonored') {
-      return false;
-    }
-    return true;
-  });
-  const currentAction = actionOptions.find((item) => item.value === actionKind);
-
   const reloadAll = () => {
     reload();
     reloadRegister();
     reloadDeep();
     reloadAlerts();
-  };
-
-  const submitCreate = async () => {
-    const parsedAmount = Number(amount);
-    if (!noteNo.trim()) {
-      toast.error('请填写票号');
-      return;
-    }
-    if (!Number.isFinite(parsedAmount) || parsedAmount <= 0) {
-      toast.error('票面金额必须大于 0');
-      return;
-    }
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(dueDate)) {
-      toast.error('到期日格式必须为 YYYY-MM-DD');
-      return;
-    }
-    setBusy(true);
-    try {
-      await notesApi.createNote({
-        noteNo: noteNo.trim(),
-        noteType,
-        amount: parsedAmount,
-        dueDate,
-        drawer: drawer || undefined,
-      });
-      toast.success('票据已登记');
-      setCreateOpen(false);
-      setNoteNo('');
-      setAmount('');
-      setDueDate('');
-      setDrawer('');
-      reloadAll();
-    } catch (err) {
-      toast.error(getApiErrorMessage(err, '登记失败'));
-    } finally {
-      setBusy(false);
-    }
   };
 
   const openAction = (note: NoteItem, action: NoteAction) => {
@@ -243,673 +169,65 @@ const NotesPage: React.FC = () => {
       title="应收应付票据"
       description="银行/商业承兑汇票登记、持有、背书、贴现、到期收款与拒付，含备查簿与到期预警"
       actions={
-        <Button type="button" onClick={() => setCreateOpen(true)}>
-          登记票据
-        </Button>
+        <CanCapabilityWrite capability="finance_write">
+          <Button type="button" onClick={() => setCreateOpen(true)}>
+            登记票据
+          </Button>
+        </CanCapabilityWrite>
       }
     >
       <div className="flex flex-col gap-6">
-        {register && (
-          <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-            <StatCard
-              label="票据总额"
-              value={money(register.totalAmount)}
-            />
-            <StatCard
-              label="未结清金额"
-              value={money(register.outstandingAmount)}
-              tone="warning"
-            />
-            <StatCard
-              label="临期/逾期"
-              value={String(alertRows.length)}
-              tone={alertRows.some((a) => a.level === 'overdue') ? 'warning' : 'info'}
-            />
-            <StatCard
-              label="票面张数"
-              value={String(
-                register.byStatus.reduce((sum, item) => sum + item.count, 0),
-              )}
-            />
-          </div>
-        )}
+        <NotesRegisterSummary register={register} alerts={alerts} />
 
-        {alertRows.length > 0 && (
-          <div className="flex flex-col gap-2 rounded-lg border border-amber-300 bg-amber-50 p-4">
-            <h3 className="text-sm font-semibold text-amber-900">
-              到期预警（{alertRows.length} 张）
-            </h3>
-            <div className="flex flex-wrap gap-2">
-              {alertRows.map((alert) => (
-                <span
-                  key={alert.code}
-                  className={cn(
-                    'rounded px-2 py-1 text-xs',
-                    alert.level === 'overdue'
-                      ? 'bg-rose-100 text-rose-800'
-                      : alert.level === 'urgent'
-                        ? 'bg-orange-100 text-orange-800'
-                        : 'bg-amber-100 text-amber-800',
-                  )}
-                >
-                  {alert.noteNo} · {money(alert.amount)} ·{' '}
-                  {alert.daysLeft < 0
-                    ? `已逾期 ${-alert.daysLeft} 天`
-                    : alert.daysLeft === 0
-                      ? '今日到期'
-                      : `${alert.daysLeft} 天后到期`}
-                </span>
-              ))}
-            </div>
-          </div>
-        )}
+        <NotesStatusFilter
+          statusFilter={statusFilter}
+          setStatusFilter={setStatusFilter}
+          dict={dict}
+          basis={basis}
+        />
 
-        <div className="flex items-center gap-3">
-          <Label className="text-sm">状态筛选</Label>
-          <Select value={statusFilter} onValueChange={setStatusFilter}>
-            <SelectTrigger className="w-44">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="outstanding">未结清</SelectItem>
-              <SelectItem value="all">全部</SelectItem>
-              {(dict?.statuses ?? []).map((item) => (
-                <SelectItem key={item.value} value={item.value}>
-                  {item.label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          {basis && (
-            <span className="text-xs text-muted-foreground">{basis.note}</span>
-          )}
-        </div>
-
-        <DataBoundary
+        <NotesTable
+          notes={notes?.items}
+          statusFilter={statusFilter}
           loading={loading}
           error={error}
-          empty={rows.length === 0}
-          emptyText="暂无票据记录"
+          dict={dict}
           onRetry={reload}
-        >
-          <div className="overflow-x-auto rounded-md border">
-            <table className="w-full text-sm">
-              <thead className="bg-muted/50">
-                <tr className="text-left">
-                  <th className="p-2 font-medium">票号</th>
-                  <th className="p-2 font-medium">类型</th>
-                  <th className="p-2 font-medium">出票人</th>
-                  <th className="p-2 text-right font-medium">票面</th>
-                  <th className="p-2 font-medium">到期日</th>
-                  <th className="p-2 font-medium">状态</th>
-                  <th className="p-2 font-medium">关联</th>
-                  <th className="p-2 font-medium">操作</th>
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map((note) => (
-                  <tr key={note.id} className="border-t">
-                    <td className="p-2 font-mono text-xs">
-                      {note.noteNo}
-                      <div className="text-muted-foreground">{note.code}</div>
-                    </td>
-                    <td className="p-2">{TYPE_LABELS[note.noteType]}</td>
-                    <td className="p-2">{note.drawer ?? '—'}</td>
-                    <td className="p-2 text-right tabular-nums">
-                      {money(note.amount)}
-                    </td>
-                    <td className="p-2">
-                      {note.dueDate}
-                      {note.daysToDue <= 15 && note.daysToDue >= -9999 && (
-                        <div
-                          className={cn(
-                            'text-xs',
-                            note.daysToDue < 0
-                              ? 'text-destructive'
-                              : 'text-amber-700',
-                          )}
-                        >
-                          {note.daysToDue < 0
-                            ? `逾期 ${-note.daysToDue} 天`
-                            : `${note.daysToDue} 天后`}
-                        </div>
-                      )}
-                    </td>
-                    <td className="p-2">
-                      <span
-                        className={cn(
-                          'rounded px-1.5 py-0.5 text-xs',
-                          STATUS_TONE[note.status],
-                        )}
-                      >
-                        {STATUS_LABELS[note.status]}
-                      </span>
-                      {note.discountInterest !== null && (
-                        <div className="text-xs text-muted-foreground">
-                          息 {money(note.discountInterest)}
-                        </div>
-                      )}
-                    </td>
-                    <td className="p-2 text-xs">
-                      {note.customerName ?? note.supplierName ?? '—'}
-                      {note.endorsementCounterparty && (
-                        <div className="text-muted-foreground">
-                          背书给 {note.endorsementCounterparty}
-                        </div>
-                      )}
-                    </td>
-                    <td className="p-2">
-                      {note.status === 'settled' || note.status === 'dishonored' ? (
-                        <span className="text-xs text-muted-foreground">
-                          已终态
-                        </span>
-                      ) : (
-                        <div className="flex flex-wrap gap-1">
-                          {(dict?.actions ?? [])
-                            .filter((action) => {
-                              // 只显示当前状态允许的动作，与后端状态机同源
-                              if (action.value === 'endorse') {
-                                return (
-                                  note.status === 'received' ||
-                                  note.status === 'held'
-                                );
-                              }
-                              if (action.value === 'discount') {
-                                return (
-                                  note.status === 'received' ||
-                                  note.status === 'held'
-                                );
-                              }
-                              return true;
-                            })
-                            .map((action) => (
-                              <Button
-                                key={action.value}
-                                type="button"
-                                size="sm"
-                                variant="ghost"
-                                className="h-6 px-1.5 text-xs"
-                                onClick={() => openAction(note, action.value)}
-                              >
-                                {action.label}
-                              </Button>
-                            ))}
-                        </div>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </DataBoundary>
+          onAction={openAction}
+        />
 
-        {register && (
-          <div className="flex flex-col gap-3">
-            <h3 className="text-base font-semibold">票据备查簿</h3>
-            <div className="grid gap-4 lg:grid-cols-2">
-              <div className="overflow-x-auto rounded-md border">
-                <table className="w-full text-sm">
-                  <thead className="bg-muted/50">
-                    <tr className="text-left">
-                      <th className="p-2 font-medium">状态</th>
-                      <th className="p-2 text-right font-medium">张数</th>
-                      <th className="p-2 text-right font-medium">金额</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {register.byStatus.map((item) => (
-                      <tr key={item.status} className="border-t">
-                        <td className="p-2">{item.label}</td>
-                        <td className="p-2 text-right tabular-nums">
-                          {item.count}
-                        </td>
-                        <td className="p-2 text-right tabular-nums">
-                          {money(item.amount)}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-              <div className="overflow-x-auto rounded-md border">
-                <table className="w-full text-sm">
-                  <thead className="bg-muted/50">
-                    <tr className="text-left">
-                      <th className="p-2 font-medium">票据类型</th>
-                      <th className="p-2 text-right font-medium">张数</th>
-                      <th className="p-2 text-right font-medium">金额</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {register.byType.map((item) => (
-                      <tr key={item.noteType} className="border-t">
-                        <td className="p-2">{item.label}</td>
-                        <td className="p-2 text-right tabular-nums">
-                          {item.count}
-                        </td>
-                        <td className="p-2 text-right tabular-nums">
-                          {money(item.amount)}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          </div>
-        )}
+        <NotesRegisterLedger register={register} />
 
-        {/* D-02：备查簿深化 —— 到期结构 / 票号连续性 / 贴现成本 */}
-        {deep && (
-          <div className="flex flex-col gap-4">
-            <h3 className="text-base font-semibold">
-              备查簿深化（D-02）
-            </h3>
-
-            {/* 票号连续性：《票据管理实施办法》要求备查簿连续登记 */}
-            <div
-              className={cn(
-                'rounded-md border p-3',
-                deep.numbering.hasIssues
-                  ? 'border-amber-300 bg-amber-50'
-                  : 'border-border bg-muted/30',
-              )}
-            >
-              <p
-                className={cn(
-                  'text-sm font-medium',
-                  deep.numbering.hasIssues ? 'text-amber-900' : 'text-foreground',
-                )}
-              >
-                票号连续性：{deep.numbering.message}
-              </p>
-              {deep.numbering.duplicates.length > 0 && (
-                <div className="mt-2 flex flex-col gap-1">
-                  {deep.numbering.duplicates.map((item) => (
-                    <p key={item.noteNo} className="text-xs text-amber-800">
-                      · 票号 {item.noteNo} 重复登记 {item.codes.length} 次
-                      （{item.codes.join('、')}），合计 {money(item.amount)}
-                      {item.allVoided ? '（全部已作废，可能是作废后重开）' : '（含未作废票据，需核查是否重复入账）'}
-                    </p>
-                  ))}
-                </div>
-              )}
-              {deep.numbering.gaps.length > 0 && (
-                <div className="mt-2 flex flex-col gap-1">
-                  {deep.numbering.gaps.map((gap) => (
-                    <p
-                      key={`${gap.before}-${gap.after}`}
-                      className="text-xs text-amber-800"
-                    >
-                      · 票号缺口：{gap.before} → {gap.after}，缺 {gap.missing} 个
-                    </p>
-                  ))}
-                </div>
-              )}
-            </div>
-
-            {/* 到期结构 */}
-            <div className="overflow-x-auto rounded-md border">
-              <table className="w-full text-sm">
-                <thead className="bg-muted/50">
-                  <tr className="text-left">
-                    <th className="p-2 font-medium">到期区间</th>
-                    <th className="p-2 text-right font-medium">张数</th>
-                    <th className="p-2 text-right font-medium">金额</th>
-                    <th className="p-2 text-right font-medium">占未结清</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {deep.dueStructure.buckets.map((bucket) => (
-                    <tr key={bucket.bucket} className="border-t">
-                      <td className="p-2">
-                        {bucket.label}
-                        {bucket.bucket === 'overdue' && bucket.count > 0 && (
-                          <span className="ml-2 text-xs text-destructive">
-                            需立即处理
-                          </span>
-                        )}
-                      </td>
-                      <td className="p-2 text-right tabular-nums">{bucket.count}</td>
-                      <td className="p-2 text-right tabular-nums">
-                        {money(bucket.amount)}
-                      </td>
-                      <td className="p-2 text-right tabular-nums">
-                        {bucket.share.toFixed(2)}%
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-
-            {/* 贴现成本 */}
-            {deep.discountCost.count > 0 && (
-              <div className="flex flex-col gap-3">
-                <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-                  <StatCard
-                    label="已贴现张数"
-                    value={String(deep.discountCost.count)}
-                  />
-                  <StatCard
-                    label="贴现金额"
-                    value={money(deep.discountCost.amount)}
-                  />
-                  <StatCard
-                    label="贴现息合计"
-                    value={money(deep.discountCost.interest)}
-                    tone="warning"
-                  />
-                  <StatCard
-                    label={`综合成本率 / 年化 ${deep.discountCost.annualizedRate.toFixed(2)}%`}
-                    value={`${deep.discountCost.weightedRate.toFixed(2)}%`}
-                  />
-                </div>
-                <div className="overflow-x-auto rounded-md border">
-                  <table className="w-full text-sm">
-                    <thead className="bg-muted/50">
-                      <tr className="text-left">
-                        <th className="p-2 font-medium">票据类型</th>
-                        <th className="p-2 text-right font-medium">张数</th>
-                        <th className="p-2 text-right font-medium">金额</th>
-                        <th className="p-2 text-right font-medium">贴现息</th>
-                        <th className="p-2 text-right font-medium">成本率</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {deep.discountCost.byType.map((item) => (
-                        <tr key={item.noteType} className="border-t">
-                          <td className="p-2">
-                            {TYPE_LABELS[
-                              item.noteType as keyof typeof TYPE_LABELS
-                            ] ?? item.noteType}
-                          </td>
-                          <td className="p-2 text-right tabular-nums">
-                            {item.count}
-                          </td>
-                          <td className="p-2 text-right tabular-nums">
-                            {money(item.amount)}
-                          </td>
-                          <td className="p-2 text-right tabular-nums">
-                            {money(item.interest)}
-                          </td>
-                          <td className="p-2 text-right tabular-nums">
-                            {item.weightedRate.toFixed(2)}%
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-                {deep.discountCost.incompleteCodes.length > 0 && (
-                  <p className="text-xs text-amber-700">
-                    以下票据缺贴现息或计息天数，未计入年化率（需补录）：
-                    {deep.discountCost.incompleteCodes.join('、')}
-                  </p>
-                )}
-                <p className="text-xs text-muted-foreground">
-                  综合成本率是**加权**的（息合计 / 金额合计），不是各张票贴现率的
-                  算术平均 —— 后者会被一张小额高息票严重扭曲。
-                </p>
-              </div>
-            )}
-
-            {/* 需关注清单 */}
-            {deep.attention.length > 0 && (
-              <div className="flex flex-col gap-2">
-                <h4 className="text-sm font-semibold">
-                  需关注票据（逾期或 15 天内到期，{deep.attention.length} 张）
-                </h4>
-                <div className="flex flex-wrap gap-2">
-                  {deep.attention.map((item) => (
-                    <span
-                      key={item.code}
-                      className={cn(
-                        'rounded px-2 py-1 text-xs',
-                        item.daysLeft < 0
-                          ? 'bg-rose-100 text-rose-800'
-                          : item.daysLeft <= 3
-                            ? 'bg-orange-100 text-orange-800'
-                            : 'bg-amber-100 text-amber-800',
-                      )}
-                    >
-                      {item.noteNo} · {money(item.amount)} ·{' '}
-                      {item.daysLeft < 0
-                        ? `已逾期 ${-item.daysLeft} 天`
-                        : item.daysLeft === 0
-                          ? '今日到期'
-                          : `${item.daysLeft} 天后到期`}
-                    </span>
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
-        )}
+        <NotesRegisterDeepPanel deep={deep} />
       </div>
 
-      {/* 登记票据 */}
-      <Dialog open={createOpen} onOpenChange={setCreateOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>登记票据</DialogTitle>
-            <DialogDescription>
-              票号在系统内唯一，同一张票据重复登记会被拒绝（防止重复入账）。
-            </DialogDescription>
-          </DialogHeader>
-          <div className="grid gap-4">
-            <div className="grid gap-2">
-              <Label htmlFor="note-no">票号</Label>
-              <Input
-                id="note-no"
-                value={noteNo}
-                onChange={(event) => setNoteNo(event.target.value)}
-              />
-            </div>
-            <div className="grid grid-cols-2 gap-4">
-              <div className="grid gap-2">
-                <Label htmlFor="note-type">票据类型</Label>
-                <Select
-                  value={noteType}
-                  onValueChange={(value) => setNoteType(value as NoteType)}
-                >
-                  <SelectTrigger id="note-type">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {(dict?.types ?? []).map((item) => (
-                      <SelectItem key={item.value} value={item.value}>
-                        {item.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="grid gap-2">
-                <Label htmlFor="note-amount">票面金额</Label>
-                <Input
-                  id="note-amount"
-                  inputMode="decimal"
-                  value={amount}
-                  onChange={(event) => setAmount(event.target.value)}
-                />
-              </div>
-            </div>
-            <div className="grid grid-cols-2 gap-4">
-              <div className="grid gap-2">
-                <Label htmlFor="note-due">到期日</Label>
-                <Input
-                  id="note-due"
-                  type="date"
-                  value={dueDate}
-                  onChange={(event) => setDueDate(event.target.value)}
-                />
-              </div>
-              <div className="grid gap-2">
-                <Label htmlFor="note-drawer">出票人</Label>
-                <Input
-                  id="note-drawer"
-                  value={drawer}
-                  onChange={(event) => setDrawer(event.target.value)}
-                />
-              </div>
-            </div>
-          </div>
-          <DialogFooter>
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => setCreateOpen(false)}
-            >
-              取消
-            </Button>
-            <Button type="button" disabled={busy} onClick={submitCreate}>
-              {busy ? '登记中…' : '确认登记'}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <NoteCreateDialog
+        open={createOpen}
+        onOpenChange={setCreateOpen}
+        dict={dict}
+        onSaved={reloadAll}
+      />
 
-      {/* 流转动作 */}
-      <Dialog
-        open={actionTarget !== null}
-        onOpenChange={(open) => {
-          if (!open) {
-            setActionTarget(null);
-            setPreview(null);
-          }
-        }}
-      >
-        <DialogContent className="max-w-2xl">
-          <DialogHeader>
-            <DialogTitle>
-              {actionOptions.find((a) => a.value === actionKind)?.label ?? '票据流转'}{' '}
-              · {actionTarget?.noteNo}
-            </DialogTitle>
-            <DialogDescription>
-              票面 {actionTarget ? money(actionTarget.amount) : ''} 元，到期日{' '}
-              {actionTarget?.dueDate}
-            </DialogDescription>
-          </DialogHeader>
-          <div className="grid gap-4">
-            {currentAction?.requiresCounterparty && (
-              <div className="grid gap-2">
-                <Label htmlFor="note-counterparty">受让方（背书给谁）</Label>
-                <Input
-                  id="note-counterparty"
-                  value={counterparty}
-                  onChange={(event) => setCounterparty(event.target.value)}
-                />
-              </div>
-            )}
-            {currentAction?.requiresRate && (
-              <>
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="grid gap-2">
-                    <Label htmlFor="note-rate">贴现率（%）</Label>
-                    <Input
-                      id="note-rate"
-                      inputMode="decimal"
-                      value={discountRate}
-                      onChange={(event) => setDiscountRate(event.target.value)}
-                    />
-                  </div>
-                  <div className="grid gap-2">
-                    <Label htmlFor="note-discount-date">贴现日</Label>
-                    <Input
-                      id="note-discount-date"
-                      type="date"
-                      value={discountDate}
-                      onChange={(event) => setDiscountDate(event.target.value)}
-                    />
-                  </div>
-                </div>
-                <div className="flex justify-end">
-                  <Button
-                    type="button"
-                    variant="outline"
-                    onClick={runDiscountPreview}
-                  >
-                    试算贴现息与分录
-                  </Button>
-                </div>
-                {preview && (
-                  <div className="flex flex-col gap-3">
-                    <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
-                      <StatCard label="票面" value={money(preview.amount)} />
-                      <StatCard
-                        label={`贴现天数（基准 ${basis?.basis ?? 360}）`}
-                        value={`${preview.days} 天`}
-                      />
-                      <StatCard
-                        label="贴现息"
-                        value={money(preview.interest)}
-                        tone="warning"
-                      />
-                      <StatCard
-                        label="实际到账"
-                        value={money(preview.netProceeds)}
-                        tone="success"
-                      />
-                    </div>
-                    <div className="overflow-x-auto rounded-md border">
-                      <table className="w-full text-xs">
-                        <thead className="bg-muted/50">
-                          <tr className="text-left">
-                            <th className="p-2 font-medium">科目</th>
-                            <th className="p-2 text-right font-medium">借方</th>
-                            <th className="p-2 text-right font-medium">贷方</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {preview.lines.map((line, index) => (
-                            <tr key={`${line.accountCode}-${index}`} className="border-t">
-                              <td className="p-2 font-mono">
-                                {line.accountCode}
-                              </td>
-                              <td className="p-2 text-right tabular-nums">
-                                {line.debit ? money(line.debit) : ''}
-                              </td>
-                              <td className="p-2 text-right tabular-nums">
-                                {line.credit ? money(line.credit) : ''}
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  </div>
-                )}
-              </>
-            )}
-            <div className="grid gap-2">
-              <Label htmlFor="note-remark">备注</Label>
-              <Input
-                id="note-remark"
-                value={remark}
-                onChange={(event) => setRemark(event.target.value)}
-              />
-            </div>
-            <p className="text-xs text-muted-foreground">
-              提交后会生成凭证；若凭证服务不可用，业务状态照常推进并进入补偿队列，
-              可在凭证失败队列中补录。
-            </p>
-          </div>
-          <DialogFooter>
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => setActionTarget(null)}
-            >
-              取消
-            </Button>
-            <Button type="button" disabled={busy} onClick={submitAction}>
-              {busy ? '提交中…' : '确认'}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <NoteActionDialog
+        actionTarget={actionTarget}
+        setActionTarget={setActionTarget}
+        actionKind={actionKind}
+        counterparty={counterparty}
+        setCounterparty={setCounterparty}
+        discountRate={discountRate}
+        setDiscountRate={setDiscountRate}
+        discountDate={discountDate}
+        setDiscountDate={setDiscountDate}
+        remark={remark}
+        setRemark={setRemark}
+        preview={preview}
+        setPreview={setPreview}
+        busy={busy}
+        dict={dict}
+        basis={basis}
+        runDiscountPreview={runDiscountPreview}
+        submitAction={submitAction}
+      />
     </PageShell>
   );
 };

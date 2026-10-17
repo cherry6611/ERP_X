@@ -24,6 +24,14 @@ import { useAsyncData } from '@client/src/hooks/useAsyncData';
 import * as assetApi from '@client/src/api/asset';
 import { getApiErrorMessage } from '@client/src/utils/api-error-message';
 import { confirmDanger } from '@client/src/utils/confirmDanger';
+// B-01：处置写操作（发起处置 / 完成 / 驳回，均会生成或影响凭证）必须按能力显隐。
+import { CanCapabilityWrite } from '@client/src/platform/auth';
+// 业务时区取"今天"：`toISOString()` 走 UTC，北京时间 00:00–08:00 会取到前一天，
+// 处置凭证可能落入错误期间（见 utils/format.ts todayIso 注释）。
+import { todayIso } from '@client/src/utils/format';
+import {
+  ASSET_DISPOSAL_STATUS_LABELS as STATUS_LABELS,
+} from '@client/src/utils/biz-labels';
 import type {
   AssetDisposalItem,
   AssetDisposalPreview,
@@ -37,12 +45,17 @@ const DISPOSAL_TYPE_LABELS: Record<AssetDisposalType, string> = {
   donate: '捐赠',
 };
 
-const STATUS_LABELS: Record<AssetDisposalItem['status'], string> = {
-  disposing: '处置中',
-  disposed: '已处置',
-  scrapped: '已报废',
-  rejected: '已驳回',
-};
+/*
+ * §5.8 收尾：状态文案改用 `utils/biz-labels` 的字典版，**不再本地硬编码**。
+ *
+ * 本地表虽然是正确的（`Record<AssetDisposalItem['status'], string>` 有穷尽性检查），
+ * 但它绕过了 `sys_dict` —— 管理员在设置页改 `asset_disposal_status` 的文案，
+ * 这个面板不会生效，B-05「改字典即生效」对它不成立。
+ *
+ * 共享表 `ASSET_DISPOSAL_STATUS_LABELS` 的键集合已与本契约对齐
+ * （原先那版的键 `draft/submitted/approved/completed/void` 整套都是错的，
+ * 已一并修正），种子补于 `2026-10-16-fix10-status-dict-gaps.sql`。
+ */
 
 /**
  * D-08 ④：处置与报废面板。
@@ -57,9 +70,7 @@ const DisposalPanel: React.FC = () => {
   const [open, setOpen] = useState(false);
   const [assetId, setAssetId] = useState<string>('');
   const [disposalType, setDisposalType] = useState<AssetDisposalType>('scrap');
-  const [applyDate, setApplyDate] = useState<string>(
-    new Date().toISOString().slice(0, 10),
-  );
+  const [applyDate, setApplyDate] = useState<string>(todayIso());
   const [disposalIncome, setDisposalIncome] = useState<string>('0');
   const [taxRate, setTaxRate] = useState<string>('0');
   const [reason, setReason] = useState<string>('');
@@ -159,15 +170,17 @@ const DisposalPanel: React.FC = () => {
           处置净损益 = 处置收入 − 销项税 −（原值 − 累计折旧 − 已计提减值）。
           凭证：借 1603 固定资产清理 + 借 1602 + 借 1604 / 贷 1601；收益贷 6301，损失借 6711。
         </p>
-        <Button
-          type="button"
-          onClick={() => {
-            setPreview(null);
-            setOpen(true);
-          }}
-        >
-          发起处置
-        </Button>
+        <CanCapabilityWrite capability="pur_asset">
+          <Button
+            type="button"
+            onClick={() => {
+              setPreview(null);
+              setOpen(true);
+            }}
+          >
+            发起处置
+          </Button>
+        </CanCapabilityWrite>
       </div>
 
       <DataBoundary
@@ -218,22 +231,26 @@ const DisposalPanel: React.FC = () => {
                   <td className="p-2">
                     {item.status === 'disposing' ? (
                       <div className="flex gap-1">
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant="ghost"
-                          onClick={() => complete(item)}
-                        >
-                          完成
-                        </Button>
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant="ghost"
-                          onClick={() => reject(item)}
-                        >
-                          驳回
-                        </Button>
+                        <CanCapabilityWrite capability="pur_asset">
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => complete(item)}
+                          >
+                            完成
+                          </Button>
+                        </CanCapabilityWrite>
+                        <CanCapabilityWrite capability="pur_asset">
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => reject(item)}
+                          >
+                            驳回
+                          </Button>
+                        </CanCapabilityWrite>
                       </div>
                     ) : (
                       <span className="text-xs text-muted-foreground">
