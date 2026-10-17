@@ -1,4 +1,4 @@
-import React, { useCallback } from 'react';
+import React, { useCallback, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { toast } from 'sonner';
 import { ArrowLeft } from 'lucide-react';
@@ -27,6 +27,22 @@ type QuotationAction = 'submit' | 'approve' | 'reject' | 'void' | 'convert' | 's
 const QuotationDetailPage: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const [busy, setBusy] = useState(false);
+  const releaseTimer = useRef<number | null>(null);
+  /**
+   * 动作结束后**再保持 800ms 禁用**。
+   *
+   * 为什么"请求期间禁用"还不够（本轮走查实测）：
+   * 动作成功后 `reload()` 让按钮按新状态**重排**，而人的双击间隔约 150ms、
+   * 本地接口 60ms 内就返回 —— 于是第二次点击落在**重排后同一坐标的另一个按钮**上。
+   * 实测：双击「转合同」→ 第二次点击命中「设为最终成交」，
+   * toast 同时出现"已设为最终成交报价"与"已生成合同草稿"。
+   * 落在「提交审批」上更危险：提交后同位置变成「通过」，双击即等于**自行审批**。
+   */
+  const releaseAfterCooldown = () => {
+    if (releaseTimer.current !== null) window.clearTimeout(releaseTimer.current);
+    releaseTimer.current = window.setTimeout(() => setBusy(false), 800);
+  };
   const { data, loading, error, reload } = useAsyncData<Quotation>(
     () => crmApi.getQuotation(id ?? ''),
     [id],
@@ -107,6 +123,15 @@ const QuotationDetailPage: React.FC = () => {
       );
       if (!ok) return;
     }
+    /*
+     * in-flight 保护（本轮走查实测的缺陷）：
+     * 原先所有动作按钮都没有"提交中"状态，而动作成功后 `reload()` 会让按钮**重排**
+     * —— 实测双击「转合同」时，第二次点击落在了重排后同一坐标的「设为最终成交」上，
+     * 于是一次双击触发了**两个不同的动作**（toast 同时出现"已设为最终成交报价"与
+     * "已生成合同草稿"）。落在「提交审批」上更危险：状态推进后同位置的按钮会变成
+     * 「通过」，双击即等于**自行审批**。故所有动作按钮在请求期间一律禁用。
+     */
+    setBusy(true);
     try {
       if (action === 'setWon') {
         if (!data.opportunityId) {
@@ -136,6 +161,8 @@ const QuotationDetailPage: React.FC = () => {
       await reload();
     } catch (err) {
       toast.error(getApiErrorMessage(err, '操作失败'));
+    } finally {
+      releaseAfterCooldown();
     }
   };
 
@@ -266,10 +293,15 @@ const QuotationDetailPage: React.FC = () => {
                 </div>
 
                 <div className="flex flex-wrap gap-2 border-t pt-4">
-                  {(data.status === 'draft' ||
-                    data.status === 'pending_approval') && (
+                  {/*
+                    「编辑」只对 **draft** 显示：服务端 `update()` 的第一道校验是
+                    `仅草稿状态的报价单可编辑`，pending_approval 时原先也渲染这个按钮，
+                    点进去填完再保存只会拿到 400 —— 一个**必然失败**的入口。
+                  */}
+                  {data.status === 'draft' && (
                     <Button
                       variant="outline"
+                      disabled={busy}
                       onClick={() => navigate(`/crm/quotations/${data.id}/edit`)}
                     >
                       编辑
@@ -278,11 +310,12 @@ const QuotationDetailPage: React.FC = () => {
                   <CanCapabilityWrite capability="crm_write">
                     {data.status === 'draft' ? (
                       <>
-                        <Button onClick={() => void runAction('submit')}>
+                        <Button disabled={busy} onClick={() => void runAction('submit')}>
                           提交审批
                         </Button>
                         <Button
                           variant="outline"
+                          disabled={busy}
                           onClick={() => void runAction('void')}
                         >
                           作废
@@ -291,11 +324,12 @@ const QuotationDetailPage: React.FC = () => {
                     ) : null}
                     {data.status === 'pending_approval' ? (
                       <>
-                        <Button onClick={() => void runAction('approve')}>
+                        <Button disabled={busy} onClick={() => void runAction('approve')}>
                           通过
                         </Button>
                         <Button
                           variant="outline"
+                          disabled={busy}
                           onClick={() => void runAction('reject')}
                         >
                           驳回
@@ -304,11 +338,12 @@ const QuotationDetailPage: React.FC = () => {
                     ) : null}
                     {data.status === 'approved' ? (
                       <>
-                        <Button onClick={() => void runAction('convert')}>
+                        <Button disabled={busy} onClick={() => void runAction('convert')}>
                           转合同
                         </Button>
                         <Button
                           variant="outline"
+                          disabled={busy}
                           onClick={() => void runAction('void')}
                         >
                           作废
@@ -318,6 +353,7 @@ const QuotationDetailPage: React.FC = () => {
                     {!data.isWon && data.status !== 'void' && data.opportunityId ? (
                       <Button
                         variant="secondary"
+                        disabled={busy}
                         onClick={() => void runAction('setWon')}
                       >
                         设为最终成交

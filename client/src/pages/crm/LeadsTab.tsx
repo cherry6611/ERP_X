@@ -37,7 +37,7 @@ import {
   SelectValue,
 } from '@client/src/components/ui/select';
 import { Textarea } from '@client/src/components/ui/textarea';
-import { crmApi } from '@client/src/api';
+import { crmApi, masterDataApi } from '@client/src/api';
 import { useAsyncData } from '@client/src/hooks/useAsyncData';
 import { LEAD_STATUS_LABELS } from '@client/src/utils/biz-labels';
 import {
@@ -46,7 +46,7 @@ import {
 } from '@client/src/components/excel/excel-utils';
 import { getApiErrorMessage } from '@client/src/utils/api-error-message';
 import { confirmDanger } from '@client/src/utils/confirmDanger';
-import type { Lead, LeadStatus, UpdateLeadDto } from '@shared/api.interface';
+import type { Customer, Lead, LeadStatus, UpdateLeadDto } from '@shared/api.interface';
 
 const LEAD_EXPORT_COLUMNS: ExcelSheetColumn<Lead>[] = [
   { header: '编号', value: (row: Lead) => row.code },
@@ -68,6 +68,17 @@ const followSchema = z.object({
   followNote: z.string(),
   nextDate: z.string().optional(),
   remark: z.string(),
+  /**
+   * 关联客户（可空）。
+   *
+   * ⚠️ 这个字段是**「线索 → 商机」唯一可用的关联入口**（浏览器走查实测）：
+   * `POST /api/crm/leads` 不采集 `customerId`，而 `convertLead` 的第一道校验就是
+   * `if (!lead.customerId) 线索未关联客户，不能转换` —— 于是界面上「转商机」按钮
+   * 对任何**在界面上建出来的**线索都必然失败，线索转商机这条链路整条不可达。
+   * 补在这里而不是新建表单里：线索登记时通常还没有客户档案，
+   * 而在跟进阶段确认"这就是某客户的项目"才是自然的时机。
+   */
+  customerId: z.string(),
 });
 
 type FollowFormData = z.infer<typeof followSchema>;
@@ -96,8 +107,18 @@ const LeadsTab: React.FC = () => {
 
   const followForm = useForm<FollowFormData>({
     resolver: zodResolver(followSchema),
-    defaultValues: { status: 'following', followNote: '', remark: '' },
+    defaultValues: { status: 'following', followNote: '', remark: '', customerId: '' },
   });
+
+  /*
+   * 客户下拉（「关联客户」用）。**必须在这里加载**：转商机要求线索已关联客户，
+   * 而 `LeadCreatePage` 不采集该字段 —— 没有这个下拉，界面上建出来的线索
+   * 永远转不成商机（详见 `followSchema.customerId` 的说明）。
+   */
+  const { data: customers } = useAsyncData<Customer[]>(
+    () => masterDataApi.listCustomers(),
+    [],
+  );
 
   const openFollow = (lead: Lead) => {
     followForm.reset({
@@ -105,6 +126,7 @@ const LeadsTab: React.FC = () => {
       followNote: lead.followNote ?? '',
       nextDate: lead.nextDate ?? undefined,
       remark: lead.remark ?? '',
+      customerId: lead.customerId ?? '',
     });
     setFollowTarget(lead);
   };
@@ -116,6 +138,8 @@ const LeadsTab: React.FC = () => {
       followNote: values.followNote,
       nextDate: values.nextDate,
       remark: values.remark,
+      // '' 在契约里是"解除关联"（服务端 `@ValidateIf(v => v !== null)` 收 null）
+      customerId: values.customerId === '' ? null : values.customerId,
     };
     try {
       await crmApi.updateLead(followTarget.id, dto);
@@ -206,6 +230,21 @@ const LeadsTab: React.FC = () => {
 
   return (
     <div className="flex flex-col gap-4">
+      {/*
+        * 工具行（右对齐）与筛选卡片**分离**：「新建线索」是**写操作**，
+        * 按 `AGENTS.md` 对 `FilterBar` 的定位（筛选 + 只读工具如刷新/导出）
+        * 不应混进筛选卡片；这也是多数后台系统的标准布局（工具行在上、筛选卡片在下）。
+        */}
+      <div className="flex flex-wrap items-center justify-end gap-2">
+        <Button variant="outline" onClick={handleExport}>
+          <Download className="h-4 w-4" />
+          导出 Excel
+        </Button>
+        <Button onClick={() => navigate('/crm/leads/new')}>
+          <Plus className="h-4 w-4" />
+          新建线索
+        </Button>
+      </div>
       <FilterBar title="筛选">
         <div className="flex items-center gap-2">
           <Label htmlFor="lead-status-filter">状态</Label>
@@ -223,14 +262,6 @@ const LeadsTab: React.FC = () => {
             </SelectContent>
           </Select>
         </div>
-        <Button onClick={() => navigate('/crm/leads/new')}>
-          <Plus className="h-4 w-4" />
-          新建线索
-        </Button>
-        <Button variant="outline" onClick={handleExport}>
-          <Download className="h-4 w-4" />
-          导出 Excel
-        </Button>
       </FilterBar>
       <DataState
         loading={loading}
@@ -299,6 +330,39 @@ const LeadsTab: React.FC = () => {
                     <FormControl>
                       <Textarea placeholder="本次跟进情况" {...field} />
                     </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={followForm.control}
+                name="customerId"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>关联客户</FormLabel>
+                    <Select
+                      value={field.value || '__none__'}
+                      onValueChange={(value) =>
+                        field.onChange(value === '__none__' ? '' : value)
+                      }
+                    >
+                      <FormControl>
+                        <SelectTrigger>
+                          <SelectValue placeholder="未关联" />
+                        </SelectTrigger>
+                      </FormControl>
+                      <SelectContent>
+                        <SelectItem value="__none__">未关联</SelectItem>
+                        {(customers ?? []).map((c: Customer) => (
+                          <SelectItem key={c.id} value={c.id}>
+                            {c.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <p className="text-xs text-muted-foreground">
+                      未关联客户的线索不能转商机（转商机后合同要挂到客户名下）
+                    </p>
                     <FormMessage />
                   </FormItem>
                 )}

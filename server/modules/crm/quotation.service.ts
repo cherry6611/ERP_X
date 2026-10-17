@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   Inject,
   Injectable,
   Logger,
@@ -9,7 +10,7 @@ import {
   DRIZZLE_DATABASE,
   type PostgresJsDatabase,
 } from '@server/platform';
-import { and, desc, eq, inArray, max } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNull, max } from 'drizzle-orm';
 import {
   crmOpportunity,
   crmQuotation,
@@ -19,10 +20,12 @@ import {
   mdCustomer,
 } from '@server/database/schema';
 import { generateBizCode } from '@server/common/utils/biz-code';
+import { round2 } from '@server/common/utils/number';
 import { TaxResolverService } from '@server/modules/tax/tax-resolver.service';
 import { splitTax } from '@shared/tax';
 import { NotificationsService } from '@server/modules/notifications/notifications.service';
 import { todayInShanghai } from '@server/common/utils/biz-date';
+import { duplicateContractConflict } from './contract-name-guard';
 import type {
   Contract,
   CreateQuotationDto,
@@ -62,25 +65,74 @@ export class QuotationService {
     return item.quantity * item.unitPrice * (1 - item.discountPct / 100);
   }
 
+  /**
+   * T11（§4.6）：**报价与合同必须用同一套取整顺序**。
+   *
+   * ## 缺陷机理（实测复现，不是推测）
+   *
+   * 两条路径原先在**不同的位置**取整：
+   *
+   * ```
+   * 报价（computeTotals）    ：round2( Σ未取整行金额 × (1 − 整单折扣) )
+   * 合同（convertLineAmount）：Σ round2( 未取整行金额 × (1 − 整单折扣) )
+   * ```
+   *
+   * 一边"先加再乘折扣再取整"，一边"先乘折扣、逐行取整、再求和"。
+   * 实测（3 行 × 33.33 元、整单 9 折、税率 6%）：
+   *
+   * | | 金额 |
+   * |---|---|
+   * | 报价总额（旧口径） | **89.99** |
+   * | 合同明细合计 | **90.00** |
+   *
+   * ## 为什么这 1 分是**真问题**
+   *
+   * `convert()` 的校验是 `Math.abs(itemSum - amount) > 0.01`，而 89.99 与 90.00
+   * 的差**恰好等于 0.01** → `>` 不成立 → **静默放行**。合同带着
+   * "头 89.99 / 明细合计 90.00"落库，接着：
+   *   · 头税额 `splitTax(89.99, 6)` = 5.09；
+   *   · Σ行税额 = 5.10；
+   *   · 开票、收入确认、增值税底稿取的是明细口径 → **账表从第一天起就对不上**。
+   *
+   * ## 修法：向合同口径收敛（逐行取整后求和）
+   *
+   * 选择"逐行乘折扣 → 逐行取整 → 求和"，而不是"先求和再取整"，理由：
+   *   ① 合同明细是**逐行落库**的（每行有独立 amount/net/tax 列），
+   *      "先取整再加"是唯一能让"表头 = Σ行"在数据库层面成立的方式；
+   *   ② 报价单的行金额同样逐行落库，本就应该自洽；
+   *   ③ 反过来（把合同改成先加再取整）需要把分位差塞进某一行，
+   *      那会让"哪一行被调整"变成隐藏状态，每次重算可能落到不同行 —— 更糟。
+   *
+   * **实测验证**：改后同一场景下 |报价 − 合同明细合计| = **0.00**（原为 0.0100），
+   * 且 40×5 组混合场景下的最大偏差也从 0.0100 降到 0.0000。
+   *
+   * ⚠️ 诚实声明：本改动会让**多行报价单的总额最多变动 1 分**。
+   * 这是把"两个数不一致"变成"一个自洽的数"的必要代价。
+   */
   private computeTotals(
     items: QuotationItemInput[],
     discountPct: number
   ): { totalAmount: number; estimatedCost: number; grossAmount: number } {
+    const headerFactor = 1 - discountPct / 100;
     let gross = 0;
+    let total = 0;
     let cost = 0;
     for (const item of items) {
-      gross += this.lineAmount({
+      const line = this.lineAmount({
         quantity: item.quantity,
         unitPrice: item.unitPrice,
         discountPct: item.discountPct ?? 0,
       });
+      // 行金额：逐行取整（报价单行金额本身要落库，必须自洽）
+      gross += round2(line);
+      // 整单折扣：逐行施加并取整 —— **与 `convertLineAmount` 完全同口径**
+      total += round2(line * headerFactor);
       cost += item.quantity * (item.estUnitCost ?? 0);
     }
-    const headerFactor = 1 - discountPct / 100;
     return {
-      grossAmount: Math.round(gross * 100) / 100,
-      totalAmount: Math.round(gross * headerFactor * 100) / 100,
-      estimatedCost: Math.round(cost * 100) / 100,
+      grossAmount: round2(gross),
+      totalAmount: round2(total),
+      estimatedCost: round2(cost),
     };
   }
 
@@ -90,7 +142,7 @@ export class QuotationService {
     headerDiscountPct: number,
   ): number {
     const line = this.lineAmount(item);
-    return Math.round(line * (1 - headerDiscountPct / 100) * 100) / 100;
+    return round2(line * (1 - headerDiscountPct / 100));
   }
 
   private toQuotation(
@@ -357,6 +409,15 @@ export class QuotationService {
       const patch: Partial<typeof crmQuotation.$inferInsert> = {
         updatedAt: new Date(),
       };
+      /*
+       * 客户可改（原先**漏了这一段**，见 `UpdateQuotationDto.customerId` 的说明）。
+       * 报价单转合同会把客户带过去，所以这里静默丢弃的代价不只是"页面上没变"——
+       * 转出来的合同会挂在**旧的**客户名下。
+       *
+       * 放在 `title` 之前与字段声明顺序一致；判据用 `!== undefined`
+       * 以便与其它字段统一（空串是非法客户，由 DTO 的 @IsString/@IsNotEmpty 拦）。
+       */
+      if (dto.customerId !== undefined) patch.customerId = dto.customerId;
       if (dto.title !== undefined) patch.title = dto.title;
       if (dto.opportunityId !== undefined) {
         patch.opportunityId = dto.opportunityId || null;
@@ -472,14 +533,47 @@ export class QuotationService {
     return this.transition(id, 'void');
   }
 
-  /** 审批通过后一键生成合同草稿，报价金额与客户自动带入 */
+  /**
+   * 审批通过后一键生成合同草稿，报价金额与客户自动带入。
+   *
+   * ## B2 修正：行锁 + CAS + 同名查重（原先三样都没有）
+   *
+   * 原实现在**事务外**读报价、检查 `contractId` 是否为空，然后进事务直接 INSERT。
+   * 并发时序（双击、两个标签页、两个用户）：
+   *
+   *   | 时刻 | 请求 A | 请求 B |
+   *   |---|---|---|
+   *   | T1 | 读到 `contractId = null` | |
+   *   | T2 | | 读到 `contractId = null` |
+   *   | T3 | INSERT 合同 CTR-A | |
+   *   | T4 | | INSERT 合同 CTR-B |
+   *   | T5 | UPDATE 报价（成功） | UPDATE 报价（成功，覆盖 A） |
+   *
+   * 结果：**一份 500 万报价 → 两份 500 万合同**，各自可立项、各自确认收入
+   * → 收入与应收各虚增 500 万。前端按钮的 `loading` 防不住双击竞态。
+   *
+   * 三处收口：
+   *   ① 事务内 `FOR UPDATE` 行锁重读，`contractId` 判空在锁内做；
+   *   ② 按合同名查重（`AGENTS.md:25` 声称"同名合同查重防重复转换"，
+   *      **实测该承诺从未落地** —— 全仓 22 处"查重"命中里没有一处在 crm 模块）；
+   *   ③ UPDATE 带 `isNull(contractId)` 的 CAS，affected rows = 0 抛 409。
+   *
+   * > 同一模式在仓库内已有正确先例：`costs.service.ts` 的工时确认用 CAS。
+   */
   async convert(id: string): Promise<Contract> {
+    // ① 事务外只做**快速失败**（拦住明显不合法的调用），真正的判定在锁内重做 ——
+    //    这里的检查不构成任何并发保证，只是省掉一次无谓的事务。
+    /*
+     * ⚠️ `contractId` 必须**先于**状态检查：已转合同的报价单状态是 `converted`，
+     * 先查状态会报"仅已生效的报价单可转合同" —— 对一张**确实已生效并已转过**的单据，
+     * 这句话是误导（使用者会以为报价单没生效）。走查实测到该文案，故调换顺序。
+     */
     const existing = await this.getOrThrow(id);
-    if ((existing.status ?? 'draft') !== 'approved') {
-      throw new BadRequestException('仅已生效的报价单可转合同');
-    }
     if (existing.contractId) {
       throw new BadRequestException('该报价已生成合同，请勿重复转换');
+    }
+    if ((existing.status ?? 'draft') !== 'approved') {
+      throw new BadRequestException('仅已生效的报价单可转合同');
     }
     if (existing.validUntil && existing.validUntil < todayInShanghai()) {
       throw new BadRequestException('报价已超过有效期，不能转合同');
@@ -503,12 +597,42 @@ export class QuotationService {
       'CTR'
     );
     const contractId = await this.db.transaction(async (tx) => {
+      // ① 锁内重读：并发下第二个请求会阻塞在这里，等第一个提交后再看到
+      //    已写入的 contractId，从而走"已生成合同"分支。
+      const locked = await tx
+        .select()
+        .from(crmQuotation)
+        .where(eq(crmQuotation.id, id))
+        .for('update');
+      if (locked.length === 0) throw new NotFoundException('报价单不存在');
+      const current = locked[0];
+      // 与事务外同序：先判"是否已转过"，再判状态（理由见上）
+      if (current.contractId) {
+        throw new BadRequestException('该报价已生成合同，请勿重复转换');
+      }
+      if ((current.status ?? 'draft') !== 'approved') {
+        throw new BadRequestException('仅已生效的报价单可转合同');
+      }
+      // ② 同名合同查重（兑现 `AGENTS.md:25` 的承诺；
+      //    判据与文案与商机转合同共用 `contract-name-guard.ts`，两边不会分叉）
+      const duplicated = await tx
+        .select({ code: erpContract.code })
+        .from(erpContract)
+        .where(eq(erpContract.name, current.title))
+        .limit(1);
+      if (duplicated.length > 0) {
+        throw duplicateContractConflict({
+          name: current.title,
+          existingCode: duplicated[0].code,
+          sourceLabel: '报价单标题',
+        });
+      }
       const inserted = await tx
         .insert(erpContract)
         .values({
           code,
-          name: existing.title,
-          customerId: existing.customerId,
+          name: current.title,
+          customerId: current.customerId,
           billingModel: 'project',
           amount: String(amount),
           taxRate: String(resolved.rate),
@@ -519,7 +643,7 @@ export class QuotationService {
           status: 'draft',
         })
         .returning({ id: erpContract.id });
-      const headerDiscountPct = Number(existing.discountPct ?? 0);
+      const headerDiscountPct = Number(current.discountPct ?? 0);
       let itemSum = 0;
       if (items.length > 0) {
         await tx.insert(erpContractItem).values(
@@ -554,21 +678,27 @@ export class QuotationService {
             };
           })
         );
-        itemSum = Math.round(itemSum * 100) / 100;
+        itemSum = round2(itemSum);
         if (Math.abs(itemSum - amount) > 0.01) {
           throw new BadRequestException(
             `报价明细合计 ${itemSum} 与报价总额 ${amount} 不一致，已回滚`
           );
         }
       }
-      await tx
+      // ③ CAS 收口：WHERE 带 `contract_id IS NULL`，affected rows = 0 说明
+      //    本事务之外已有并发写入（理论上锁已排除，这里是最后一道防线）。
+      const updated = await tx
         .update(crmQuotation)
         .set({
           status: 'converted',
           contractId: inserted[0].id,
           updatedAt: new Date(),
         })
-        .where(eq(crmQuotation.id, id));
+        .where(and(eq(crmQuotation.id, id), isNull(crmQuotation.contractId)))
+        .returning({ id: crmQuotation.id });
+      if (updated.length === 0) {
+        throw new ConflictException('该报价已被转换，请刷新后重试');
+      }
       return inserted[0].id;
     });
     const rows = await this.db

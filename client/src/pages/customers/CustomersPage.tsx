@@ -1,7 +1,6 @@
 import React, { useState } from 'react';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useForm } from 'react-hook-form';
-import { z } from 'zod';
 import { toast } from 'sonner';
 import { Download, MoreHorizontal, Plus, Upload } from 'lucide-react';
 import { Table, TableColumnsType } from 'antd';
@@ -10,13 +9,22 @@ import { DataState } from '@client/src/components/DataState';
 import StatusBadge from '@client/src/components/erp/StatusBadge';
 import TaxEntityBanner from '@client/src/components/erp/TaxEntityBanner';
 import { CanCapability, CanCapabilityWrite } from '@client/src/platform/auth';
-import {
-  coerceTaxRate,
-  resolveRateOptions,
-} from '@client/src/utils/tax-rate-options';
+import { resolveFormTaxRate } from '@client/src/utils/tax-rate-options';
 import { VAT_RATES } from '@shared/tax';
 import ContactsDialog from './ContactsDialog';
 import CreditDialog from './CreditDialog';
+import CustomerFormDialog from './components/CustomerFormDialog';
+import {
+  CUSTOMER_EMPTY_FORM,
+  CUSTOMER_EXPORT_COLUMNS,
+  CUSTOMER_IMPORT_COLUMNS,
+  CUSTOMER_STATUS_LABELS,
+  customerImportRowKey,
+  customerSchema,
+  parseCustomerRow,
+  type CustomerFormData,
+  type CustomerFormInput,
+} from './customer-import';
 import { Button } from '@client/src/components/ui/button';
 import {
   DropdownMenu,
@@ -26,39 +34,9 @@ import {
 } from '@client/src/components/ui/dropdown-menu';
 import { useListQuery } from '@client/src/hooks/useListQuery';
 import { confirmDanger } from '@client/src/utils/confirmDanger';
-import {
-  Dialog,
-  DialogContent,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@client/src/components/ui/dialog';
-import {
-  Form,
-  FormControl,
-  FormField,
-  FormItem,
-  FormLabel,
-  FormMessage,
-} from '@client/src/components/ui/form';
 import { Input } from '@client/src/components/ui/input';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@client/src/components/ui/select';
-import { Textarea } from '@client/src/components/ui/textarea';
 import { ExcelImportDialog } from '@client/src/components/excel/ExcelImportDialog';
-import type {
-  ExcelImportColumnDef,
-  ParsedRowResult,
-} from '@client/src/components/excel/ExcelImportDialog';
-import {
-  exportRowsToXlsx,
-  type ExcelSheetColumn,
-} from '@client/src/components/excel/excel-utils';
+import { exportRowsToXlsx } from '@client/src/components/excel/excel-utils';
 import { masterDataApi } from '@client/src/api';
 import { useAsyncData } from '@client/src/hooks/useAsyncData';
 import { formatMoney } from '@client/src/utils/format';
@@ -70,125 +48,23 @@ import type {
   UpdateCustomerDto,
 } from '@shared/api.interface';
 
-const CUSTOMER_STATUS_LABELS: Record<string, string> = {
-  active: '合作中',
-  inactive: '停用',
-  prospect: '潜在客户',
-};
-
-const CUSTOMER_STATUS_TO_CODE: Record<string, string> = {
-  active: 'active',
-  inactive: 'inactive',
-  prospect: 'prospect',
-  合作中: 'active',
-  停用: 'inactive',
-  潜在客户: 'prospect',
-};
-
-const CUSTOMER_IMPORT_COLUMNS: ExcelImportColumnDef[] = [
-  { header: '名称', required: true },
-  { header: '统一社会信用代码' },
-  { header: '行业' },
-  { header: '信用等级' },
-  { header: '信用额度' },
-  { header: '账期（天）' },
-  { header: '状态' },
-  { header: '备注' },
-];
-
-const CUSTOMER_EXPORT_COLUMNS: ExcelSheetColumn<Customer>[] = [
-  { header: '编号', value: (row: Customer) => row.code },
-  { header: '名称', value: (row: Customer) => row.name },
-  { header: '统一社会信用代码', value: (row: Customer) => row.uscc ?? '' },
-  { header: '行业', value: (row: Customer) => row.industry ?? '' },
-  { header: '信用等级', value: (row: Customer) => row.creditLevel ?? '' },
-  { header: '信用额度', value: (row: Customer) => row.creditLimit },
-  { header: '账期（天）', value: (row: Customer) => row.termsDays },
-  {
-    header: '状态',
-    value: (row: Customer) => CUSTOMER_STATUS_LABELS[row.status] ?? row.status,
-  },
-  { header: '备注', value: (row: Customer) => row.remark ?? '' },
-];
-
-function parseCustomerRow(raw: Record<string, string>): ParsedRowResult<CreateCustomerDto> {
-  const errors: string[] = [];
-  const name: string = (raw['名称'] ?? '').trim();
-  if (!name) errors.push('名称不能为空');
-  const uscc: string = (raw['统一社会信用代码'] ?? '').trim();
-  const industry: string = (raw['行业'] ?? '').trim();
-  const creditLevelRaw: string = (raw['信用等级'] ?? '').trim();
-  let creditLevel: string = 'B';
-  if (creditLevelRaw) {
-    const upper: string = creditLevelRaw.toUpperCase();
-    if (upper === 'A' || upper === 'B' || upper === 'C') {
-      creditLevel = upper;
-    } else {
-      errors.push(`信用等级「${creditLevelRaw}」无效，只能为 A、B、C`);
-    }
-  }
-  const creditLimitRaw: string = (raw['信用额度'] ?? '').trim();
-  let creditLimit: number = 0;
-  if (creditLimitRaw) {
-    const parsed: number = Number(creditLimitRaw);
-    if (!Number.isFinite(parsed) || parsed < 0) {
-      errors.push('信用额度需为不小于 0 的数字');
-    } else {
-      creditLimit = parsed;
-    }
-  }
-  const termsDaysRaw: string = (raw['账期（天）'] ?? '').trim();
-  let termsDays: number = 30;
-  if (termsDaysRaw) {
-    const parsed: number = Number(termsDaysRaw);
-    if (!Number.isInteger(parsed) || parsed < 0 || parsed > 365) {
-      errors.push('账期需为 0-365 的整数');
-    } else {
-      termsDays = parsed;
-    }
-  }
-  const statusRaw: string = (raw['状态'] ?? '').trim();
-  let status: string = 'prospect';
-  if (statusRaw) {
-    const mapped: string | undefined = CUSTOMER_STATUS_TO_CODE[statusRaw];
-    if (mapped) {
-      status = mapped;
-    } else {
-      errors.push(`状态「${statusRaw}」无效，应为 合作中/停用/潜在客户`);
-    }
-  }
-  const remark: string = (raw['备注'] ?? '').trim();
-  if (errors.length > 0) return { dto: null, errors };
-  return {
-    dto: {
-      name,
-      uscc: uscc || undefined,
-      industry: industry || undefined,
-      creditLevel,
-      creditLimit,
-      termsDays,
-      status,
-      remark: remark || undefined,
-    },
-    errors: [],
-  };
-}
-
-const customerSchema = z.object({
-  name: z.string().min(1, '客户名称不能为空'),
-  uscc: z.string(),
-  industry: z.string(),
-  creditLevel: z.string(),
-  creditLimit: z.coerce.number().min(0),
-  termsDays: z.coerce.number().min(0).max(365),
-  status: z.string(),
-  remark: z.string(),
-  taxEntityId: z.string(),
-  defaultTaxRate: z.string(),
-});
-
-type CustomerFormData = z.output<typeof customerSchema>;
-type CustomerFormInput = z.input<typeof customerSchema>;
+/*
+ * §5.9（F8）：本页的**零 React 依赖纯逻辑**已移到 `./customer-import`，组件只做布局编排：
+ *   · `CUSTOMER_STATUS_LABELS` / `CUSTOMER_STATUS_TO_CODE` —— 状态字典（导出用中文、导入双认）；
+ *   · `CUSTOMER_IMPORT_COLUMNS` / `CUSTOMER_EXPORT_COLUMNS` —— 模板列与导出列定义；
+ *   · `parseCustomerRow` / `customerImportRowKey` —— 批量导入的单行解析与判重键
+ *     （判重键必须与下面的 `existingKeys` 用同一个算法，否则同一个客户会被建两次）；
+ *   · `customerSchema` + `CUSTOMER_EMPTY_FORM`（含 `CustomerFormData` / `CustomerFormInput` 类型）。
+ *
+ * 搬走的正是"错了也看不出来"的两块：解析器是**批量导入的唯一闸门**（拦不住的错误
+ * 会几百行一起落库），导出列取错字段照样导出成功、只是数字落在错的列里。
+ * 两者现在由 `customer-import.spec.ts` 逐条断言（默认值、取值边界、错误聚合、
+ * 有错时 `dto: null`、导出→回导闭环）。
+ *
+ * ⚠️ 下面的 `columns` **有意不抽**：它是 `TableColumnsType<Customer>`，`render` 返回 JSX
+ * 并闭包捕获 `openEdit` / `toggleStatus` / `setContactsCustomer` 与组件状态，
+ * 属于"依赖 React 与 handler 的渲染配置"，搬出去只会把 props 打洞变多，且无法单测。
+ */
 
 const CustomersPage: React.FC = () => {
   const { q, setQ, debouncedQ, page, setPage, debouncing } = useListQuery();
@@ -206,18 +82,8 @@ const CustomersPage: React.FC = () => {
 
   const form = useForm<CustomerFormInput, unknown, CustomerFormData>({
     resolver: zodResolver(customerSchema),
-    defaultValues: {
-      name: '',
-      uscc: '',
-      industry: '',
-      creditLevel: 'B',
-      creditLimit: 0,
-      termsDays: 30,
-      status: 'prospect',
-      remark: '',
-      taxEntityId: '',
-      defaultTaxRate: '',
-    },
+    // 展开而不是直接传常量：react-hook-form 需要每次都是全新的对象（见 `CUSTOMER_EMPTY_FORM` 注释）
+    defaultValues: { ...CUSTOMER_EMPTY_FORM },
   });
   const { data: taxEntities } = useAsyncData(
     () => masterDataApi.listTaxEntities(),
@@ -235,18 +101,7 @@ const CustomersPage: React.FC = () => {
 
   const openCreate = () => {
     setEditing(null);
-    form.reset({
-      name: '',
-      uscc: '',
-      industry: '',
-      creditLevel: 'B',
-      creditLimit: 0,
-      termsDays: 30,
-      status: 'prospect',
-      remark: '',
-      taxEntityId: '',
-      defaultTaxRate: '',
-    });
+    form.reset({ ...CUSTOMER_EMPTY_FORM });
     setDialogOpen(true);
   };
 
@@ -377,7 +232,31 @@ const CustomersPage: React.FC = () => {
   ];
 
   return (
-    <PageShell title="客户管理" description="客户档案、多联系人、信用额度与账期管理">
+    <PageShell
+      title="客户管理"
+      description="客户档案、多联系人、信用额度与账期管理"
+      actions={
+        /*
+         * 写操作（新建 / 导入）归页头 `actions`；「导出 Excel」是"对当前筛选结果的
+         * 只读工具"，留在下方筛选行。判据见 `AGENTS.md` 与
+         * `scripts/browser-walkthrough/ui-sweep.mjs` 的巡检口径。
+         */
+        <>
+          <CanCapabilityWrite capability="crm_write">
+            <Button onClick={openCreate}>
+              <Plus className="h-4 w-4" />
+              新建客户
+            </Button>
+          </CanCapabilityWrite>
+          <CanCapabilityWrite capability="crm_write">
+            <Button variant="outline" onClick={() => setImportOpen(true)}>
+              <Upload className="h-4 w-4" />
+              导入 Excel
+            </Button>
+          </CanCapabilityWrite>
+        </>
+      }
+    >
       <TaxEntityBanner />
       <div className="flex items-center gap-3">
         <Input
@@ -390,22 +269,10 @@ const CustomersPage: React.FC = () => {
         {debouncing ? (
           <span className="text-xs text-muted-foreground">筛选中…</span>
         ) : null}
-        <CanCapabilityWrite capability="crm_write">
-          <Button onClick={openCreate}>
-            <Plus className="h-4 w-4" />
-            新建客户
-          </Button>
-        </CanCapabilityWrite>
         <Button variant="outline" onClick={handleExport}>
           <Download className="h-4 w-4" />
           导出 Excel
         </Button>
-        <CanCapabilityWrite capability="crm_write">
-          <Button variant="outline" onClick={() => setImportOpen(true)}>
-            <Upload className="h-4 w-4" />
-            导入 Excel
-          </Button>
-        </CanCapabilityWrite>
       </div>
       <DataState
         loading={loading}
@@ -453,243 +320,21 @@ const CustomersPage: React.FC = () => {
         templateFilename="客户导入模板.xlsx"
         columns={CUSTOMER_IMPORT_COLUMNS}
         parseRow={parseCustomerRow}
-        rowKey={(raw: Record<string, string>) => (raw['名称'] ?? '').trim()}
+        rowKey={customerImportRowKey}
         existingKeys={(data?.items ?? []).map((row: Customer) => row.name.trim())}
         createRow={(dto: CreateCustomerDto) =>
           masterDataApi.createCustomer(dto).then(() => undefined)
         }
         onImportFinished={() => void reload()}
       />
-      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-        <DialogContent className="max-w-lg">
-          <DialogHeader>
-            <DialogTitle>{editing ? '编辑客户' : '新建客户'}</DialogTitle>
-          </DialogHeader>
-          <Form {...form}>
-            <form onSubmit={onSubmit} className="space-y-4">
-              <div className="flex gap-4">
-                <FormField
-                  control={form.control}
-                  name="name"
-                  render={({ field }) => (
-                    <FormItem className="flex-1">
-                      <FormLabel>
-                        名称 <span aria-hidden="true" className="text-destructive">*</span>
-                      </FormLabel>
-                      <FormControl>
-                        <Input placeholder="请输入客户名称" {...field} />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-                <FormField
-                  control={form.control}
-                  name="industry"
-                  render={({ field }) => (
-                    <FormItem className="flex-1">
-                      <FormLabel>行业</FormLabel>
-                      <FormControl>
-                        <Input placeholder="如：金融、制造" {...field} />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-              </div>
-              <div className="flex gap-4">
-                <FormField
-                  control={form.control}
-                  name="uscc"
-                  render={({ field }) => (
-                    <FormItem className="flex-1">
-                      <FormLabel>统一社会信用代码</FormLabel>
-                      <FormControl>
-                        <Input placeholder="选填" {...field} />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-                <FormField
-                  control={form.control}
-                  name="creditLevel"
-                  render={({ field }) => (
-                    <FormItem className="w-32">
-                      <FormLabel>信用等级</FormLabel>
-                      <Select onValueChange={field.onChange} value={field.value}>
-                        <FormControl>
-                          <SelectTrigger>
-                            <SelectValue placeholder="请选择" />
-                          </SelectTrigger>
-                        </FormControl>
-                        <SelectContent>
-                          <SelectItem value="A">A</SelectItem>
-                          <SelectItem value="B">B</SelectItem>
-                          <SelectItem value="C">C</SelectItem>
-                        </SelectContent>
-                      </Select>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-              </div>
-              <div className="flex gap-4">
-                <FormField
-                  control={form.control}
-                  name="creditLimit"
-                  render={({ field }) => (
-                    <FormItem className="flex-1">
-                      <FormLabel>信用额度（元）</FormLabel>
-                      <FormControl>
-                        <Input
-                          type="number"
-                          min={0}
-                          value={String(field.value ?? '')}
-                          onChange={field.onChange}
-                          onBlur={field.onBlur}
-                          name={field.name}
-                          ref={field.ref}
-                        />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-                <FormField
-                  control={form.control}
-                  name="termsDays"
-                  render={({ field }) => (
-                    <FormItem className="flex-1">
-                      <FormLabel>账期（天）</FormLabel>
-                      <FormControl>
-                        <Input
-                          type="number"
-                          min={0}
-                          max={365}
-                          value={String(field.value ?? '')}
-                          onChange={field.onChange}
-                          onBlur={field.onBlur}
-                          name={field.name}
-                          ref={field.ref}
-                        />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-                <FormField
-                  control={form.control}
-                  name="status"
-                  render={({ field }) => (
-                    <FormItem className="w-36">
-                      <FormLabel>状态</FormLabel>
-                      <Select onValueChange={field.onChange} value={field.value}>
-                        <FormControl>
-                          <SelectTrigger>
-                            <SelectValue placeholder="请选择" />
-                          </SelectTrigger>
-                        </FormControl>
-                        <SelectContent>
-                          <SelectItem value="prospect">潜在客户</SelectItem>
-                          <SelectItem value="active">合作中</SelectItem>
-                          <SelectItem value="inactive">停用</SelectItem>
-                        </SelectContent>
-                      </Select>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-              </div>
-              <div className="flex gap-4">
-                <FormField
-                  control={form.control}
-                  name="taxEntityId"
-                  render={({ field }) => (
-                    <FormItem className="flex-1">
-                      <FormLabel>关联纳税主体</FormLabel>
-                      <Select
-                        value={field.value || '__none__'}
-                        onValueChange={(value) =>
-                          field.onChange(value === '__none__' ? '' : value)
-                        }
-                      >
-                        <FormControl>
-                          <SelectTrigger>
-                            <SelectValue placeholder="可选" />
-                          </SelectTrigger>
-                        </FormControl>
-                        <SelectContent>
-                          <SelectItem value="__none__">不指定</SelectItem>
-                          {(taxEntities ?? [])
-                            .filter((entity) => entity.status === 'active')
-                            .map((entity) => (
-                              <SelectItem key={entity.id} value={entity.id}>
-                                {entity.name}
-                              </SelectItem>
-                            ))}
-                        </SelectContent>
-                      </Select>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-                <FormField
-                  control={form.control}
-                  name="defaultTaxRate"
-                  render={({ field }) => {
-                    const entityId = form.watch('taxEntityId');
-                    const entity = (taxEntities ?? []).find((row) => row.id === entityId);
-                    const rates = resolveRateOptions(entity);
-                    return (
-                    <FormItem className="w-36">
-                      <FormLabel>默认税率</FormLabel>
-                      <Select
-                        value={field.value || '__none__'}
-                        onValueChange={(value) =>
-                          field.onChange(value === '__none__' ? '' : value)
-                        }
-                      >
-                        <FormControl>
-                          <SelectTrigger>
-                            <SelectValue placeholder="可选" />
-                          </SelectTrigger>
-                        </FormControl>
-                        <SelectContent>
-                          <SelectItem value="__none__">不指定</SelectItem>
-                          {rates.map((rate) => (
-                            <SelectItem key={rate} value={String(rate)}>
-                              {rate}%
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                      <FormMessage />
-                    </FormItem>
-                    );
-                  }}
-                />
-              </div>
-              <FormField
-                control={form.control}
-                name="remark"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>备注</FormLabel>
-                    <FormControl>
-                      <Textarea placeholder="备注信息" {...field} />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-              <DialogFooter>
-                <Button type="submit">保存</Button>
-              </DialogFooter>
-            </form>
-          </Form>
-        </DialogContent>
-      </Dialog>
+      <CustomerFormDialog
+        open={dialogOpen}
+        onOpenChange={setDialogOpen}
+        editing={editing}
+        form={form}
+        taxEntities={taxEntities}
+        onSubmit={onSubmit}
+      />
     </PageShell>
   );
 };

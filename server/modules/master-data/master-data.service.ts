@@ -8,7 +8,11 @@ import {
   DRIZZLE_DATABASE,
   type PostgresJsDatabase,
 } from '@server/platform';
-import { and, count, desc, eq, ilike, ne, or } from 'drizzle-orm';
+import { and, count, desc, eq, ne, or } from 'drizzle-orm';
+import {
+  ilikeEscaped,
+  likeContains,
+} from '@server/common/utils/sql-like';
 import {
   crmContact,
   erpAr,
@@ -102,13 +106,17 @@ export class MasterDataService {
     page = 1,
     pageSize = 20
   ): Promise<PagedResult<Customer>> {
-    const where =
-      keyword && keyword.trim() !== ''
-        ? or(
-            ilike(mdCustomer.name, `%${keyword}%`),
-            ilike(mdCustomer.code, `%${keyword}%`)
-          )
-        : undefined;
+    // S4：原实现把 `%${keyword}%` 直接交给 ilike —— 传 `keyword=%` 模式变成
+    // `%%%` 即**匹配全表**，任意登录用户都能用搜索接口枚举全部客户。
+    // 这不是 SQL 注入（drizzle 已绑定参数），但同样越过了"搜索"语义。
+    // `likeContains` 同时做长度上限与 `%`/`_`/`\` 转义，`ilikeEscaped` 补 ESCAPE 子句。
+    const pattern = likeContains(keyword);
+    const where = pattern
+      ? or(
+          ilikeEscaped(mdCustomer.name, pattern),
+          ilikeEscaped(mdCustomer.code, pattern)
+        )
+      : undefined;
     const [{ total }] = await this.db
       .select({ total: count() })
       .from(mdCustomer)
@@ -344,13 +352,14 @@ export class MasterDataService {
   }
 
   async listSuppliers(keyword?: string): Promise<Supplier[]> {
-    const where =
-      keyword && keyword.trim() !== ''
-        ? or(
-            ilike(mdSupplier.name, `%${keyword}%`),
-            ilike(mdSupplier.code, `%${keyword}%`)
-          )
-        : undefined;
+    // S4：与 listCustomers 同一修法（转义 + ESCAPE）
+    const pattern = likeContains(keyword);
+    const where = pattern
+      ? or(
+          ilikeEscaped(mdSupplier.name, pattern),
+          ilikeEscaped(mdSupplier.code, pattern)
+        )
+      : undefined;
     const rows = await this.db
       .select()
       .from(mdSupplier)

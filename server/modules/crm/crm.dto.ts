@@ -12,6 +12,7 @@ import {
   Max,
   MaxLength,
   Min,
+  ValidateIf,
 } from 'class-validator';
 import type {
   CreateContactDto as ICreateContactDto,
@@ -286,9 +287,11 @@ export class UpdateLeadDto implements IUpdateLeadDto {
   @IsIn([...LEAD_STATUSES], { message: '线索状态不合法' })
   status?: (typeof LEAD_STATUSES)[number];
 
+  /** `null` = 解除关联（PATCH 语义：`undefined` 才是不改） */
   @IsOptional()
+  @ValidateIf((_, v) => v !== null)
   @IsUUID()
-  customerId?: string;
+  customerId?: string | null;
 
   @IsOptional()
   @IsString()

@@ -187,6 +187,20 @@ const QuotationsTab: React.FC = () => {
 
   return (
     <div className="flex flex-col gap-4">
+      {/*
+        * 工具行与筛选卡片分离：见 `LeadsTab` 同一处注释
+        * （写操作不进 FilterBar，这是 `AGENTS.md` 对 FilterBar 的定位）。
+        */}
+      <div className="flex flex-wrap items-center justify-end gap-2">
+        <Button variant="outline" onClick={handleExport}>
+          <Download className="h-4 w-4" />
+          导出 Excel
+        </Button>
+        <Button onClick={openCreate}>
+          <Plus className="h-4 w-4" />
+          新建报价
+        </Button>
+      </div>
       <FilterBar title="筛选">
         <div className="flex items-center gap-2">
           <Label htmlFor="quotation-status-filter">状态</Label>
@@ -204,14 +218,6 @@ const QuotationsTab: React.FC = () => {
             </SelectContent>
           </Select>
         </div>
-        <Button onClick={openCreate}>
-          <Plus className="h-4 w-4" />
-          新建报价
-        </Button>
-        <Button variant="outline" onClick={handleExport}>
-          <Download className="h-4 w-4" />
-          导出 Excel
-        </Button>
       </FilterBar>
       <DataState
         loading={loading}

@@ -1,4 +1,5 @@
 import { inflateRawSync } from 'node:zlib';
+import { round2 } from '@shared/number';
 
 /** 从 OOXML ZIP 中读取单个条目 */
 function readZipEntry(buf: Buffer, entryName: string): Buffer | null {
@@ -128,8 +129,14 @@ function tryEvalSameRowProduct(formula: string, cells: string[]): string | null 
     if (!Number.isFinite(num)) return null;
     product *= num;
   }
-  // 保留合理精度，避免浮点噪音
-  return Number.isInteger(product) ? String(product) : String(Math.round(product * 100) / 100);
+  /*
+   * 保留合理精度，避免浮点噪音。
+   * ⚠️ 统一走共享 `round2`（原为内联 `Math.round(product * 100) / 100`）：
+   * 报价单数值会与库里的行金额比对/回写，取整口径必须与其余模块同源。
+   * 内联写法对负数（退货/冲减行的乘积）向 +∞ 取整，与 `round2` 的远离零取整
+   * 相差 1 分，会让"文件里的数"与"库里的数"对不上。
+   */
+  return Number.isInteger(product) ? String(product) : String(round2(product));
 }
 
 function parseSheetRows(xml: string, shared: string[]): string[] {

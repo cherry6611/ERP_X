@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { toast } from 'sonner';
 import { ArrowLeft, Plus, Star } from 'lucide-react';
@@ -41,6 +41,14 @@ const OpportunityDetailPage: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const [savingStage, setSavingStage] = useState(false);
+  /** 动作按钮的 in-flight 保护：见 `convert` 的说明（双击会误触发重排后的相邻动作） */
+  const [acting, setActing] = useState(false);
+  const releaseTimer = useRef<number | null>(null);
+  /** 动作结束后再保持 800ms 禁用 —— 理由与 QuotationDetailPage 同（按钮重排 + 人的双击 ~150ms） */
+  const releaseAfterCooldown = () => {
+    if (releaseTimer.current !== null) window.clearTimeout(releaseTimer.current);
+    releaseTimer.current = window.setTimeout(() => setActing(false), 800);
+  };
   const [stage, setStage] = useState<string>('');
   const [amount, setAmount] = useState('');
   const [winRate, setWinRate] = useState('');
@@ -85,12 +93,15 @@ const OpportunityDetailPage: React.FC = () => {
       confirmLabel: '确认选定',
     });
     if (!ok) return;
+    setActing(true);
     try {
       await crmApi.updateOpportunity(id, { wonQuotationId: quoteId });
       toast.success('已设为最终成交报价');
       await reload();
     } catch (err) {
       toast.error(getApiErrorMessage(err, '设置失败'));
+    } finally {
+      releaseAfterCooldown();
     }
   };
 
@@ -100,15 +111,23 @@ const OpportunityDetailPage: React.FC = () => {
       { title: '确认作废', confirmLabel: '确认作废' },
     );
     if (!ok) return;
+    setActing(true);
     try {
       await crmApi.voidQuotation(quoteId);
       toast.success('报价单已作废');
       await reload();
     } catch (err) {
       toast.error(getApiErrorMessage(err, '作废失败'));
+    } finally {
+      releaseAfterCooldown();
     }
   };
 
+  /*
+   * 转合同。**必须有 in-flight 保护**：动作成功后 `reload()` 会让按钮重排，
+   * 双击的第二次点击会落在重排后同一坐标的另一个按钮上
+   * （报价单详情页实测：双击「转合同」同时触发了「设为最终成交」）。
+   */
   const convert = async () => {
     if (!data) return;
     const ok = await confirmDanger(
@@ -116,12 +135,15 @@ const OpportunityDetailPage: React.FC = () => {
       { title: '确认转合同', confirmLabel: '确认转换' },
     );
     if (!ok) return;
+    setActing(true);
     try {
       const contract = await crmApi.convertOpportunity(data.id);
       toast.success(`已生成合同草稿 ${contract.code}`);
       await reload();
     } catch (err) {
       toast.error(getApiErrorMessage(err, '转合同失败'));
+    } finally {
+      releaseAfterCooldown();
     }
   };
 
@@ -201,10 +223,11 @@ const OpportunityDetailPage: React.FC = () => {
           >
             查看
           </Button>
-          {row.status === 'draft' || row.status === 'pending_approval' ? (
+          {row.status === 'draft' ? (
             <Button
               variant="ghost"
               size="sm"
+              disabled={acting}
               onClick={() =>
                 navigate(`/crm/quotations/${row.id}/edit`, {
                   state: { opportunityId: id },
@@ -216,7 +239,12 @@ const OpportunityDetailPage: React.FC = () => {
           ) : null}
           <CanCapabilityWrite capability="crm_write">
             {!row.isWon && row.status !== 'void' ? (
-              <Button variant="ghost" size="sm" onClick={() => void setWon(row.id)}>
+              <Button
+                variant="ghost"
+                size="sm"
+                disabled={acting}
+                onClick={() => void setWon(row.id)}
+              >
                 设为成交
               </Button>
             ) : null}
@@ -225,6 +253,7 @@ const OpportunityDetailPage: React.FC = () => {
                 variant="ghost"
                 size="sm"
                 className="text-destructive"
+                disabled={acting}
                 onClick={() => void voidQuote(row.id, row.code)}
               >
                 作废
@@ -313,9 +342,17 @@ const OpportunityDetailPage: React.FC = () => {
                     </SectionTitle>
                     <div className="mt-3 flex flex-wrap items-end gap-3">
                       <div className="space-y-1">
-                        <Label>阶段</Label>
+                        {/*
+                          a11y（§5.10 / P2-3）：Radix Select 的触发器是 role="combobox"
+                          的 <button>，`htmlFor` 对它不生效，因此用
+                          `aria-labelledby` 指向本标签的 id 提供可访问名。
+                        */}
+                        <Label id="opp-stage-label">阶段</Label>
                         <Select value={stage} onValueChange={setStage}>
-                          <SelectTrigger className="w-36">
+                          <SelectTrigger
+                            className="w-36"
+                            aria-labelledby="opp-stage-label"
+                          >
                             <SelectValue />
                           </SelectTrigger>
                           <SelectContent>
@@ -354,7 +391,11 @@ const OpportunityDetailPage: React.FC = () => {
                         保存推进
                       </Button>
                       {data.stage === 'won' && !data.contractId ? (
-                        <Button variant="secondary" onClick={() => void convert()}>
+                        <Button
+                          variant="secondary"
+                          disabled={acting}
+                          onClick={() => void convert()}
+                        >
                           转合同
                         </Button>
                       ) : null}

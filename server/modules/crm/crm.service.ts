@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   Inject,
   Injectable,
   NotFoundException,
@@ -8,7 +9,7 @@ import {
   DRIZZLE_DATABASE,
   type PostgresJsDatabase,
 } from '@server/platform';
-import { asc, count, desc, eq, inArray } from 'drizzle-orm';
+import { and, asc, count, desc, eq, inArray, isNull } from 'drizzle-orm';
 import {
   crmLead,
   crmOpportunity,
@@ -19,6 +20,7 @@ import {
 import { generateBizCode } from '@server/common/utils/biz-code';
 import { TaxResolverService } from '@server/modules/tax/tax-resolver.service';
 import { splitTax } from '@shared/tax';
+import { duplicateContractConflict } from './contract-name-guard';
 import type {
   Contract,
   CreateLeadDto,
@@ -450,45 +452,99 @@ export class CrmService {
     return this.toOpportunity(created);
   }
 
-  /** 已赢单商机生成合同草稿。同一商机只保留一份合同。优先使用最终成交报价金额。 */
+  /**
+   * 已赢单商机生成合同草稿。同一商机只保留一份合同。优先使用最终成交报价金额。
+   *
+   * ## B2 同款收口：行锁 + CAS + 同名查重（原先三样都没有）
+   *
+   * 本方法与 `QuotationService.convert` 是**同一件事的两条入口**
+   * （商机转合同 / 报价转合同），但原先只有报价那条做了收口：
+   *
+   * | 收口 | 报价转合同 | 商机转合同（原先） |
+   * |---|---|---|
+   * | 事务内 `FOR UPDATE` 重读 | 有 | **无** |
+   * | `contractId` 判空在锁内 | 有 | **无**（事务外先读） |
+   * | 同名合同查重 | 有（409） | **无** |
+   * | UPDATE 带 `contract_id IS NULL` 的 CAS | 有 | **无** |
+   *
+   * 后果（浏览器走查实测，不是推测）：
+   *
+   * ① **同一笔生意能生成两份合同**：两条 `POST /api/crm/opportunities/:id/convert`
+   *    并发时都读到 `contractId = null`，各自 INSERT 一份，各自 UPDATE ——
+   *    合同可分别立项、分别确认收入，收入与应收凭空翻倍。
+   * ② **同名合同不拦**：两个标题相同的商机各自转合同 → 两份**同名**合同并存，
+   *    而报价转合同这条路径会以 409 明确拒绝 —— 同一件事两个口径。
+   *
+   * 修法与报价侧完全对齐：锁内重读 → 同名查重 → CAS。
+   */
   async convertToContract(opportunityId: string): Promise<Contract> {
+    // 事务外只做快速失败，真正的判定在锁内重做（与 quotation.convert 同构）
     const existing = await this.db
       .select()
       .from(crmOpportunity)
       .where(eq(crmOpportunity.id, opportunityId));
     if (existing.length === 0) throw new NotFoundException('商机不存在');
-    const opp = existing[0];
-    if ((opp.stage ?? 'new') !== 'won') {
+    if ((existing[0].stage ?? 'new') !== 'won') {
       throw new BadRequestException('只有已赢单的商机可以转合同');
     }
-    if (opp.contractId) {
+    if (existing[0].contractId) {
       throw new BadRequestException('该商机已生成合同，请勿重复转换');
     }
-    if (!opp.customerId) {
+    if (!existing[0].customerId) {
       throw new BadRequestException('商机未关联客户，不能转合同');
     }
-    let amount = Number(opp.amount ?? 0);
-    if (opp.wonQuotationId) {
-      const won = await this.db
-        .select({ totalAmount: crmQuotation.totalAmount })
-        .from(crmQuotation)
-        .where(eq(crmQuotation.id, opp.wonQuotationId))
-        .limit(1);
-      if (won[0]) amount = Number(won[0].totalAmount ?? amount);
-    }
     const resolved = await this.taxResolver.resolve({
-      explicit: opp.taxRate != null ? Number(opp.taxRate) : null,
-      customerId: opp.customerId,
+      explicit: existing[0].taxRate != null ? Number(existing[0].taxRate) : null,
+      customerId: existing[0].customerId,
       side: 'output',
     });
-    const split = splitTax(amount, resolved.rate);
     const code = await generateBizCode(
       this.db,
       erpContract,
       erpContract.code,
       'CTR'
     );
-    const rows = await this.db.transaction(async (tx) => {
+    const contractId = await this.db.transaction(async (tx) => {
+      // ① 锁内重读：并发下第二个请求会阻塞在这里，等第一个提交后再看到 contractId
+      const locked = await tx
+        .select()
+        .from(crmOpportunity)
+        .where(eq(crmOpportunity.id, opportunityId))
+        .for('update');
+      if (locked.length === 0) throw new NotFoundException('商机不存在');
+      const opp = locked[0];
+      if ((opp.stage ?? 'new') !== 'won') {
+        throw new BadRequestException('只有已赢单的商机可以转合同');
+      }
+      if (opp.contractId) {
+        throw new BadRequestException('该商机已生成合同，请勿重复转换');
+      }
+      if (!opp.customerId) {
+        throw new BadRequestException('商机未关联客户，不能转合同');
+      }
+      let amount = Number(opp.amount ?? 0);
+      if (opp.wonQuotationId) {
+        const won = await tx
+          .select({ totalAmount: crmQuotation.totalAmount })
+          .from(crmQuotation)
+          .where(eq(crmQuotation.id, opp.wonQuotationId))
+          .limit(1);
+        if (won[0]) amount = Number(won[0].totalAmount ?? amount);
+      }
+      // ② 同名合同查重（与报价转合同同口径、同文案：见 contract-name-guard.ts）
+      const duplicated = await tx
+        .select({ code: erpContract.code })
+        .from(erpContract)
+        .where(eq(erpContract.name, opp.title))
+        .limit(1);
+      if (duplicated.length > 0) {
+        throw duplicateContractConflict({
+          name: opp.title,
+          existingCode: duplicated[0].code,
+          sourceLabel: '商机名称',
+        });
+      }
+      const split = splitTax(amount, resolved.rate);
       const inserted = await tx
         .insert(erpContract)
         .values({
@@ -504,13 +560,28 @@ export class CrmService {
           rateSource: resolved.source,
           status: 'draft',
         })
-        .returning();
-      await tx
+        .returning({ id: erpContract.id });
+      // ③ CAS 收口：WHERE 带 `contract_id IS NULL`，affected rows = 0 说明
+      //    本事务之外已有并发写入（锁已排除，这是最后一道防线）。
+      const updated = await tx
         .update(crmOpportunity)
         .set({ contractId: inserted[0].id, updatedAt: new Date() })
-        .where(eq(crmOpportunity.id, opportunityId));
-      return inserted;
+        .where(
+          and(
+            eq(crmOpportunity.id, opportunityId),
+            isNull(crmOpportunity.contractId)
+          )
+        )
+        .returning({ id: crmOpportunity.id });
+      if (updated.length === 0) {
+        throw new ConflictException('该商机已被转换，请刷新后重试');
+      }
+      return inserted[0].id;
     });
+    const rows = await this.db
+      .select()
+      .from(erpContract)
+      .where(eq(erpContract.id, contractId));
     const row = rows[0];
     const customer = await this.db
       .select({ name: mdCustomer.name })
