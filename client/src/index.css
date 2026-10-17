@@ -35,3 +35,48 @@
 }
 
 @config "../../tailwind.config.ts";
+
+/* 2026-10 UI 重设计：统一表格/卡片/表单的“安静”观感。 */
+body {
+  font-size: 13px;
+  letter-spacing: 0;
+}
+
+.ant-table-thead > tr > th {
+  font-size: 11px !important;
+  font-weight: 600 !important;
+  letter-spacing: 0.02em;
+}
+
+.ant-table-tbody > tr > td {
+  font-size: 13px;
+}
+
+.ant-card {
+  box-shadow: none !important;
+}
+
+.ant-btn {
+  font-weight: 500;
+}
+
+.ant-tabs-tab {
+  font-size: 13px;
+}
+
+.ant-form-item-label > label {
+  font-size: 12px;
+}
+
+.ant-table-placeholder > td {
+  height: 160px;
+}
+
+.ant-empty-normal {
+  margin: 0;
+}
+
+/* 2026-10 UI：内容卡片不使用投影，层级交给边框与留白。 */
+.shadow-card {
+  box-shadow: none !important;
+}

@@ -36,24 +36,29 @@ const AlertsPanel: React.FC = () => {
   );
 
   return (
-    <div data-ai-section-type="card-list" className="rounded-lg border bg-card p-4">
-      <div className="flex items-center gap-2">
+    <div data-ai-section-type="card-list" className="h-full rounded-xl border border-border/80 bg-card">
+      <div className="flex h-14 items-center gap-2 border-b border-border/70 px-5">
         <BellRing className="h-4 w-4 text-muted-foreground" aria-hidden="true" />
-        <h2 className="text-base font-semibold">通知中心</h2>
+        <h2 className="text-[13px] font-semibold">待办与风险</h2>
         {sorted.length > 0 ? (
-          <span className="text-sm text-muted-foreground">
-            共 {sorted.length} 项逾期与预警
+          <span className="ml-auto text-[11px] text-muted-foreground">
+            {sorted.length} 项
           </span>
         ) : null}
       </div>
+      <div className="p-4">
+      {!loading && !error && sorted.length === 0 ? (
+        <p className="px-1 py-6 text-center text-[12px] text-muted-foreground">
+          暂无逾期与预警事项
+        </p>
+      ) : (
       <DataState
         loading={loading}
         error={error ? `通知中心加载失败：${error}` : null}
-        empty={!loading && !error && sorted.length === 0}
-        emptyText="暂无逾期与预警事项"
+        empty={false}
         onRetry={() => void reload()}
       >
-        <ul className="mt-3 divide-y">
+        <ul className="divide-y">
           {sorted.map((item: AlertItem, index: number) => (
             <li
               key={`${item.category}-${item.refCode}-${index}`}
@@ -88,6 +93,8 @@ const AlertsPanel: React.FC = () => {
           ))}
         </ul>
       </DataState>
+      )}
+      </div>
     </div>
   );
 };

@@ -13,9 +13,9 @@ const PageShell: React.FC<PageShellProps> = ({
   actions,
   children,
 }) => (
-  <div className="flex min-w-0 flex-col gap-6 p-6">
-    <div className="flex items-start justify-between gap-4">
-      <div>
+  <div className="mx-auto flex min-h-full w-full min-w-0 max-w-[1480px] flex-col gap-6 p-7">
+    <div className="flex items-start justify-between gap-6">
+      <div className="min-w-0">
         {/*
           P2-4（§5.10）：标题字号统一到规范值 `text-2xl`（24px）。
           

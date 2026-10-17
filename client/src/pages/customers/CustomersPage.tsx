@@ -5,6 +5,7 @@ import { toast } from 'sonner';
 import { Download, MoreHorizontal, Plus, Upload } from 'lucide-react';
 import { Table, TableColumnsType } from 'antd';
 import PageShell from '@client/src/components/PageShell';
+import FilterBar from '@client/src/components/erp/FilterBar';
 import { DataState } from '@client/src/components/DataState';
 import StatusBadge from '@client/src/components/erp/StatusBadge';
 import TaxEntityBanner from '@client/src/components/erp/TaxEntityBanner';
@@ -258,7 +259,7 @@ const CustomersPage: React.FC = () => {
       }
     >
       <TaxEntityBanner />
-      <div className="flex items-center gap-3">
+      <FilterBar>
         <Input
           aria-label="搜索客户"
           placeholder="搜索客户名称或编号"
@@ -269,34 +270,37 @@ const CustomersPage: React.FC = () => {
         {debouncing ? (
           <span className="text-xs text-muted-foreground">筛选中…</span>
         ) : null}
+        <div className="flex-1" />
         <Button variant="outline" onClick={handleExport}>
           <Download className="h-4 w-4" />
           导出 Excel
         </Button>
-      </div>
+      </FilterBar>
       <DataState
         loading={loading}
         error={error}
         onRetry={() => void reload()}
         skeleton="table"
       >
-        <Table
-          columns={columns}
-          dataSource={data?.items ?? []}
-          rowKey="id"
-          scroll={{ x: 1100, y: 500 }}
-          pagination={{
-            current: page,
-            pageSize,
-            total: data?.total ?? 0,
-            showTotal: (t: number) => `共 ${t} 条`,
-            onChange: (p: number, s: number) => {
-              setPage(p);
-              setPageSize(s);
-            },
-          }}
-          locale={{ emptyText: '暂无客户，点击右上角「新建客户」创建' }}
-        />
+        <div className="overflow-hidden rounded-xl border border-border/80 bg-card">
+          <Table
+            columns={columns}
+            dataSource={data?.items ?? []}
+            rowKey="id"
+            scroll={{ x: 1100, y: 500 }}
+            pagination={{
+              current: page,
+              pageSize,
+              total: data?.total ?? 0,
+              showTotal: (t: number) => `共 ${t} 条`,
+              onChange: (p: number, s: number) => {
+                setPage(p);
+                setPageSize(s);
+              },
+            }}
+            locale={{ emptyText: '暂无客户，点击右上角「新建客户」创建' }}
+          />
+        </div>
       </DataState>
       <ContactsDialog
         customer={contactsCustomer}

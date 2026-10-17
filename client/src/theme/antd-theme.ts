@@ -24,17 +24,17 @@ function buildAntdTheme(): ThemeConfig {
       borderRadius: 10,
       fontFamily:
         "'PingFang SC','Microsoft YaHei',system-ui,-apple-system,'Segoe UI',sans-serif",
-      fontSize: 14,
+      fontSize: 13,
       controlHeight: 36,
     },
     components: {
       Table: {
-        headerBg: t.muted,
+        headerBg: "hsl(220 20% 98%)",
         headerColor: t.mutedForeground,
         headerSplitColor: t.border,
         rowHoverBg: t.muted,
         borderColor: t.border,
-        cellPaddingBlock: 12,
+        cellPaddingBlock: 14,
         cellPaddingInline: 16,
         fontWeightStrong: 600,
         headerBorderRadius: 0,
@@ -61,3 +61,4 @@ export const antdTheme: ThemeConfig = buildAntdTheme();
 export function refreshAntdTheme(): ThemeConfig {
   return buildAntdTheme();
 }
+

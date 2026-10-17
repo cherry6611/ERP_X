@@ -18,7 +18,7 @@ interface Props {
 }
 
 const VatSummaryCards: React.FC<Props> = ({ data }) => (
-  <div className="grid grid-cols-2 gap-4 xl:grid-cols-5">
+  <div className="grid grid-cols-2 gap-4 xl:grid-cols-3">
     <StatCard
       label="销项税额（发票台账口径）"
       value={formatMoney(data.outputTaxFromInvoices)}
@@ -79,3 +79,4 @@ const VatSummaryCards: React.FC<Props> = ({ data }) => (
 );
 
 export default VatSummaryCards;
+

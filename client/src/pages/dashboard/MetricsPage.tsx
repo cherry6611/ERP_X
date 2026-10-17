@@ -171,10 +171,7 @@ const MetricsPage: React.FC = () => {
                 const delta = formatDelta(metric);
                 const worse = delta?.startsWith('较上期 -');
                 return (
-                  <div
-                    key={metric.key}
-                    className="flex flex-col gap-2 rounded-lg border bg-card p-4"
-                  >
+                  <div key={metric.key} className="flex flex-col gap-2">
                     <StatCard
                       label={metric.name}
                       value={formatMetric(metric)}

@@ -1,8 +1,8 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
+import { Table, type TableColumnsType } from 'antd';
 import { toast } from 'sonner';
-import { CanCapability, CanCapabilityWrite } from '@client/src/platform/auth';
+import { CanCapabilityWrite } from '@client/src/platform/auth';
 import { Badge } from '@client/src/components/ui/badge';
-import { Card, CardContent, CardHeader, CardTitle } from '@client/src/components/ui/card';
 import { Switch } from '@client/src/components/ui/switch';
 import PageShell from '@client/src/components/PageShell';
 import { DataState } from '@client/src/components/DataState';
@@ -41,10 +41,62 @@ const AdminAutomationPage: React.FC = () => {
 
   const items: AutomationConfigItem[] = data ?? [];
 
+  const columns = useMemo<TableColumnsType<AutomationConfigItem>>(
+    () => [
+      {
+        title: '任务',
+        key: 'task',
+        width: 320,
+        render: (_, item) => (
+          <span className="font-medium" title={item.taskKey}>
+            {item.taskName}
+          </span>
+        ),
+      },
+      {
+        title: '说明',
+        dataIndex: 'description',
+        key: 'description',
+        render: (value: string | null) => (
+          <span className="text-muted-foreground">{value ?? '暂无说明'}</span>
+        ),
+      },
+      {
+        title: '状态',
+        dataIndex: 'enabled',
+        key: 'enabled',
+        width: 100,
+        render: (enabled: boolean) =>
+          enabled ? (
+            <Badge variant="success">已启用</Badge>
+          ) : (
+            <Badge variant="secondary">已停用</Badge>
+          ),
+      },
+      {
+        title: '启用',
+        key: 'switch',
+        width: 88,
+        align: 'right',
+        render: (_, item) => (
+          <CanCapabilityWrite capability="admin_ops">
+            <Switch
+              checked={item.enabled}
+              disabled={operatingKey === item.taskKey}
+              onCheckedChange={(checked: boolean) => void doToggle(item, checked)}
+              aria-label={`${item.enabled ? '停用' : '启用'}任务 ${item.taskName}`}
+            />
+          </CanCapabilityWrite>
+        ),
+      },
+    ],
+    [operatingKey],
+  );
+
   return (
     <PageShell
       title="自动化任务"
-      description="定时任务的总开关管理：停用后任务到点不再执行业务逻辑"
+      description="定时任务总开关：停用后任务到点不再执行业务逻辑；任务标识仅在排障时使用"
     >
       <DataState
         loading={loading}
@@ -52,50 +104,15 @@ const AdminAutomationPage: React.FC = () => {
         empty={!loading && !error && items.length === 0}
         emptyText="暂无自动化任务"
         onRetry={() => void reload()}
-        skeleton="card"
+        skeleton="table"
       >
-        <div className="flex flex-col gap-4">
-          {items.map((item) => (
-            <Card key={item.taskKey} className="max-w-5xl">
-              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-base font-semibold">
-                  {item.taskName}
-                </CardTitle>
-                <div className="flex items-center gap-3">
-                  {item.enabled ? (
-                    <Badge variant="success">已启用</Badge>
-                  ) : (
-                    <Badge variant="secondary">已停用</Badge>
-                  )}
-                  <CanCapabilityWrite capability="admin_ops">
-                    <Switch
-                      checked={item.enabled}
-                      disabled={operatingKey === item.taskKey}
-                      onCheckedChange={(checked: boolean) =>
-                        void doToggle(item, checked)
-                      }
-                      aria-label={`${item.enabled ? '停用' : '启用'}任务 ${item.taskName}`}
-                    />
-                  </CanCapabilityWrite>
-                </div>
-              </CardHeader>
-              {/*
-                观感修复：卡片在宽屏下会拉满整行（约 1450px），而说明文字只有一行，
-                于是右侧留下大片空白、文字行长过长不利阅读。
-                做法：说明文字限宽（`max-w-3xl`），卡片整体限宽（`max-w-5xl`）。
-                限宽的是**内容**而不是卡片本身，所以开关仍靠卡片右边缘对齐。
-              */}
-              <CardContent className="flex max-w-3xl flex-col gap-1">
-                <p className="text-sm text-muted-foreground">
-                  {item.description ?? '暂无说明'}
-                </p>
-                <p className="text-xs text-muted-foreground">
-                  任务标识：{item.taskKey}
-                </p>
-              </CardContent>
-            </Card>
-          ))}
-        </div>
+        <Table
+          rowKey="taskKey"
+          columns={columns}
+          dataSource={items}
+          pagination={false}
+          scroll={{ x: 900 }}
+        />
       </DataState>
     </PageShell>
   );

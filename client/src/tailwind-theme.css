@@ -81,7 +81,7 @@
   --badge-warning-foreground: hsl(30 90% 28%);
   --badge-info-foreground: hsl(230 90% 40%);
   --badge-destructive-foreground: hsl(351 80% 36%);
-  --border: hsl(220 16% 88%);
+  --border: hsl(220 18% 91%);
   --input: hsl(220 16% 88%);
   --ring: hsl(230 100% 62%);
 
@@ -97,13 +97,13 @@
   --chart-4: var(--chart-warning);
   --chart-5: var(--chart-other);
 
-  --sidebar: hsl(220 20% 96%);
+  --sidebar: hsl(0 0% 100%);
   --sidebar-foreground: hsl(222 30% 12%);
   --sidebar-primary: hsl(230 100% 62%);
   --sidebar-primary-foreground: hsl(0 0% 100%);
   --sidebar-accent: hsl(230 100% 94%);
   --sidebar-accent-foreground: hsl(230 90% 46%);
-  --sidebar-border: hsl(220 16% 88%);
+  --sidebar-border: hsl(220 18% 92%);
   --sidebar-ring: hsl(230 100% 62%);
 
   --space-1: 4px;
@@ -116,7 +116,7 @@
   --space-10: 40px;
   --space-12: 48px;
 
-  --header-height: 3.5rem;
+  --header-height: 3.75rem;
 
   --primary-border: hsl(from hsl(230 100% 62%) h s calc(l + var(--opaque-button-border-intensity)));
   --secondary-border: hsl(from hsl(220 20% 96%) h s calc(l + var(--opaque-button-border-intensity)));
@@ -133,7 +133,7 @@
   --font-mono: 'JetBrains Mono', 'Source Code Pro', ui-monospace, monospace;
 
   --radius: 0.625rem;
-  --shadow-card: 0 1px 2px rgba(16, 24, 40, 0.04), 0 1px 3px rgba(16, 24, 40, 0.06);
+  --shadow-card: 0 1px 2px rgba(16, 24, 40, 0.03);
   --shadow-pop: 0 4px 12px rgba(16, 24, 40, 0.08), 0 12px 28px -8px rgba(16, 24, 40, 0.12);
   --shadow-brand: var(--glow-shadow);
   --shadow-x: 0px;
@@ -398,3 +398,5 @@
     inset: -1px;
   }
 }
+
+

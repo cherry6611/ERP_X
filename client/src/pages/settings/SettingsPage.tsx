@@ -382,6 +382,7 @@ export default function SettingsPage() {
       title="设置"
       description="外观、品牌、飞书云空间/知识库、报价多维表格、账号绑定与系统字典/参数"
     >
+      <div className="max-w-5xl">
       <Tabs defaultValue="appearance">
         <TabsList>
           <TabsTrigger value="appearance">外观与集成</TabsTrigger>
@@ -396,6 +397,7 @@ export default function SettingsPage() {
           <ParameterSettings />
         </TabsContent>
       </Tabs>
+      </div>
     </PageShell>
   );
 }

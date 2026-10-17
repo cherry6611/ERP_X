@@ -31,31 +31,26 @@ const StatCard: React.FC<StatCardProps> = ({
 }) => (
   <div
     data-ai-section-type="card-stat"
-    className="flex flex-col gap-2 rounded-xl border bg-card p-5 shadow-card transition-all duration-150 hover:-translate-y-px hover:shadow-pop motion-reduce:transform-none motion-reduce:transition-none"
+    className="flex flex-col gap-1.5 rounded-xl border border-border/80 bg-card p-4"
   >
     <div className="flex items-start justify-between gap-2">
-      <p className="text-xs text-muted-foreground">{label}</p>
+      <p className="text-[11px] text-muted-foreground">{label}</p>
       {Icon ? (
         <span
           className={cn(
-            'flex size-8 shrink-0 items-center justify-center rounded-lg',
+            'flex size-7 shrink-0 items-center justify-center rounded-md',
             TONE_ICON_CLASS[tone],
           )}
         >
-          <Icon className="size-4" />
+          <Icon className="size-3.5" />
         </span>
       ) : null}
     </div>
-    <div
-      className={cn(
-        'text-[30px] font-semibold leading-9 tabular-nums tracking-tight',
-        tone === 'primary' && 'text-glow',
-      )}
-    >
+    <div className="text-[25px] font-semibold leading-8 tabular-nums tracking-tight">
       {value}
     </div>
     {delta || hint ? (
-      <div className="flex flex-col gap-0.5 text-xs text-muted-foreground">
+      <div className="flex flex-col gap-0.5 text-[11px] text-muted-foreground">
         {delta}
         {hint}
       </div>

@@ -56,7 +56,7 @@ async function main() {
 
   /* 期间取自库内实际有凭证的期间，避免拿空期间做"平凡通过" */
   const sql = postgres({
-    host: '127.0.0.1', port: 5433, user: 'erp', password: process.env.DB_PASSWORD ?? '',
+    host: '127.0.0.1', port: 5433, user: 'erp', password: process.env.DB_PASSWORD ?? envOf('POSTGRES_PASSWORD') ?? '',
     database: 'shengseerp', connect_timeout: 5,
   });
   const periods = (await sql`SELECT DISTINCT period FROM fin_voucher ORDER BY period DESC LIMIT 3`)
@@ -129,3 +129,4 @@ async function main() {
   }
 }
 void main().catch((e) => { console.error('复核失败:', e.message); process.exitCode = 1; });
+

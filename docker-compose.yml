@@ -34,6 +34,7 @@ services:
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
       JWT_SECRET: ${JWT_SECRET:?请设置 JWT_SECRET}
       SECRET_ENC_KEY: ${SECRET_ENC_KEY:?请设置 SECRET_ENC_KEY}
+      BOOTSTRAP_ADMIN_USERNAME: ${BOOTSTRAP_ADMIN_USERNAME:-admin}
       BOOTSTRAP_ADMIN_PASSWORD: ${BOOTSTRAP_ADMIN_PASSWORD:-}
       SERVER_HOST: 0.0.0.0
       SERVER_PORT: 3000
@@ -71,3 +72,4 @@ services:
 volumes:
   erp-pg:
   erp-uploads:
+

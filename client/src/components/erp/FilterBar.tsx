@@ -6,11 +6,11 @@ interface FilterBarProps {
 }
 
 const FilterBar: React.FC<FilterBarProps> = ({ title, children }) => (
-  <div className="rounded-lg border bg-card p-3">
+  <div className="rounded-xl border border-border/80 bg-card px-3 py-2.5">
     {title ? (
-      <p className="mb-2 px-1 text-xs font-medium text-muted-foreground">{title}</p>
+      <p className="mb-2 px-1 text-[11px] font-medium text-muted-foreground">{title}</p>
     ) : null}
-    <div className="flex flex-wrap items-center gap-2">{children}</div>
+    <div className="flex flex-wrap items-center gap-2.5">{children}</div>
   </div>
 );
 
