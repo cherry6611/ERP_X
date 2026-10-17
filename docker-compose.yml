@@ -7,7 +7,8 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:?请设置 POSTGRES_DB}
     ports:
       # 仅本机可达，避免云主机公网暴露 Postgres
-      - "127.0.0.1:5432:5432"
+      # 宿主端口可配：Windows Hyper-V 常排除 5432，默认 5434 避免与本地 dev 5433 冲突。
+      - "127.0.0.1:${POSTGRES_HOST_PORT:-5434}:5432"
     volumes:
       - erp-pg:/var/lib/postgresql/data
     healthcheck:
