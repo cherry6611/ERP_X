@@ -40,6 +40,7 @@ import { TaxResolverService } from '@server/modules/tax/tax-resolver.service';
 import { isVatRate, lineAmount, splitTax } from '@shared/tax';
 import { todayInShanghai } from '@server/common/utils/biz-date';
 import { round2 } from '@server/common/utils/number';
+import { checkItemSumConsistency } from './contract-item-consistency';
 import { contractUpdateBlockReason } from './contract-update-guard';
 /*
  * 税额重算时「旧税率还算不算显式选定」的判据（纯函数，配有规格）。
@@ -907,66 +908,26 @@ export class ContractsService {
           eq(erpContractItem.isCurrent, 1)
         )
       );
-    // 修复 T-04：0 条明细不能再放行，否则会出现「合同金额 100 万、明细为空」的生效合同，
-    // 收入确认/开票/结算全部失去依据。金额同为 0 的空合同允许无明细。
-    if (Number(rows[0]?.cnt ?? 0) === 0) {
-      if (Math.abs(header) > 0.01) {
-        throw new BadRequestException(
-          '合同至少需要一条明细才能提交/生效，请先在「合同明细」中添加明细行'
-        );
-      }
-      return;
-    }
-    const total = Number(rows[0]?.total ?? 0);
-    if (Math.abs(total - header) > 0.01) {
-      throw new BadRequestException(
-        `合同明细合计 ${total} 与合同金额 ${header} 相差超过 0.01`
-      );
-    }
-    if (headerTaxAmount !== undefined && headerTaxAmount !== null) {
-      const taxTotal = Number(rows[0]?.taxTotal ?? 0);
-      /*
-       * 容差计算（**这是本校验能落地的关键**）。
-       *
-       * 合同头的税额来自 `splitTax(整单含税额, 税率)`，而每行税额来自
-       * `splitTax(行含税额, 税率)` —— 同一税率、不同基数，逐行取整后
-       * **Σ行税额与头税额天然可能差几分**（十进制的正常结果，不是缺陷）。
-       *
-       * 例：3 × 29.997 元、6% ⇒ 各行税额各 1.70，Σ = 5.10；
-       *     而头 `splitTax(89.99, 6)` 的税额 = 5.09，差 1 分。
-       *
-       * 若用固定容差，要么把这种正常差异判成错误（大量假失败 → 使用者开始
-       * 习惯性忽略这道校验），要么放宽到掩盖真实的税率错配。两者都不可接受。
-       *
-       * 因此容差随**行数**放大：每行最多贡献 1 分取整差，再留 1 分余量。
-       * 而被审计点名的真实缺陷（头 113,000@13% vs 明细 113,000@6%）
-       * 税额差是 **6,603.77** —— 高出该容差三个数量级，必然被拦住。
-       */
-      const itemCount = Number(rows[0]?.cnt ?? 0);
-      const tolerance = 0.01 * (itemCount + 1);
-      if (Math.abs(taxTotal - headerTaxAmount) > tolerance) {
-        throw new BadRequestException(
-          `合同明细税额合计 ${taxTotal} 与合同税额 ${headerTaxAmount} 相差 ${round2(
-            Math.abs(taxTotal - headerTaxAmount)
-          )}，超出逐行取整的正常范围（容差 ${round2(tolerance)}）：` +
-            `明细行使用了与合同头不同的税率。含税金额相同不代表税额相同 —— ` +
-            `请在明细中统一税率，或修正合同头税率`
-        );
-      }
-    }
-    if (headerNetAmount !== undefined && headerNetAmount !== null) {
-      const netTotal = Number(rows[0]?.netTotal ?? 0);
-      const itemCount = Number(rows[0]?.cnt ?? 0);
-      const tolerance = 0.01 * (itemCount + 1);
-      if (Math.abs(netTotal - headerNetAmount) > tolerance) {
-        throw new BadRequestException(
-          `合同明细不含税合计 ${netTotal} 与合同不含税额 ${headerNetAmount} 相差 ${round2(
-            Math.abs(netTotal - headerNetAmount)
-          )}，超出逐行取整的正常范围（容差 ${round2(tolerance)}）：` +
-            `明细行税率与合同头税率不同。项目预算按不含税额取数，` +
-            `两者不一致会让同一份合同出现两个净额`
-        );
-      }
+    /*
+     * 校验逻辑已抽到 `./contract-item-consistency`（纯函数 + 21 条断言）——
+     * 三项校验（含税合计 / 税额 / 不含税）与"容差随行数放大"的推导都在那里，
+     * 这里只负责查数、把问题翻译成可读中文异常。
+     *
+     * 原实现把容差公式 `0.01 * (itemCount + 1)` 写了两遍，且三处比较都用裸
+     * `Math.abs(a - b) > tol` —— 实测 `|60.02 − 60|` 的浮点结果是 `0.020000000000003`，
+     * 恰好等于容差却被判"超出"。抽出的模块里比较一律过 `round2`。
+     */
+    const problems = checkItemSumConsistency({
+      headerAmount: header,
+      headerTaxAmount,
+      headerNetAmount,
+      itemCount: Number(rows[0]?.cnt ?? 0),
+      totalAmount: rows[0]?.total,
+      totalTaxAmount: rows[0]?.taxTotal,
+      totalNetAmount: rows[0]?.netTotal,
+    });
+    if (problems.length > 0) {
+      throw new BadRequestException(problems[0]);
     }
   }
 
