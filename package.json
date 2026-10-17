@@ -174,7 +174,8 @@
     "type:check:scripts": "tsc --noEmit --project tsconfig.scripts.json",
     "check:audit-immutability": "node ./scripts/check-audit-immutability.mjs",
     "type:check:specs": "tsc --noEmit --project tsconfig.spec-server.json",
-    "check:typecheck-coverage": "node ./scripts/audit-typecheck-coverage.mjs"
+    "check:typecheck-coverage": "node ./scripts/audit-typecheck-coverage.mjs",
+    "preflight": "node ./scripts/preflight.mjs"
   },
   "version": "2.4.0"
 }
