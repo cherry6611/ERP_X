@@ -7,6 +7,10 @@ import {
 } from '@nestjs/common';
 import { and, asc, count, eq, or, sql } from 'drizzle-orm';
 import {
+  ilikeEscaped,
+  likeContains,
+} from '@server/common/utils/sql-like';
+import {
   DRIZZLE_DATABASE,
   type PostgresJsDatabase,
 } from '@server/platform';
@@ -107,14 +111,17 @@ export class BankAccountService {
     const conditions = [];
     if (params.status) conditions.push(eq(mdBankAccount.status, params.status));
     if (params.keyword) {
-      const keyword = `%${params.keyword}%`;
-      conditions.push(
-        or(
-          sql`${mdBankAccount.name} ILIKE ${keyword}`,
-          sql`${mdBankAccount.accountNo} ILIKE ${keyword}`,
-          sql`${mdBankAccount.bankName} ILIKE ${keyword}`
-        )
-      );
+      // S4：转义 `%`/`_` 并显式 `ESCAPE`（原实现 `%${keyword}%` 传 `%` 即匹配全表）
+      const keyword = likeContains(params.keyword);
+      if (keyword) {
+        conditions.push(
+          or(
+            ilikeEscaped(mdBankAccount.name, keyword),
+            ilikeEscaped(mdBankAccount.accountNo, keyword),
+            ilikeEscaped(mdBankAccount.bankName, keyword)
+          )
+        );
+      }
     }
     const where = conditions.length > 0 ? and(...conditions) : undefined;
 

@@ -11,6 +11,7 @@ import {
 } from '@server/platform';
 import { and, asc, eq, inArray, sql } from 'drizzle-orm';
 import { hrEmployeeTaxDeduction, mdEmployee } from '@server/database/schema';
+import { round2 } from '@server/common/utils/number';
 import {
   BASIC_DEDUCTION_PER_MONTH,
   cumulativeAdditionalDeduction,
@@ -20,6 +21,10 @@ import {
   type TaxDeductionEntry,
   type TaxDeductionType,
 } from './payroll-engine';
+import {
+  checkDeductionAmount,
+  exclusiveCounterpart,
+} from './tax-deduction-rules';
 import type {
   EmployeeTaxDeductionItem,
   UpsertTaxDeductionDto,
@@ -47,32 +52,29 @@ export class PayrollTaxService {
   }
 
   /**
-   * P1-8：各类型专项附加扣除的**月度法定标准上限**（个人所得税法 + 国发〔2018〕41 号，
-   * 按 2023 年提标后口径）。系统按「员工 × 年度 × 类型」只允许一条登记，
-   * 因此子女教育/婴幼儿照护等「按子女数累加」的项目这里取**单个子女**的标准
-   * ——多子女家庭需拆到多条登记的能力见备注，超出上限一律拒绝并提供清晰提示。
+   * N-4 / N-5：上限判断的唯一实现已抽到 `tax-deduction-rules.ts`（纯函数 + 单测），
+   * 本方法只负责把 DTO 映射成规则输入并把失败原因转成 400。
+   *
+   * 原实现的三处口径问题：
+   * 1. 赡养老人一律按独生子女 3000 元封顶 —— **非独生子女只能扣 1500**，属超额扣除；
+   * 2. 子女教育 / 婴幼儿照护按「每人 2000」却因唯一约束封顶 2000 ——
+   *    多子女家庭无法累加，**员工多缴个税**；
+   * 3. 未支持父母（夫妻）分摊比例，双方都只能按 100% 登记。
    */
-  private static readonly MONTHLY_CAP: Record<TaxDeductionType, number> = {
-    child_education: 2000,
-    continuing_education: 400,
-    // 大病医疗按年度据实限额扣除（15000 起付 / 80000 上限），无月度定额，
-    // 这里以年度上限的 1/12 作为月度登记上限，避免登记出荒诞值。
-    medical: Math.floor(80000 / 12),
-    housing_loan: 1000,
-    // 住房租金按城市档 1500/1100/800，取最高档作为上限
-    housing_rent: 1500,
-    elderly_support: 3000,
-    infant_care: 2000,
-  };
-
-  private assertMonthlyCap(type: TaxDeductionType, amount: number): void {
-    const cap = PayrollTaxService.MONTHLY_CAP[type];
-    if (amount > cap + 0.001) {
-      throw new BadRequestException(
-        `${TAX_DEDUCTION_LABELS[type]}月度扣除标准上限为 ${cap} 元，当前登记 ${amount} 元。` +
-          `如为多子女/多项目合并扣除，请分别登记；住房租金请按所属城市档位（最高 1500 元/月）填写`
-      );
-    }
+  private assertDeductionClaim(
+    type: TaxDeductionType,
+    dto: UpsertTaxDeductionDto
+  ): void {
+    const result = checkDeductionAmount({
+      deductionType: type,
+      monthlyAmount: Number(dto.monthlyAmount),
+      isOnlyChild: dto.isOnlyChild ?? null,
+      shareAmount: dto.shareAmount == null ? null : Number(dto.shareAmount),
+      dependentCount:
+        dto.dependentCount == null ? 1 : Number(dto.dependentCount),
+      shareRatio: dto.shareRatio == null ? 1 : Number(dto.shareRatio),
+    });
+    if (!result.ok) throw new BadRequestException(result.reason);
   }
 
   private toItem(row: {
@@ -85,6 +87,10 @@ export class PayrollTaxService {
     startMonth: number;
     endMonth: number | null;
     remark: string | null;
+    isOnlyChild?: boolean | null;
+    shareAmount?: string | number | null;
+    dependentCount?: number | null;
+    shareRatio?: string | number | null;
   }): EmployeeTaxDeductionItem {
     return {
       id: row.id,
@@ -96,6 +102,10 @@ export class PayrollTaxService {
       startMonth: Number(row.startMonth ?? 1),
       endMonth: row.endMonth == null ? null : Number(row.endMonth),
       remark: row.remark,
+      isOnlyChild: row.isOnlyChild ?? null,
+      shareAmount: row.shareAmount == null ? null : Number(row.shareAmount),
+      dependentCount: Number(row.dependentCount ?? 1),
+      shareRatio: row.shareRatio == null ? 1 : Number(row.shareRatio),
     };
   }
 
@@ -127,6 +137,10 @@ export class PayrollTaxService {
         startMonth: hrEmployeeTaxDeduction.startMonth,
         endMonth: hrEmployeeTaxDeduction.endMonth,
         remark: hrEmployeeTaxDeduction.remark,
+        isOnlyChild: hrEmployeeTaxDeduction.isOnlyChild,
+        shareAmount: hrEmployeeTaxDeduction.shareAmount,
+        dependentCount: hrEmployeeTaxDeduction.dependentCount,
+        shareRatio: hrEmployeeTaxDeduction.shareRatio,
       })
       .from(hrEmployeeTaxDeduction)
       .leftJoin(mdEmployee, eq(hrEmployeeTaxDeduction.employeeId, mdEmployee.id))
@@ -235,9 +249,9 @@ export class PayrollTaxService {
     if (!(dto.monthlyAmount > 0)) {
       throw new BadRequestException('monthlyAmount 必须大于 0');
     }
-    // P1-8：专项附加扣除按月定额有法定上限，超额登记会直接少缴个税。
-    // 原实现只校验「大于 0」，可登记 999999/月。
-    this.assertMonthlyCap(type, Number(dto.monthlyAmount));
+    // P1-8 + N-4 + N-5：上限与「独生 / 非独生」「人数」「分摊比例」相关，
+    // 全部交给 tax-deduction-rules.ts 判定（纯函数单测双向锁定）。
+    this.assertDeductionClaim(type, dto);
     const startMonth = dto.startMonth == null ? 1 : Number(dto.startMonth);
     if (!Number.isInteger(startMonth) || startMonth < 1 || startMonth > 12) {
       throw new BadRequestException('startMonth 必须为 1~12');
@@ -266,11 +280,7 @@ export class PayrollTaxService {
       .limit(1);
     // P1-8：住房贷款利息 与 住房租金 是法定互斥项（同一纳税年度只能享受其中一项）。
     // 不拦的话员工可以同时登记 1000 + 1500，属可直接被稽查发现的多扣。
-    const exclusive: Partial<Record<TaxDeductionType, TaxDeductionType>> = {
-      housing_loan: 'housing_rent',
-      housing_rent: 'housing_loan',
-    };
-    const conflictsWith = exclusive[type];
+    const conflictsWith = exclusiveCounterpart(type);
     if (conflictsWith) {
       const conflictRows = await this.db
         .select({ id: hrEmployeeTaxDeduction.id })
@@ -299,6 +309,15 @@ export class PayrollTaxService {
       startMonth,
       endMonth,
       remark: dto.remark ?? null,
+      isOnlyChild:
+        type === 'elderly_support' ? (dto.isOnlyChild ?? null) : null,
+      shareAmount:
+        type === 'elderly_support' && dto.isOnlyChild === false
+          ? String(dto.shareAmount)
+          : null,
+      dependentCount:
+        dto.dependentCount == null ? 1 : Number(dto.dependentCount),
+      shareRatio: String(dto.shareRatio == null ? 1 : Number(dto.shareRatio)),
       updatedAt: new Date(),
     };
     if (existing.length > 0) {
@@ -367,14 +386,22 @@ export class PayrollTaxService {
       ytdTaxWithheld: number;
     }>
   > {
-    const employeeFilter =
-      employeeIds && employeeIds.length > 0
-        ? sql`AND p.employee_id = ANY(${sql.raw(
-            `ARRAY[${employeeIds
-              .map((id) => `'${id.replace(/'/g, "''")}'`)
-              .join(',')}]`
-          )}::uuid[])`
-        : sql``;
+    // 安全：员工 ID 列表来自请求参数，必须参数化绑定。
+    // 原实现用 sql.raw 手工拼接 `ARRAY['...','...']::uuid[]`，靠单引号转义防注入 ——
+    // 既脆弱（漏一处转义即注入），又会让非法 UUID 直接抛 PG 语法错（500 而非 400）。
+    // 现改为先做 UUID 白名单校验，再用 drizzle 参数绑定。
+    const UUID_RE =
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    let employeeFilter = sql``;
+    if (employeeIds && employeeIds.length > 0) {
+      const invalid = employeeIds.filter((id) => !UUID_RE.test(id));
+      if (invalid.length > 0) {
+        throw new BadRequestException(
+          `employeeIds 含非法 UUID：${invalid.slice(0, 3).join(', ')}`
+        );
+      }
+      employeeFilter = sql`AND p.employee_id = ANY(${employeeIds}::uuid[])`;
+    }
     const rows = await this.db.execute(sql`
       SELECT p.employee_id AS employee_id,
              coalesce(max(e.name), '') AS employee_name,
@@ -442,19 +469,17 @@ export class PayrollTaxService {
       const ytdTaxWithheld = latestTax || Number(row.sum_tax ?? 0);
       const basicDeduction =
         Number(row.latest_basic ?? 0) || BASIC_DEDUCTION_PER_MONTH * months;
-      const ytdTaxableIncome =
+      const ytdTaxableIncome = round2(
         latestTaxable ||
-        Math.max(
-          0,
-          Math.round(
-            (ytdIncome -
+          Math.max(
+            0,
+            ytdIncome -
               Number(row.latest_tax_free ?? 0) -
               basicDeduction -
               ytdDeduction -
-              ytdAdditionalDeduction) *
-              100
-          ) / 100
-        );
+              ytdAdditionalDeduction
+          )
+      );
       return {
         employeeId,
         employeeName: String(row.employee_name ?? ''),

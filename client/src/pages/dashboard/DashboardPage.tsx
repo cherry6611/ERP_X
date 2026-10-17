@@ -1,5 +1,4 @@
-import React, { useState } from 'react';
-import ReactECharts from 'echarts-for-react';
+import React, { useMemo, useState } from 'react';
 import {
   Briefcase,
   CircleDollarSign,
@@ -12,22 +11,19 @@ import {
   Receipt,
   TrendingDown,
   TrendingUp,
-  UserCog,
-  UserMinus,
-  UserPlus,
   Users,
-  type LucideIcon,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import type { EChartsOption } from 'echarts';
-import { Table, TableColumnsType } from 'antd';
 import PageShell from '@client/src/components/PageShell';
 import { DataState } from '@client/src/components/DataState';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@client/src/components/ui/tabs';
-import StatCard from '@client/src/components/erp/StatCard';
+import { Tabs, TabsList, TabsTrigger } from '@client/src/components/ui/tabs';
 import { seriesColorMap as seriesColor } from '@client/src/theme/tokens';
-import AlertsPanel from './components/AlertsPanel';
-import ProjectFinancialHealthPanel from './components/ProjectFinancialHealthPanel';
+import BudgetTab from './components/BudgetTab';
+import FinanceTab from './components/FinanceTab';
+import HrTab from './components/HrTab';
+import OverviewTab from './components/OverviewTab';
+import type { OverviewStat } from './components/dashboard-types';
 import { biApi, financeApi, finBudgetApi, hrApi } from '@client/src/api';
 import { useAsyncData } from '@client/src/hooks/useAsyncData';
 import { formatMoney, formatPercent } from '@client/src/utils/format';
@@ -41,14 +37,6 @@ import type {
   MonthlyTrend,
   ProjectMargin,
 } from '@shared/api.interface';
-
-type OverviewStat = {
-  label: string;
-  value: React.ReactNode;
-  icon: LucideIcon;
-  tone: 'primary' | 'success' | 'warning' | 'info' | 'neutral';
-  delta?: React.ReactNode;
-};
 
 const renderTrendDelta = (delta: number | undefined): React.ReactNode => {
   if (delta === undefined) return undefined;
@@ -70,6 +58,35 @@ const renderTrendDelta = (delta: number | undefined): React.ReactNode => {
   );
 };
 
+/**
+ * §5.9 / F8：本文件现在只做**布局编排**（非空行 720 → 463）。
+ *
+ * 上一轮的教训是「只搬纯声明不够 —— JSX 才是体量所在」。本轮与前几轮同一办法：
+ * **四段 `<TabsContent>` 逐字搬到同目录 `components/`，只去一层缩进**。
+ *
+ * | 原位置 | 去向 | 承担什么 |
+ * |---|---|---|
+ * | `overview` 面板 | `components/OverviewTab.tsx` | 预警中心 + 核心指标卡 + 收入成本趋势 |
+ * | `finance` 面板 | `components/FinanceTab.tsx` | 趋势/账龄/开票分布三图 + 更多指标 + 毛利排行 + 客户贡献（含两张表的列定义） |
+ * | `hr` 面板 | `components/HrTab.tsx` | 五项人数指标 + 近 12 个月在册趋势 |
+ * | `budget` 面板 | `components/BudgetTab.tsx` | 预算执行率图 |
+ * | `OverviewStat` 类型 | `components/dashboard-types.ts` | 指标卡结构（概览与财务共用） |
+ *
+ * **本文件保留**：八路数据查询（`useAsyncData`）、四张图的 `option` 及其
+ * `useMemo`、环比与 `statCards` 的派生，以及**毛利表下钻的 `costBreakdowns`
+ * 缓存与两个处理器** —— 后者刻意留在这层：它挂在 `<Tabs>` **之上**，
+ * 因此切换 Tab（Radix 会卸载非活动面板）或点重试重新取数时**缓存不丢**；
+ * 搬进 `FinanceTab` 会让「展开过的项目再展开要重新请求」变成新行为。
+ *
+ * ## F2（§5.3）的 memo 一个都没动
+ *
+ * 四条 option 的 `useMemo` 与依赖数组**原样留在本文件**
+ * （`[trendList]` / `[budgetExecutionList]` / `[hrTrendList]` / `[agingBuckets]`），
+ * 子组件**只接收 memo 后的引用**（`trendOption` 等），自己不重建 option ——
+ * 引用不变，`echarts-for-react` 就不会走 `setOption` 全量重绘。
+ * 传给子组件的四个数组同样取自这些 `useMemo`（供空态判断），引用稳定。
+ * ⚠️ 下面几条 F2 说明里写的「694 行」是拆分前的实测值，原文保留未改。
+ */
 const DashboardPage: React.FC = () => {
   const [costBreakdowns, setCostBreakdowns] = useState<
     Record<string, BiProjectCostBreakdownItem[]>
@@ -106,8 +123,23 @@ const DashboardPage: React.FC = () => {
     [],
   );
 
-  const trendList = trends ?? [];
-  const trendOption: EChartsOption = {
+  /*
+   * F2：`?? []` 每次渲染都产生**新数组**，会让下面的 useMemo 每次都失效。
+   * 必须先 memo 住数据源本身，option 的 memo 才有意义 —— 这正是
+   * `react-hooks/exhaustive-deps` 那条提示的实质。
+   */
+  const trendList = useMemo(() => trends ?? [], [trends]);
+  /*
+   * F2（§5.3）：**option 必须 memo**。
+   *
+   * 原实现把 option 建在组件体内，而本组件是 694 行 + 7 个 `useAsyncData` +
+   * 多个 `useState`：**任何 state 变化都会重建 option 对象**。
+   * `echarts-for-react` 对新对象引用一律走 `setOption` → 全量 diff 重绘，
+   * 于是一次筛选、一次弹窗开关都会让 4~5 张图表整体重绘。
+   *
+   * 依赖只列**数据源**：option 的其余部分全是常量，不需要参与比较。
+   */
+  const trendOption: EChartsOption = useMemo(() => ({
     tooltip: { trigger: 'axis' },
     legend: { bottom: 0 },
     grid: { left: '3%', right: '4%', bottom: '20%', containLabel: true },
@@ -137,10 +169,20 @@ const DashboardPage: React.FC = () => {
         itemStyle: { color: seriesColor.alertHex },
       },
     ],
-  };
+  }), [trendList]);
 
-  const budgetExecutionList = budgetExecutions ?? [];
-  const budgetExecutionOption: EChartsOption = {
+  const budgetExecutionList = useMemo(() => budgetExecutions ?? [], [budgetExecutions]);
+  /*
+   * F2（§5.3）：**option 必须 memo**。
+   *
+   * 原实现把 option 建在组件体内，而本组件是 694 行 + 7 个 `useAsyncData` +
+   * 多个 `useState`：**任何 state 变化都会重建 option 对象**。
+   * `echarts-for-react` 对新对象引用一律走 `setOption` → 全量 diff 重绘，
+   * 于是一次筛选、一次弹窗开关都会让 4~5 张图表整体重绘。
+   *
+   * 依赖只列**数据源**：option 的其余部分全是常量，不需要参与比较。
+   */
+  const budgetExecutionOption: EChartsOption = useMemo(() => ({
     tooltip: { trigger: 'axis' },
     legend: { bottom: 0 },
     grid: { left: '3%', right: '4%', bottom: '20%', containLabel: true },
@@ -170,11 +212,21 @@ const DashboardPage: React.FC = () => {
         itemStyle: { color: seriesColor.alertHex },
       },
     ],
-  };
+  }), [budgetExecutionList]);
 
-  const agingBuckets = aging ?? [];
-  const hrTrendList = hrOverview?.headcountTrend ?? [];
-  const hrTrendOption: EChartsOption = {
+  const agingBuckets = useMemo(() => aging ?? [], [aging]);
+  const hrTrendList = useMemo(() => hrOverview?.headcountTrend ?? [], [hrOverview]);
+  /*
+   * F2（§5.3）：**option 必须 memo**。
+   *
+   * 原实现把 option 建在组件体内，而本组件是 694 行 + 7 个 `useAsyncData` +
+   * 多个 `useState`：**任何 state 变化都会重建 option 对象**。
+   * `echarts-for-react` 对新对象引用一律走 `setOption` → 全量 diff 重绘，
+   * 于是一次筛选、一次弹窗开关都会让 4~5 张图表整体重绘。
+   *
+   * 依赖只列**数据源**：option 的其余部分全是常量，不需要参与比较。
+   */
+  const hrTrendOption: EChartsOption = useMemo(() => ({
     tooltip: { trigger: 'axis' },
     grid: { left: '3%', right: '4%', bottom: '10%', containLabel: true },
     xAxis: {
@@ -192,8 +244,18 @@ const DashboardPage: React.FC = () => {
         areaStyle: { opacity: 0.1 },
       },
     ],
-  };
-  const agingOption: EChartsOption = {
+  }), [hrTrendList]);
+  /*
+   * F2（§5.3）：**option 必须 memo**。
+   *
+   * 原实现把 option 建在组件体内，而本组件是 694 行 + 7 个 `useAsyncData` +
+   * 多个 `useState`：**任何 state 变化都会重建 option 对象**。
+   * `echarts-for-react` 对新对象引用一律走 `setOption` → 全量 diff 重绘，
+   * 于是一次筛选、一次弹窗开关都会让 4~5 张图表整体重绘。
+   *
+   * 依赖只列**数据源**：option 的其余部分全是常量，不需要参与比较。
+   */
+  const agingOption: EChartsOption = useMemo(() => ({
     tooltip: { trigger: 'axis' },
     grid: { left: '3%', right: '4%', bottom: '20%', containLabel: true },
     xAxis: {
@@ -210,61 +272,7 @@ const DashboardPage: React.FC = () => {
         itemStyle: { color: seriesColor.costHex },
       },
     ],
-  };
-
-  const marginColumns: TableColumnsType<ProjectMargin> = [
-    { title: '项目', dataIndex: 'name', fixed: 'left', width: 220, render: (v, record) => (
-      <span>
-        {record.code} - {v}
-      </span>
-    ) },
-    { title: '项目经理', dataIndex: 'pm', width: 110, render: (v) => v ?? '-' },
-    {
-      title: '已确认收入',
-      dataIndex: 'recognizedRevenue',
-      width: 140,
-      align: 'right',
-      render: (v: number) => formatMoney(v),
-    },
-    {
-      title: '已归集成本',
-      dataIndex: 'totalCost',
-      width: 140,
-      align: 'right',
-      render: (v: number) => formatMoney(v),
-    },
-    {
-      title: '毛利',
-      dataIndex: 'grossMargin',
-      width: 140,
-      align: 'right',
-      render: (v: number) => (
-        <span className={v >= 0 ? '' : 'text-destructive'}>{formatMoney(v)}</span>
-      ),
-    },
-    {
-      title: '毛利率',
-      dataIndex: 'marginRate',
-      width: 100,
-      render: (v: number) => formatPercent(v),
-    },
-    {
-      title: '分摊固定成本',
-      dataIndex: 'allocatedFixedCost',
-      width: 140,
-      align: 'right',
-      render: (v: number) => formatMoney(v),
-    },
-    {
-      title: '贡献净额',
-      dataIndex: 'contributionMargin',
-      width: 140,
-      align: 'right',
-      render: (v: number) => (
-        <span className={v >= 0 ? '' : 'text-destructive'}>{formatMoney(v)}</span>
-      ),
-    },
-  ];
+  }), [agingBuckets]);
 
   const handleMarginExpand = async (
     expanded: boolean,
@@ -319,31 +327,6 @@ const DashboardPage: React.FC = () => {
       </div>
     );
   };
-
-  const contributionColumns: TableColumnsType<CustomerContribution> = [
-    { title: '客户', dataIndex: 'name', fixed: 'left', width: 200 },
-    {
-      title: '合同金额',
-      dataIndex: 'contractAmount',
-      width: 140,
-      align: 'right',
-      render: (v: number) => formatMoney(v),
-    },
-    {
-      title: '已确认收入',
-      dataIndex: 'recognizedRevenue',
-      width: 140,
-      align: 'right',
-      render: (v: number) => formatMoney(v),
-    },
-    {
-      title: '应收余额',
-      dataIndex: 'openArAmount',
-      width: 140,
-      align: 'right',
-      render: (v: number) => formatMoney(v),
-    },
-  ];
 
   const computeTrendDelta = (pick: (t: MonthlyTrend) => number): number | undefined => {
     if (trendList.length < 2) return undefined;
@@ -451,246 +434,43 @@ const DashboardPage: React.FC = () => {
             <TabsTrigger value="budget">预算</TabsTrigger>
           </TabsList>
 
-          <TabsContent value="overview" className="flex flex-col gap-6">
-            <AlertsPanel />
-            {coreCards.length > 0 ? (
-              <section aria-labelledby="dash-kpi">
-                <h2 id="dash-kpi" className="mb-3 text-base font-semibold">
-                  核心指标
-                </h2>
-                <div data-ai-section-type="card-stat" className="grid grid-cols-12 gap-4">
-                  {coreCards.map((card) => (
-                    <div key={card.label} className="col-span-12 md:col-span-6 xl:col-span-3">
-                      <StatCard
-                        label={card.label}
-                        value={card.value}
-                        icon={card.icon}
-                        tone={card.tone}
-                        delta={card.delta}
-                      />
-                    </div>
-                  ))}
-                </div>
-              </section>
-            ) : null}
-            <div className="grid grid-cols-12 gap-4">
-              <div className="col-span-12 rounded-xl border bg-card p-5 shadow-card xl:col-span-8">
-                <h2 className="mb-3 text-base font-semibold">收入成本月度趋势</h2>
-                <DataState empty={trendList.length === 0} emptyText="暂无趋势数据">
-                  <div role="img" aria-label="收入与成本月度趋势图">
-                    <ReactECharts
-                      option={trendOption}
-                      theme="ud"
-                      className="h-[300px] w-full"
-                    />
-                  </div>
-                </DataState>
-              </div>
-              <div className="col-span-12 flex flex-col gap-3 rounded-xl border bg-card p-5 shadow-card xl:col-span-4">
-                <h2 className="text-base font-semibold">分域查看</h2>
-                <p className="text-sm text-muted-foreground">
-                  毛利、客户贡献与人力预算已拆到对应 Tab，首屏只保留决策核心。
-                </p>
-                <div className="flex flex-col gap-2">
-                  <a className="text-sm font-medium text-primary hover:underline" href="#finance">
-                    查看财务明细 →
-                  </a>
-                  <p className="text-xs text-muted-foreground">
-                    使用上方「财务 / 人力 / 预算」标签切换
-                  </p>
-                </div>
-              </div>
-            </div>
-          </TabsContent>
+          {/*
+           * §5.9 / F8：四个 Tab 面板已拆到同目录 `components/`（清单见文件头）。
+           *
+           * ⚠️ F2：四张图的 option 仍在本组件 `useMemo`，这里**只把引用传下去**；
+           * 子组件不重建 option，父组件重渲染（一次 toast、一次行展开、一次重试）
+           * 不会让图表整体重绘。
+           */}
+          <OverviewTab
+            coreCards={coreCards}
+            trendList={trendList}
+            trendOption={trendOption}
+          />
 
-          <TabsContent value="finance" className="flex flex-col gap-6">
-            <div className="grid grid-cols-12 gap-4">
-              <div className="col-span-12 rounded-xl border bg-card p-5 shadow-card xl:col-span-6">
-                <h2 className="mb-3 text-base font-semibold">收入成本月度趋势</h2>
-                <DataState empty={trendList.length === 0} emptyText="暂无趋势数据">
-                  <div role="img" aria-label="收入与成本月度趋势图">
-                    <ReactECharts
-                      option={trendOption}
-                      theme="ud"
-                      className="h-[300px] w-full"
-                    />
-                  </div>
-                </DataState>
-              </div>
-              <div className="col-span-12 rounded-xl border bg-card p-5 shadow-card xl:col-span-6">
-                <h2 className="mb-3 text-base font-semibold">应收账龄分布</h2>
-                <DataState empty={agingBuckets.length === 0} emptyText="暂无应收数据">
-                  <div role="img" aria-label="应收账龄分布图">
-                    <ReactECharts
-                      option={agingOption}
-                      theme="ud"
-                      className="h-[300px] w-full"
-                    />
-                  </div>
-                </DataState>
-              </div>
-              <div className="col-span-12 rounded-xl border bg-card p-5 shadow-card xl:col-span-6">
-                <h2 className="mb-3 text-base font-semibold">纳税主体开票分布</h2>
-                <DataState
-                  empty={(taxDistribution ?? []).length === 0}
-                  emptyText="暂无开票分布数据"
-                >
-                  <div role="img" aria-label="纳税主体开票分布图">
-                    <ReactECharts
-                      theme="ud"
-                      className="h-[300px] w-full"
-                      option={{
-                        tooltip: { trigger: 'item' },
-                        series: [
-                          {
-                            type: 'pie',
-                            radius: ['35%', '65%'],
-                            data: (taxDistribution ?? []).map((row) => ({
-                              name: row.taxEntityName,
-                              value: row.amount,
-                            })),
-                          },
-                        ],
-                      }}
-                    />
-                  </div>
-                </DataState>
-              </div>
-            </div>
-            {statCards.length > 4 ? (
-              <section aria-labelledby="dash-more-kpi">
-                <h2 id="dash-more-kpi" className="mb-3 text-base font-semibold">
-                  更多财务指标
-                </h2>
-                <div className="grid grid-cols-12 gap-4">
-                  {statCards.slice(4).map((card) => (
-                    <div key={card.label} className="col-span-12 md:col-span-6 xl:col-span-3">
-                      <StatCard
-                        label={card.label}
-                        value={card.value}
-                        icon={card.icon}
-                        tone={card.tone}
-                        delta={card.delta}
-                      />
-                    </div>
-                  ))}
-                </div>
-              </section>
-            ) : null}
-            <div className="flex flex-col gap-3">
-              <h2 className="text-base font-semibold">项目毛利排行</h2>
-              <p className="text-sm text-muted-foreground">点击行展开查看项目成本构成</p>
-              <Table
-                columns={marginColumns}
-                dataSource={margins ?? []}
-                rowKey="projectId"
-                scroll={{ x: 1150, y: 400 }}
-                pagination={false}
-                locale={{ emptyText: <DataState empty emptyText="暂无毛利数据" /> }}
-                expandable={{
-                  expandedRowRender: renderCostBreakdown,
-                  onExpand: (expanded: boolean, record: ProjectMargin) => {
-                    void handleMarginExpand(expanded, record);
-                  },
-                }}
-              />
-            </div>
-            <ProjectFinancialHealthPanel />
-            <div className="flex flex-col gap-3">
-              <h2 className="text-base font-semibold">客户贡献</h2>
-              <Table
-                columns={contributionColumns}
-                dataSource={contributions ?? []}
-                rowKey="customerId"
-                scroll={{ x: 700, y: 400 }}
-                pagination={false}
-                locale={{ emptyText: <DataState empty emptyText="暂无客户贡献数据" /> }}
-              />
-            </div>
-          </TabsContent>
+          <FinanceTab
+            trendList={trendList}
+            trendOption={trendOption}
+            agingBuckets={agingBuckets}
+            agingOption={agingOption}
+            taxDistribution={taxDistribution}
+            statCards={statCards}
+            margins={margins}
+            contributions={contributions}
+            renderCostBreakdown={renderCostBreakdown}
+            handleMarginExpand={handleMarginExpand}
+          />
 
-          <TabsContent value="hr" className="flex flex-col gap-6">
-            <DataState empty={!hrOverview} emptyText="暂无人力数据">
-              {hrOverview ? (
-                <>
-                  <div data-ai-section-type="card-stat" className="grid grid-cols-12 gap-4">
-                    <div className="col-span-12 md:col-span-6 xl:col-span-3">
-                      <StatCard
-                        label="在职人数"
-                        value={String(hrOverview.activeCount)}
-                        icon={Users}
-                        tone="primary"
-                      />
-                    </div>
-                    <div className="col-span-12 md:col-span-6 xl:col-span-3">
-                      <StatCard
-                        label="试用期人数"
-                        value={String(hrOverview.probationCount)}
-                        icon={UserCog}
-                        tone="info"
-                      />
-                    </div>
-                    <div className="col-span-12 md:col-span-6 xl:col-span-3">
-                      <StatCard
-                        label="本年入职"
-                        value={String(hrOverview.hiredThisYear)}
-                        icon={UserPlus}
-                        tone="success"
-                      />
-                    </div>
-                    <div className="col-span-12 md:col-span-6 xl:col-span-3">
-                      <StatCard
-                        label="本年离职"
-                        value={String(hrOverview.resignedThisYear)}
-                        icon={UserMinus}
-                        tone="warning"
-                      />
-                    </div>
-                    <div className="col-span-12 md:col-span-6 xl:col-span-3">
-                      <StatCard
-                        label="人均创收（近12月）"
-                        value={formatMoney(hrOverview.revenuePerHead)}
-                        icon={CircleDollarSign}
-                        tone="success"
-                      />
-                    </div>
-                  </div>
-                  <div className="rounded-lg border bg-card p-4">
-                    <h2 className="mb-3 text-lg font-semibold">近 12 个月在册人数趋势</h2>
-                    <DataState empty={hrTrendList.length === 0} emptyText="暂无人力趋势">
-                      <div role="img" aria-label="近12个月在册人数趋势图">
-                        <ReactECharts
-                          option={hrTrendOption}
-                          theme="ud"
-                          className="h-[220px] w-full"
-                        />
-                      </div>
-                    </DataState>
-                  </div>
-                </>
-              ) : null}
-            </DataState>
-          </TabsContent>
+          <HrTab
+            hrOverview={hrOverview}
+            hrTrendList={hrTrendList}
+            hrTrendOption={hrTrendOption}
+          />
 
-          <TabsContent value="budget" className="flex flex-col gap-6">
-            <div className="flex flex-col gap-3">
-              <h2 className="text-lg font-semibold">预算执行率</h2>
-              <div className="rounded-lg border bg-card p-4">
-                <DataState
-                  empty={budgetExecutionList.length === 0}
-                  emptyText="暂无预算执行数据"
-                >
-                  <div role="img" aria-label="预算执行率图">
-                    <ReactECharts
-                      option={budgetExecutionOption}
-                      theme="ud"
-                      className="h-[300px] w-full"
-                    />
-                  </div>
-                </DataState>
-              </div>
-            </div>
-          </TabsContent>
+          <BudgetTab
+            budgetExecutionList={budgetExecutionList}
+            budgetExecutionOption={budgetExecutionOption}
+          />
+
         </Tabs>
       </DataState>
     </PageShell>

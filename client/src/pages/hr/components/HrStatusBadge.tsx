@@ -42,6 +42,14 @@ export const PAYROLL_STATUS_LABELS: Record<string, string> = {
   submitted: '待审批',
   approved: '已批准',
   rejected: '已驳回',
+  /*
+   * B12（§7.2）：补齐两个终态文案。
+   *
+   * `approved` 只表示"同意发"，不表示"已经发了" —— 出纳原先只能靠线下表格
+   * 区分这两件事。缺了 `paid` 这一行，界面上会显示英文 key `paid`。
+   */
+  paid: '已发放',
+  voided: '已作废',
 };
 
 export const CANDIDATE_STAGE_LABELS: Record<string, string> = {
@@ -84,13 +92,16 @@ const GREEN_STATUSES = new Set([
   'completed',
   'finished',
   'closed',
+  // B12：工资单"已发放"是终态成功（与"已批准"分列两种颜色，
+  // 是为了让出纳一眼分辨"批了没发"与"已发"）
+  'paid',
 ]);
 
 const YELLOW_STATUSES = new Set(['probation', 'late', 'interview', 'open']);
 
 const BLUE_STATUSES = new Set(['active', 'approved', 'offer', 'leave']);
 
-const RED_STATUSES = new Set(['rejected', 'absent']);
+const RED_STATUSES = new Set(['rejected', 'absent', 'voided']);
 
 interface HrStatusBadgeProps {
   status: string;

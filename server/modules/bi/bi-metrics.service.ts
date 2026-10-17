@@ -10,7 +10,7 @@ import {
   DRIZZLE_DATABASE,
   type PostgresJsDatabase,
 } from '@server/platform';
-import { and, asc, desc, eq, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, sql } from 'drizzle-orm';
 import {
   biAlertSubscription,
   erpApBill,
@@ -24,6 +24,8 @@ import {
   erpReceipt,
 } from '@server/database/schema';
 import { NotificationsService } from '@server/modules/notifications/notifications.service';
+import { round2 } from '@server/common/utils/number';
+import { ACTIVE_PROJECT_STATUSES } from './project-health';
 import type {
   BiAlertSubscriptionItem,
   BiMetric,
@@ -33,9 +35,6 @@ import type {
 
 const PERIOD_PATTERN = /^\d{4}-(0[1-9]|1[0-2])$/;
 
-function round2(value: number): number {
-  return Math.round(value * 100) / 100;
-}
 
 function toNumber(value: string | number | null | undefined): number {
   if (value === null || value === undefined) return 0;
@@ -132,21 +131,22 @@ export class BiMetricsService {
       key: 'active_projects',
       name: '在管项目数',
       unit: '个',
-      formula: '在管项目数 = erp_project.status ∈ (active, delivering, accepting) 的项目个数',
+      formula: `在管项目数 = erp_project.status ∈ (${ACTIVE_PROJECT_STATUSES.join(', ')}) 的项目个数（closed / cancelled 为终态，不计）`,
       drillUrl: '/projects',
     },
     {
       key: 'over_budget_projects',
       name: '超预算项目数',
       unit: '个',
-      formula: '超预算项目数 = 实际成本 > 预计总成本(estimated_total_cost) 的在管项目数',
+      formula: `超预算项目数 = 实际成本 > 预计总成本(estimated_total_cost) 且预计总成本 > 0 的在管项目数（在管口径同「在管项目数」）`,
       drillUrl: '/projects',
     },
     {
       key: 'unpaid_ap',
       name: '未付应付余额',
       unit: '元',
-      formula: '未付应付余额 = Σ 应付单(erp_ap_bill) 金额 − Σ 已批准付款(erp_payment.status=paid)',
+      formula:
+        '未付应付余额 = Σ 未结清应付单(erp_ap_bill.status ∈ pending/approved/partial) 的（金额 − 已核销额 paid_amount）；作废(voided)与已付清(paid)不计',
       drillUrl: '/finance',
     },
   ];
@@ -203,7 +203,15 @@ export class BiMetricsService {
     return round2(toNumber(rows[0]?.total));
   }
 
-  /** 回款率：历史累计口径（不是本期），与"回款率"业务含义一致 */
+  /**
+   * 回款率：历史累计口径（不是本期），与"回款率"业务含义一致。
+   *
+   * ⚠️ 分母必须**排除作废应收**。原实现 `from(erpAr)` 不带任何条件，
+   * 于是 `voided` 的应收也进了分母 —— 一张误录的 100 万应收作废后，
+   * 分子（回款）不变、分母虚高，回款率被永久拉低。这与同文件
+   * `openArBalance()` 上方已记录的 B1 结论是**同一类错误**：
+   * 用白名单而不是"全部行"，新增状态默认不可见（fail-closed）。
+   */
   private async receiptRate(): Promise<number> {
     const receiptRows = await this.db
       .select({ total: sql<string>`coalesce(sum(${erpReceipt.amount}), 0)` })
@@ -211,7 +219,8 @@ export class BiMetricsService {
       .where(sql`${erpReceipt.status} <> 'voided'`);
     const arRows = await this.db
       .select({ total: sql<string>`coalesce(sum(${erpAr.amount}), 0)` })
-      .from(erpAr);
+      .from(erpAr)
+      .where(inArray(erpAr.status, ['open', 'partial', 'settled']));
     const receipts = toNumber(receiptRows[0]?.total);
     const ars = toNumber(arRows[0]?.total);
     if (ars <= 0) return 0;
@@ -225,7 +234,11 @@ export class BiMetricsService {
         total: sql<string>`coalesce(sum(${erpAr.amount} - coalesce(${erpAr.settledAmount}, 0)), 0)`,
       })
       .from(erpAr)
-      .where(sql`${erpAr.status} <> 'settled'`);
+      // B1：作废应收必须排除。`<> 'settled'` 会把 `'voided'` 一并纳入，
+      // 一张误录的 100 万应收作废后仍会让 BI 的应收余额虚高 —— 那正是
+      // "作废"这个终态要解决的问题本身。用白名单而非 `<> 'settled'`，
+      // 将来新增状态时默认不可见（fail-closed）而不是默认可见。
+      .where(inArray(erpAr.status, ['open', 'partial']));
     return round2(toNumber(rows[0]?.total));
   }
 
@@ -253,22 +266,30 @@ export class BiMetricsService {
     activeProjects: number;
     overBudgetProjects: number;
   }> {
+    /*
+     * ⚠️ 状态白名单**必须**与经营看板同源（`./project-health`）。
+     * 原实现内联 `('active','delivering','accepting')` —— `'active'` 是
+     * **合同**状态而非项目状态，`delivering`/`accepting` 又漏了 `initiating`。
+     * 结果这两个指标在当前数据下恒为 0，而看板「活跃项目」是 2：
+     * 同一个库、同一时刻、两个数，用户无法判断该信哪个。
+     */
+    const activeStatusList = [...ACTIVE_PROJECT_STATUSES];
     const activeRows = await this.db
       .select({ total: sql<number>`count(*)::int` })
       .from(erpProject)
-      .where(
-        sql`${erpProject.status} in ('active', 'delivering', 'accepting')`
-      );
+      .where(inArray(erpProject.status, activeStatusList));
     const overRows = await this.db
       .select({ total: sql<number>`count(*)::int` })
       .from(erpProject)
       .where(
-        sql`${erpProject.status} in ('active', 'delivering', 'accepting')
-            AND coalesce(${erpProject.estimatedTotalCost}, 0) > 0
-            AND (
-              SELECT coalesce(sum(c.amount), 0) FROM erp_project_cost c
-              WHERE c.project_id = ${erpProject.id}
-            ) > ${erpProject.estimatedTotalCost}`
+        and(
+          inArray(erpProject.status, activeStatusList),
+          sql`coalesce(${erpProject.estimatedTotalCost}, 0) > 0
+              AND (
+                SELECT coalesce(sum(c.amount), 0) FROM erp_project_cost c
+                WHERE c.project_id = ${erpProject.id}
+              ) > ${erpProject.estimatedTotalCost}`
+        )
       );
     return {
       activeProjects: Number(activeRows[0]?.total ?? 0),
@@ -281,7 +302,13 @@ export class BiMetricsService {
     const apRows = await this.db
       .select({ total: sql<string>`coalesce(sum(${erpApBill.amount} - coalesce(${erpApBill.paidAmount}, 0)), 0)` })
       .from(erpApBill)
-      .where(sql`${erpApBill.status} <> 'settled'`);
+      // 修正两处口径错误：
+      //   ① 原条件 `<> 'settled'` 用了**应收**的状态词，而 `erp_ap_bill.status` 的
+      //      取值是 `pending/approved/partial/paid` —— 于是**已付清的应付也全部计入**
+      //      "未付应付余额"，指标恒等于应付总额。
+      //   ② B1 新增的 `'voided'` 同样必须排除（作废的应付不再占用资金计划）。
+      // 改用白名单：未付 = 尚未付清且未作废。
+      .where(inArray(erpApBill.status, ['pending', 'approved', 'partial']));
     void erpPayment;
     return round2(toNumber(apRows[0]?.total));
   }

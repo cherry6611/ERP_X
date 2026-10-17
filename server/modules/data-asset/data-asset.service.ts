@@ -20,6 +20,7 @@ import {
   mdCustomer,
 } from '@server/database/schema';
 import { generateBizCode } from '@server/common/utils/biz-code';
+import { buildDatasetUpdatePlan } from './dataset-patch';
 import {
   GRANT_REVOKE_REASON_LABELS,
   MASK_LEVELS,
@@ -216,12 +217,24 @@ export class DataAssetService {
     id: string,
     dto: UpdateDatasetDto
   ): Promise<DatasetItem> {
-    const patch: Record<string, unknown> = { updatedAt: new Date() };
-    if (dto.name !== undefined) patch.name = dto.name;
-    if (dto.source !== undefined) patch.source = dto.source;
-    if (dto.maskLevel !== undefined) patch.maskLevel = dto.maskLevel;
-    if (dto.status !== undefined) patch.status = dto.status;
-    if (dto.remark !== undefined) patch.remark = dto.remark;
+    /*
+     * 字段归并判据抽在 `dataset-patch.ts`（纯函数，有穷举三态的单测）。
+     *
+     * ⚠️ 这里最容易出的错是**只补契约、忘了 patch**：controller 用了
+     * `whitelist + forbidNonWhitelisted`，契约里没有的字段会 400（报错可见），
+     * 而契约里有、这里不处理的字段会**静默丢弃** —— 界面提示"数据集已更新"，
+     * 库里旧值还在。`contractId` 原先只存在于 Create 契约，正是这一类。
+     */
+    const { patch, contractIdToValidate } = buildDatasetUpdatePlan(dto);
+    /*
+     * 存在性校验必须在 UPDATE 之前：否则外键违例会以 500 的形式暴露，
+     * 而不是一句可读的「关联合同不存在」。
+     * `contractId === null`（解除关联）不会进这里 —— 没有东西要校验。
+     */
+    if (contractIdToValidate !== null) {
+      await this.ensureContractExists(contractIdToValidate);
+    }
+    patch.updatedAt = new Date();
     const rows = await this.db
       .update(daDataset)
       .set(patch)

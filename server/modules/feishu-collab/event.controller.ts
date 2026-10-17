@@ -4,6 +4,7 @@ import { Inject } from '@nestjs/common';
 import { sql } from 'drizzle-orm';
 import { NeedLogin, Public, DRIZZLE_DATABASE, type PostgresJsDatabase } from '@server/platform';
 import { FeishuContactService } from './contact.service';
+import { isProductionRuntime } from '@server/common/utils/runtime-env';
 import { ApprovalCallbackService } from './approval-callback.service';
 
 @NeedLogin()
@@ -67,7 +68,10 @@ export class FeishuEventController {
       const escape =
         (process.env.FEISHU_ALLOW_UNVERIFIED_EVENTS ?? '').toLowerCase() ===
         'true';
-      const isProd = process.env.NODE_ENV === 'production';
+      // 修复：原判断为 `NODE_ENV === 'production'`，NODE_ENV 写成 'prod'/留空时
+      // 逃逸开关在生产生效 → 事件校验被完全绕过（攻击者可伪造任意飞书事件）。
+      // 改为 fail-safe：非显式开发环境视为生产，逃逸开关一律无效。
+      const isProd = isProductionRuntime();
       // 逃逸开关仅允许非生产；生产环境永远 fail-closed
       if (escape && !isProd) {
         return;

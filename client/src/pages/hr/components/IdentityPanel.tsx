@@ -260,9 +260,16 @@ const IdentityPanel: React.FC = () => {
             />
           </div>
           <div className="space-y-1">
-            <Label>状态</Label>
+            {/*
+              a11y（§5.10 / P2-3）：Radix Select 触发器是 <button>，
+              `htmlFor` 不适用，改用 `aria-labelledby` 指向本标签 id。
+            */}
+            <Label id="identity-status-label">状态</Label>
             <Select value={statusFilter} onValueChange={setStatusFilter}>
-              <SelectTrigger className="w-28">
+              <SelectTrigger
+                className="w-28"
+                aria-labelledby="identity-status-label"
+              >
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>

@@ -26,6 +26,7 @@ import {
 import { ActorAccessService } from '@server/common/auth/actor-access.service';
 import type { RequestActor } from '@server/common/auth/actor';
 import { todayInShanghai } from '@server/common/utils/biz-date';
+import { extractPostgresErrorCode } from '@server/common/utils/postgres-error';
 import { generateBizCode } from '@server/common/utils/biz-code';
 import { HrCoreService } from './hr-core.service';
 import type {
@@ -392,7 +393,7 @@ export class HrSelfServiceService {
         employeeName: employees[0].name,
       });
     } catch (error) {
-      if (this.extractPostgresErrorCode(error) === '23505') {
+      if (extractPostgresErrorCode(error) === '23505') {
         throw new ConflictException('该日期已有补卡申请');
       }
       throw error;
@@ -485,16 +486,6 @@ export class HrSelfServiceService {
       .limit(1);
     if (rows.length === 0) throw new NotFoundException('补卡申请不存在');
     return this.toAmendment(rows[0]);
-  }
-
-  private extractPostgresErrorCode(error: unknown): string | undefined {
-    let current: unknown = error;
-    for (let depth = 0; depth < 4 && current && typeof current === 'object'; depth += 1) {
-      const { code, cause } = current as { code?: unknown; cause?: unknown };
-      if (typeof code === 'string') return code;
-      current = cause;
-    }
-    return undefined;
   }
 
   /* ========== 年假规则初始化 ========== */

@@ -22,6 +22,7 @@ import {
   mdEmployee,
 } from '@server/database/schema';
 import { generateBizCode } from '@server/common/utils/biz-code';
+import { extractPostgresErrorCode } from '@server/common/utils/postgres-error';
 import { nextRetryDelaySec } from './retry';
 import type {
   FeishuSyncDirection,
@@ -75,16 +76,6 @@ interface OutboundCandidate {
 }
 
 /** cause-aware 提取 PostgreSQL SQLSTATE（Drizzle 可能把原始错误放在 cause 链里） */
-function extractPostgresErrorCode(error: unknown): string | undefined {
-  let current: unknown = error;
-  for (let depth = 0; depth < 4 && current && typeof current === 'object'; depth += 1) {
-    const { code, cause } = current as { code?: unknown; cause?: unknown };
-    if (typeof code === 'string') return code;
-    current = cause;
-  }
-  return undefined;
-}
-
 /** 提取插件/未知错误的可读文本，真实透传给前端，禁止吞错或 mock */
 function errorText(error: unknown): string {
   if (error instanceof Error && error.message) return error.message;

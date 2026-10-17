@@ -9,7 +9,11 @@ import {
   DRIZZLE_DATABASE,
   type PostgresJsDatabase,
 } from '@server/platform';
-import { and, asc, desc, eq, gte, ilike, inArray, lt, or, sql, type SQL } from 'drizzle-orm';
+import { and, asc, desc, eq, gte, inArray, lt, lte, or, sql, type SQL } from 'drizzle-orm';
+import {
+  ilikeEscaped,
+  likeContains,
+} from '@server/common/utils/sql-like';
 import { alias } from 'drizzle-orm/pg-core';
 import {
   hrAttendance,
@@ -21,6 +25,8 @@ import {
   mdSupplier,
 } from '@server/database/schema';
 import { generateBizCode } from '@server/common/utils/biz-code';
+import { round2 } from '@server/common/utils/number';
+import { extractPostgresErrorCode } from '@server/common/utils/postgres-error';
 import {
   DataScopeService,
   applyScope,
@@ -467,13 +473,15 @@ export class HrCoreService {
     keyword?: string,
     options?: { maskPhone?: boolean; actor?: RequestActor },
   ): Promise<Employee[]> {
-    const keywordWhere =
-      keyword && keyword.trim() !== ''
-        ? or(
-            ilike(mdEmployee.name, `%${keyword}%`),
-            ilike(mdEmployee.code, `%${keyword}%`)
-          )
-        : undefined;
+    // S4：与主数据搜索同一修法 —— 转义 `%`/`_` 并显式 `ESCAPE`。
+    // 原实现 `%${keyword}%` 让 `keyword=%` 匹配全表，绕过"搜索"语义枚举员工。
+    const keywordPattern = likeContains(keyword);
+    const keywordWhere: SQL | undefined = keywordPattern
+      ? or(
+          ilikeEscaped(mdEmployee.name, keywordPattern),
+          ilikeEscaped(mdEmployee.code, keywordPattern)
+        )
+      : undefined;
     // B-02：行级可见范围在 SQL 层注入（部门经理仅本部门及下级）
     const scopeWhere: SQL | undefined = await this.employeeScopeCondition(
       options?.actor
@@ -546,7 +554,7 @@ export class HrCoreService {
         .returning({ id: mdEmployee.id });
       return await this.getEmployeeById(inserted[0].id);
     } catch (error) {
-      if (this.extractPostgresErrorCode(error) === '23505') {
+      if (extractPostgresErrorCode(error) === '23505') {
         throw new ConflictException('该飞书账号已绑定其他员工');
       }
       throw error;
@@ -642,7 +650,7 @@ export class HrCoreService {
         .returning({ id: mdEmployee.id });
       if (rows.length === 0) throw new NotFoundException('员工不存在');
     } catch (error) {
-      if (this.extractPostgresErrorCode(error) === '23505') {
+      if (extractPostgresErrorCode(error) === '23505') {
         throw new ConflictException('该飞书账号已绑定其他员工');
       }
       throw error;
@@ -697,16 +705,6 @@ export class HrCoreService {
       .limit(1);
     if (rows.length === 0) return null;
     return this.getEmployeeById(rows[0].id);
-  }
-
-  private extractPostgresErrorCode(error: unknown): string | undefined {
-    let current: unknown = error;
-    for (let depth = 0; depth < 4 && current && typeof current === 'object'; depth += 1) {
-      const { code, cause } = current as { code?: unknown; cause?: unknown };
-      if (typeof code === 'string') return code;
-      current = cause;
-    }
-    return undefined;
   }
 
   /* ========== 考勤 ========== */
@@ -948,6 +946,47 @@ export class HrCoreService {
       usedDays = Number(balances[0].usedDays ?? 0);
     }
     const remaining = totalDays - usedDays;
+    /*
+     * B11（§7.2）：**区间重叠校验**。
+     *
+     * 原实现允许对**同一天**提交多张请假单（比如 6/1–6/3 与 6/2–6/4），
+     * 两张都会被批准、`usedDays` 各加一次 —— 但员工实际只休了 4 天，
+     * 系统里记了 6 天。这既多扣员工额度（员工会来吵），
+     * 又让考勤与请假记录对不上（考勤只认"当天有没有请假"这个事实）。
+     *
+     * 只与**未驳回**（`pending` / `approved`）的请假单比对：
+     * 被驳回/撤销的单不占用日期，否则员工被驳回一次就再也报不了那几天。
+     *
+     * 有意**只拦同类型**：事假与年假同一天并存是常见且合理的
+     * （上午事假、下午年假），跨类型重叠不是错误。
+     */
+    const overlapping = await this.db
+      .select({
+        code: hrLeaveRequest.code,
+        startDate: hrLeaveRequest.startDate,
+        endDate: hrLeaveRequest.endDate,
+        status: hrLeaveRequest.status,
+      })
+      .from(hrLeaveRequest)
+      .where(
+        and(
+          eq(hrLeaveRequest.employeeId, dto.employeeId),
+          eq(hrLeaveRequest.leaveType, dto.leaveType),
+          inArray(hrLeaveRequest.status, ['pending', 'approved']),
+          // 区间相交：已有.start <= 新.end 且 已有.end >= 新.start
+          lte(hrLeaveRequest.startDate, dto.endDate),
+          gte(hrLeaveRequest.endDate, dto.startDate),
+        ),
+      )
+      .limit(1);
+    if (overlapping.length > 0) {
+      throw new ConflictException(
+        `该员工在 ${dto.startDate} ~ ${dto.endDate} 已存在同类请假单` +
+          `（${overlapping[0].code}，${overlapping[0].startDate} ~ ${overlapping[0].endDate}，` +
+          `状态 ${overlapping[0].status ?? 'pending'}）；` +
+          `请先撤销该单，或调整本次请假的起止日期`
+      );
+    }
     if (remaining < days) {
       throw new BadRequestException(
         `请假余额不足：剩余 ${remaining} 天，申请 ${days} 天`
@@ -1038,10 +1077,50 @@ export class HrCoreService {
       }
       const total = Number(balanceRows[0].totalDays ?? 0);
       const used = Number(balanceRows[0].usedDays ?? 0);
-      const remaining = total - used;
+      /*
+       * B11（§7.2）：**待审批的请假必须一并占用额度**。
+       *
+       * 原实现只用 `usedDays`（已批准天数）算剩余。于是：
+       *   · 员工剩余 5 天，先后提交 3 天 + 3 天两笔请假（都还是 pending）；
+       *   · 第一笔审批通过 → used = 3，剩余 2；
+       *   · 第二笔审批 → 3 > 2 → **被拒**。
+       * 从员工视角这是"我明明按剩余额度提交的，为什么第二笔不批" ——
+       * 而根因是第一笔提交时**没有占用额度**。
+       *
+       * 因此把同员工 + 同类型 + 同年度、状态为 `pending` 的**其他**请假单
+       * 天数也扣掉。注意排除本次这一单（它自己即将变成 approved，
+       * 不排除就会把它扣两次）。
+       *
+       * 并发：余额行已被 `FOR UPDATE` 锁定，因此这里的 pending 查询
+       * 在同一余额行上是串行的 —— 两个并发审批不会各自看到"对方未占用"。
+       */
+      const pendingRows = await tx
+        .select({
+          days: hrLeaveRequest.days,
+          id: hrLeaveRequest.id,
+          startDate: hrLeaveRequest.startDate,
+        })
+        .from(hrLeaveRequest)
+        .where(
+          and(
+            eq(hrLeaveRequest.employeeId, request.employeeId ?? ''),
+            eq(hrLeaveRequest.leaveType, request.leaveType ?? ''),
+            eq(hrLeaveRequest.status, 'pending'),
+          ),
+        );
+      let pendingDays = 0;
+      for (const row of pendingRows) {
+        if (row.id === id) continue;
+        // 只算同一年的（余额是按年分档的，跨年的 pending 不该占今年的额度）
+        if (String(row.startDate ?? '').slice(0, 4) !== year) continue;
+        pendingDays += Number(row.days ?? 0);
+      }
+      const remaining = total - used - pendingDays;
       if (daysNum > remaining + 1e-9) {
         throw new BadRequestException(
-          `请假余额不足：剩余 ${remaining} 天，申请 ${daysNum} 天`,
+          `请假余额不足：总额度 ${total} 天，已批准 ${used} 天，` +
+            `待审批占用 ${pendingDays} 天，可批 ${round2(remaining)} 天，本次申请 ${daysNum} 天。` +
+            `请先处理其他待审批的请假单，或调整本次天数`
         );
       }
       const updated = await tx

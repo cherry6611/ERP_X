@@ -341,11 +341,30 @@ export class ExportsService {
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);
       this.logger.error(`导出任务 ${id} 失败：${message}`);
-      await this.markStatus(id, {
-        status: 'failed',
-        errorMessage: message.slice(0, 1000),
-        finishedAt: new Date(),
-      }).catch(() => undefined);
+      /*
+       * §6.10 (8)：回写失败**必须日志化**，不能 `.catch(() => undefined)`。
+       *
+       * 原实现把回写自己的失败也吞掉了。后果是：任务永久停在 `running`，
+       * 前端显示"生成中"并**禁用重试按钮**，库里没有任何失败痕迹 ——
+       * 用户只能重启页面反复等待，运维查日志也看不到这个任务失败过
+       * （只有业务失败的那行日志，看不出状态没落库）。
+       *
+       * 现在：先尝试回写，失败则记 error（含状态与任务 id），
+       * 运维可据此手工把任务置为 failed 或清理。
+       */
+      try {
+        await this.markStatus(id, {
+          status: 'failed',
+          errorMessage: message.slice(0, 1000),
+          finishedAt: new Date(),
+        });
+      } catch (persistError: unknown) {
+        this.logger.error(
+          `导出任务 ${id} 失败状态**回写数据库也失败**，任务将永久停在 running（前端会一直显示"生成中"）；` +
+            `请手工把该任务置为 failed。原始业务错误：${message}`,
+          persistError instanceof Error ? persistError.stack : String(persistError),
+        );
+      }
     }
   }
 

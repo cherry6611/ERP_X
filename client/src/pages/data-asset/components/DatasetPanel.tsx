@@ -1,7 +1,6 @@
 import React, { useState } from 'react';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useForm } from 'react-hook-form';
-import { z } from 'zod';
 import { toast } from 'sonner';
 import { Plus } from 'lucide-react';
 import { Table, TableColumnsType } from 'antd';
@@ -34,37 +33,22 @@ import { AttachmentField } from '@client/src/components/attachments/AttachmentFi
 import AttachmentHint from '@client/src/components/attachments/AttachmentHint';
 import { contractsApi, dataAssetApi } from '@client/src/api';
 import { useAsyncData } from '@client/src/hooks/useAsyncData';
-import type {
-  Contract,
-  CreateDatasetDto,
-  DatasetItem,
-  UpdateDatasetDto,
-} from '@shared/api.interface';
+import type { Contract, DatasetItem } from '@shared/api.interface';
 import DataAssetBadge, {
   DATASET_STATUS_LABELS,
   MASK_LEVEL_OPTIONS,
 } from './DataAssetBadge';
+import {
+  EMPTY_DATASET_FORM,
+  datasetSchema,
+  toCreateDatasetDto,
+  toDatasetFormValues,
+  toUpdateDatasetDto,
+  type DatasetFormData,
+  type DatasetFormInput,
+} from './dataset-form';
 
 const PAGE_SIZE = 20;
-
-const datasetSchema = z.object({
-  name: z.string().min(1, '请填写数据集名称'),
-  source: z.string(),
-  maskLevel: z.string(),
-  contractId: z.string(),
-  remark: z.string(),
-});
-
-type DatasetFormData = z.output<typeof datasetSchema>;
-type DatasetFormInput = z.input<typeof datasetSchema>;
-
-const EMPTY_FORM: DatasetFormData = {
-  name: '',
-  source: '',
-  maskLevel: 'L1',
-  contractId: '',
-  remark: '',
-};
 
 const DatasetPanel: React.FC = () => {
   const [statusFilter, setStatusFilter] = useState('all');
@@ -89,24 +73,18 @@ const DatasetPanel: React.FC = () => {
 
   const form = useForm<DatasetFormInput, unknown, DatasetFormData>({
     resolver: zodResolver(datasetSchema),
-    defaultValues: EMPTY_FORM,
+    defaultValues: EMPTY_DATASET_FORM,
   });
 
   const openCreate = () => {
     setEditTarget(null);
-    form.reset(EMPTY_FORM);
+    form.reset(EMPTY_DATASET_FORM);
     setDialogOpen(true);
   };
 
   const openEdit = (item: DatasetItem) => {
     setEditTarget(item);
-    form.reset({
-      name: item.name,
-      source: item.source ?? '',
-      maskLevel: item.maskLevel,
-      contractId: item.contractId ?? '',
-      remark: item.remark ?? '',
-    });
+    form.reset(toDatasetFormValues(item));
     setDialogOpen(true);
   };
 
@@ -114,35 +92,32 @@ const DatasetPanel: React.FC = () => {
     setOperating(true);
     try {
       if (editTarget) {
-        const dto: UpdateDatasetDto = {
-          name: values.name,
-          source: values.source || undefined,
-          maskLevel: values.maskLevel || undefined,
-          remark: values.remark || undefined,
-        };
-        await dataAssetApi.updateDataset(editTarget.id, dto);
+        /*
+         * ⚠️ 更新分支的字段映射**全部**走 `toUpdateDatasetDto`（见 `dataset-form.ts`），
+         * 不要再在这里手写 DTO 字面量 —— 漏一个字段就是一次"静默丢弃"，
+         * 而那正是「关联合同」原先改不动的原因：契约里没有 `contractId`（一发就 400），
+         * 更新分支也没构造它。
+         *
+         * 该函数同时承载两类清空语义（两者表达方式不同，别互相照抄）：
+         *   · `source` / `maskLevel` / `remark` 是 text 列 → **原样发空串**；
+         *   · `contractId` 是外键 → 空串要发**显式 null**（发 undefined 会被
+         *     JSON.stringify 丢掉整键，服务端判为"未提供"，解除关联静默失效）。
+         */
+        await dataAssetApi.updateDataset(
+          editTarget.id,
+          toUpdateDatasetDto(values)
+        );
         toast.success('数据集已更新');
         setDialogOpen(false);
         setEditTarget(null);
-        form.reset(EMPTY_FORM);
+        form.reset(EMPTY_DATASET_FORM);
       } else {
-        const dto: CreateDatasetDto = {
-          name: values.name,
-          source: values.source || undefined,
-          maskLevel: values.maskLevel || undefined,
-          contractId: values.contractId || undefined,
-          remark: values.remark || undefined,
-        };
-        const created = await dataAssetApi.createDataset(dto);
+        const created = await dataAssetApi.createDataset(
+          toCreateDatasetDto(values)
+        );
         toast.success('数据集已创建');
         setEditTarget(created);
-        form.reset({
-          name: created.name,
-          source: created.source ?? '',
-          maskLevel: created.maskLevel,
-          contractId: created.contractId ?? '',
-          remark: created.remark ?? '',
-        });
+        form.reset(toDatasetFormValues(created));
       }
       await reload();
     } catch (err) {
@@ -344,10 +319,17 @@ const DatasetPanel: React.FC = () => {
                 render={({ field }) => (
                   <FormItem>
                     <FormLabel>关联合同</FormLabel>
+                    {/*
+                      关联合同**在编辑态同样可改**（本轮需求）。
+                      原先这里写的是 `disabled={!!editTarget}` —— 编辑时下拉被禁用，
+                      加上契约 `UpdateDatasetDto` 没有 `contractId`（一发就 400）、
+                      更新分支也不构造它，三重原因使"改关联合同"根本无法完成。
+                      三处已一并放开：契约、service patch、以及这里的禁用。
+                      「不关联」对应空串，提交时由 `toUpdateDatasetDto` 转成显式 null。
+                    */}
                     <Select
                       value={field.value || 'none'}
                       onValueChange={(v: string) => field.onChange(v === 'none' ? '' : v)}
-                      disabled={!!editTarget}
                     >
                       <FormControl>
                         <SelectTrigger>

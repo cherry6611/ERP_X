@@ -2,11 +2,10 @@ import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useForm } from 'react-hook-form';
-import { z } from 'zod';
 import { toast } from 'sonner';
 import { AlertTriangle, Plus } from 'lucide-react';
 import { Table, TableColumnsType } from 'antd';
-import { CanCapability, CanCapabilityWrite } from '@client/src/platform/auth';
+import { CanCapabilityWrite } from '@client/src/platform/auth';
 import DateField from '@client/src/components/erp/DateField';
 import { SectionTitle } from '@client/src/components/SectionTitle';
 import { Button } from '@client/src/components/ui/button';
@@ -40,6 +39,12 @@ import {
 } from '@client/src/api';
 import { useAsyncData } from '@client/src/hooks/useAsyncData';
 import AttachmentHint from '@client/src/components/attachments/AttachmentHint';
+import {
+  EMPTY_GRANT_FORM as EMPTY_FORM,
+  grantSchema,
+  type GrantFormData,
+  type GrantFormInput,
+} from './grant-form';
 import type {
   CreateGrantDto,
   Customer,
@@ -54,35 +59,6 @@ import DataAssetBadge, {
 } from './DataAssetBadge';
 
 const PAGE_SIZE = 20;
-
-const grantSchema = z
-  .object({
-    datasetId: z.string().min(1, '请选择数据集'),
-    customerId: z.string(),
-    projectId: z.string(),
-    scope: z.string(),
-    startDate: z.string().min(1, '请选择开始日期'),
-    endDate: z.string().min(1, '请选择结束日期'),
-    remark: z.string(),
-  })
-  .refine(
-    (values) =>
-      !values.startDate || !values.endDate || values.endDate >= values.startDate,
-    { message: '结束日期不能早于开始日期', path: ['endDate'] },
-  );
-
-type GrantFormData = z.output<typeof grantSchema>;
-type GrantFormInput = z.input<typeof grantSchema>;
-
-const EMPTY_FORM: GrantFormInput = {
-  datasetId: '',
-  customerId: '',
-  projectId: '',
-  scope: '',
-  startDate: '',
-  endDate: '',
-  remark: '',
-};
 
 const GrantPanel: React.FC = () => {
   const navigate = useNavigate();

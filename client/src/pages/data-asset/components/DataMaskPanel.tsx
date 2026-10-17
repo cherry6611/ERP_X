@@ -1,14 +1,6 @@
 import React, { useState } from 'react';
 import { toast } from 'sonner';
 import { Button } from '@client/src/components/ui/button';
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@client/src/components/ui/dialog';
 import { Input } from '@client/src/components/ui/input';
 import { Label } from '@client/src/components/ui/label';
 import {
@@ -23,35 +15,16 @@ import { useAsyncData } from '@client/src/hooks/useAsyncData';
 import * as dataAssetApi from '@client/src/api/data-asset';
 import { getApiErrorMessage } from '@client/src/utils/api-error-message';
 import { confirmDanger } from '@client/src/utils/confirmDanger';
+import { FIELD_KIND_LABELS } from './mask-labels';
+import FieldRegisterDialog from './dialogs/FieldRegisterDialog';
+import RevokeGrantDialog from './dialogs/RevokeGrantDialog';
 import type {
   DatasetFieldItem,
   DatasetItem,
   GrantItem,
   GrantRevokeLogItem,
-  GrantRevokeReason,
   MaskLevelOption,
-  SensitiveFieldKind,
 } from '@shared/api.interface';
-
-const FIELD_KIND_LABELS: Record<SensitiveFieldKind, string> = {
-  name: '姓名',
-  phone: '手机号',
-  email: '邮箱',
-  id_card: '身份证号',
-  bank_account: '银行账号',
-  address: '地址',
-  amount: '金额',
-  location: '定位',
-  other: '其它',
-};
-
-const REVOKE_REASON_LABELS: Record<GrantRevokeReason, string> = {
-  expired: '到期自动回收',
-  manual: '人工主动回收',
-  contract_terminated: '合同终止',
-  violation: '违规使用',
-  project_closed: '项目结项',
-};
 
 /**
  * C-13：脱敏字段登记 + 授权回收审计。
@@ -59,16 +32,31 @@ const REVOKE_REASON_LABELS: Record<GrantRevokeReason, string> = {
  * 设计要点：
  * 1. **导出前先预览**：业务方常常在黑盒导出后才发现关键列被抹掉或阻断，
  *    因此本页提供"样例脱敏预览"，把 L3/L4 的结果显式摊开。
- * 2. **L4 的回收表单动态加字段**：选中 L4 数据集时，界面主动要求
+ * 2. **L4 的回收表单动态加字段**：被回收的授权所属数据集为 L4 时，界面主动要求
  *    「复核人」与「销毁凭证」，而不是等提交后报 400。
  * 3. **审计留痕不可编辑**：回收记录只读展示，避免事后篡改。
+ *
+ * ## §5.9（F8）：本文件只做**布局编排**（拆分前 615 行）
+ *
+ * 上一轮的教训是"只搬纯声明不够 —— JSX 才是体量所在"。本轮把两个**自包含弹窗**
+ * （连同只属于它们的 state 与提交处理器）逐字搬到 `components/dialogs/`：
+ *
+ * | 原位置 | 去向 | 承担什么 |
+ * |---|---|---|
+ * | `FIELD_KIND_LABELS` / `REVOKE_REASON_LABELS` | `mask-labels.ts` | 文案表；前者**父组件与本弹窗都要用**，故单独成模块 |
+ * | 「登记脱敏字段」弹窗 + 三个输入值 + `saveField` | `dialogs/FieldRegisterDialog.tsx` | 自持输入值与 `busy` |
+ * | 「回收授权」弹窗 + 三个输入值 + `submitRevoke` | `dialogs/RevokeGrantDialog.tsx` | 自持输入值与 `busy`；只接收被回收的那条授权 |
+ *
+ * **本文件保留**：五路数据查询（`useAsyncData`）、`revokeNeedsDualControl` 派生值、
+ * 脱敏等级卡、字段登记表、脱敏预览、授权与审计两张只读表、以及两个弹窗的挂载。
+ *
+ * ⚠️ 拆分**不改行为**：两个弹窗都**无条件挂载**（`{open && <X/>}` 会让"取消后重开
+ * 仍保留上次输入"这一行为消失）；重置时机一律保持原样 —— 两个弹窗都是**写成功后**
+ * 清空输入（`fieldKind` / `revokeReason` 刻意不清），没有任何"打开即重置"。
  */
 const DataMaskPanel: React.FC = () => {
   const [selectedDataset, setSelectedDataset] = useState<string>('');
   const [fieldOpen, setFieldOpen] = useState(false);
-  const [columnName, setColumnName] = useState('');
-  const [fieldKind, setFieldKind] = useState<SensitiveFieldKind>('phone');
-  const [fieldLabel, setFieldLabel] = useState('');
   const [sampleJson, setSampleJson] = useState(
     '{"customerName":"张三","phone":"13800138000","idCard":"110101199001011234","amount":12345.67}',
   );
@@ -79,11 +67,6 @@ const DataMaskPanel: React.FC = () => {
     blockedColumns: string[];
   } | null>(null);
   const [revokeTarget, setRevokeTarget] = useState<GrantItem | null>(null);
-  const [revokeReason, setRevokeReason] =
-    useState<GrantRevokeReason>('manual');
-  const [reviewedBy, setReviewedBy] = useState('');
-  const [destructionProof, setDestructionProof] = useState('');
-  const [busy, setBusy] = useState(false);
 
   const { data: levels } = useAsyncData<MaskLevelOption[]>(
     () => dataAssetApi.listMaskLevels(),
@@ -93,8 +76,31 @@ const DataMaskPanel: React.FC = () => {
     () => dataAssetApi.listDatasets({ pageSize: 200 }),
     [],
   );
+  /*
+   * ⚠️ **必须把 `status: 'active'` 交给服务端**，不能只靠下面的本地筛选。
+   *
+   * 原先写的是 `listGrants({ pageSize: 200 })`，而服务端
+   * `parsePageSize` 把 pageSize **截到 100**（`Math.min(100, …)`）——
+   * 于是接口只返回**最新 100 条**授权，而本页要用的是"生效中的授权"
+   * （下面的表格与空态都按 `status === 'active'` 本地筛选）。
+   *
+   * 后果（两个都不可接受）：
+   *   ① 第 101 条及更早的**生效中授权根本无法回收** —— 它在界面上不存在，
+   *      而"授权回收"恰恰是脱敏合规的核心动作（L4 还必须双人复核 + 销毁凭证）；
+   *   ② 当最新 100 条里没有 active 时，空态会显示
+   *      **「没有生效中的授权」—— 而实际上有**。这类"谎报空态"比报错更危险：
+   *      合规检查者会据此以为无需回收。
+   *
+   * 契约 `GrantListParams` 本来就有 `status` 字段，服务端
+   * `listGrants` 也早就实现 `if (status) conditions.push(eq(daGrant.status, status))`
+   * —— 即这个筛选**一直是支持的，只是客户端没用**。改用它之后返回的
+   * 全部是生效授权，100 条上限不再是"看不见的数据"而是"这一页的容量"。
+   *
+   * 服务端按创建时间倒序，因此仍有 100 条上限；若某天真会超过 100 条生效授权，
+   * 需要的是分页而不是继续调大 pageSize（后者会被服务端静默截断）。
+   */
   const { data: grants, reload: reloadGrants } = useAsyncData(
-    () => dataAssetApi.listGrants({ pageSize: 200 }),
+    () => dataAssetApi.listGrants({ status: 'active', pageSize: 100 }),
     [],
   );
   const { data: logs, reload: reloadLogs } = useAsyncData(
@@ -116,39 +122,31 @@ const DataMaskPanel: React.FC = () => {
   const grantRows: GrantItem[] = grants?.items ?? [];
   const logRows: GrantRevokeLogItem[] = logs?.items ?? [];
   const levelOptions = levels ?? [];
-  const activeDataset = datasetOptions.find((d) => d.id === selectedDataset);
+  /*
+   * ⚠️ 缺陷修复（本轮拆分时发现，与拆分本身无关）：
+   * 门禁等级原先取的是「数据集」下拉框的**当前选择**（`selectedDataset`），而不是
+   * **被回收的那条授权**所属数据集 —— 弹窗里的「（L4 核心数据）」「（必填）」与
+   * 描述文案因此跟着上方那个与本弹窗无关的下拉框变化。两个方向都是错的：
+   *   · 未选数据集 → `revokeNeedsDualControl` 恒为 false：L4 授权回收不提示
+   *     "必须由他人复核 + 登记销毁凭证"，提交后才被服务端 400 拒绝
+   *     （正是本文件头部注释声称要避免的形态）；
+   *   · 选了 L4 数据集去回收 L1/L2 授权 → 误报"必须复核 + 销毁凭证"。
+   *
+   * 证据：服务端 `data-asset.service.ts#revokeGrant()` 用该授权自己的
+   * `daGrant.datasetId` 关联 `daDataset.maskLevel` 得到 `maskLevel`，再交给
+   * `mask-policy.ts#validateRevoke()` 与 `requiresDestructionProof()`
+   * （`level === 'L4'`）校验；`da_dataset.mask_level` 由迁移
+   * `2026-10-15-upgrade-c13-data-mask.sql` 的 CHECK 约束收敛为 L1~L4。
+   * 契约侧 `shared/api.interface.ts` 的 `GrantItem.datasetId` 即该关联键，
+   * `MaskLevelOption.destroyProofRequired` 即 `requiresDestructionProof()` 的投影。
+   */
+  const revokeDataset = datasetOptions.find(
+    (d) => d.id === revokeTarget?.datasetId,
+  );
   const targetLevel = levelOptions.find(
-    (level) => level.level === activeDataset?.maskLevel,
+    (level) => level.level === revokeDataset?.maskLevel,
   );
   const revokeNeedsDualControl = targetLevel?.destroyProofRequired ?? false;
-
-  const saveField = async () => {
-    if (!selectedDataset) {
-      toast.error('请先选择数据集');
-      return;
-    }
-    if (!columnName.trim()) {
-      toast.error('请填写列名');
-      return;
-    }
-    setBusy(true);
-    try {
-      await dataAssetApi.upsertDatasetField(selectedDataset, {
-        columnName: columnName.trim(),
-        fieldKind,
-        fieldLabel: fieldLabel || undefined,
-      });
-      toast.success('字段登记已保存');
-      setFieldOpen(false);
-      setColumnName('');
-      setFieldLabel('');
-      reloadFields();
-    } catch (err) {
-      toast.error(getApiErrorMessage(err, '保存失败'));
-    } finally {
-      setBusy(false);
-    }
-  };
 
   const removeField = async (field: DatasetFieldItem) => {
     const ok = await confirmDanger(
@@ -184,32 +182,6 @@ const DataMaskPanel: React.FC = () => {
     }
   };
 
-  const submitRevoke = async () => {
-    if (!revokeTarget) return;
-    setBusy(true);
-    try {
-      const result = await dataAssetApi.revokeGrant(revokeTarget.id, {
-        reason: revokeReason,
-        reviewedBy: reviewedBy || undefined,
-        destructionProof: destructionProof || undefined,
-      });
-      toast.success(
-        `授权已回收，审计记录 ${result.logId.slice(0, 8)}…（${
-          REVOKE_REASON_LABELS[revokeReason]
-        }）`,
-      );
-      setRevokeTarget(null);
-      setReviewedBy('');
-      setDestructionProof('');
-      reloadGrants();
-      reloadLogs();
-    } catch (err) {
-      toast.error(getApiErrorMessage(err, '回收失败'));
-    } finally {
-      setBusy(false);
-    }
-  };
-
   return (
     <div className="flex flex-col gap-6">
       <p className="text-sm text-muted-foreground">
@@ -242,12 +214,21 @@ const DataMaskPanel: React.FC = () => {
           <h3 className="text-base font-semibold">脱敏字段登记</h3>
           <div className="flex items-end gap-2">
             <div className="grid gap-1">
-              <Label className="text-xs">数据集</Label>
+              {/*
+                a11y（§5.10 / P2-3）：Radix Select 的触发器是 <button>，
+                `htmlFor` 不适用，改用 `aria-labelledby` 指向本标签 id。
+              */}
+              <Label className="text-xs" id="data-mask-dataset-label">
+                数据集
+              </Label>
               <Select
                 value={selectedDataset}
                 onValueChange={setSelectedDataset}
               >
-                <SelectTrigger className="w-72">
+                <SelectTrigger
+                  className="w-72"
+                  aria-labelledby="data-mask-dataset-label"
+                >
                   <SelectValue placeholder="选择数据集" />
                 </SelectTrigger>
                 <SelectContent>
@@ -315,8 +296,11 @@ const DataMaskPanel: React.FC = () => {
         <div className="flex flex-col gap-3 rounded-lg border bg-card p-4">
           <h4 className="text-sm font-semibold">脱敏预览</h4>
           <div className="grid gap-2">
-            <Label className="text-xs">样例数据（JSON）</Label>
+            <Label className="text-xs" htmlFor="data-mask-sample-json">
+              样例数据（JSON）
+            </Label>
             <Input
+              id="data-mask-sample-json"
               value={sampleJson}
               onChange={(event) => setSampleJson(event.target.value)}
             />
@@ -451,151 +435,20 @@ const DataMaskPanel: React.FC = () => {
         </DataBoundary>
       </div>
 
-      <Dialog open={fieldOpen} onOpenChange={setFieldOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>登记脱敏字段</DialogTitle>
-            <DialogDescription>
-              列名必须与导出文件中的列头一致，否则该列会按「其它」处理（L4 下被阻断）。
-            </DialogDescription>
-          </DialogHeader>
-          <div className="grid gap-4">
-            <div className="grid gap-2">
-              <Label htmlFor="mask-column">列名</Label>
-              <Input
-                id="mask-column"
-                value={columnName}
-                placeholder="customerName"
-                onChange={(event) => setColumnName(event.target.value)}
-              />
-            </div>
-            <div className="grid gap-2">
-              <Label htmlFor="mask-kind">字段语义</Label>
-              <Select
-                value={fieldKind}
-                onValueChange={(value) =>
-                  setFieldKind(value as SensitiveFieldKind)
-                }
-              >
-                <SelectTrigger id="mask-kind">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {(Object.keys(FIELD_KIND_LABELS) as SensitiveFieldKind[]).map(
-                    (key) => (
-                      <SelectItem key={key} value={key}>
-                        {FIELD_KIND_LABELS[key]}
-                      </SelectItem>
-                    ),
-                  )}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="grid gap-2">
-              <Label htmlFor="mask-label">说明</Label>
-              <Input
-                id="mask-label"
-                value={fieldLabel}
-                onChange={(event) => setFieldLabel(event.target.value)}
-              />
-            </div>
-          </div>
-          <DialogFooter>
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => setFieldOpen(false)}
-            >
-              取消
-            </Button>
-            <Button type="button" disabled={busy} onClick={saveField}>
-              {busy ? '保存中…' : '保存'}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <FieldRegisterDialog
+        open={fieldOpen}
+        onOpenChange={setFieldOpen}
+        selectedDataset={selectedDataset}
+        reloadFields={reloadFields}
+      />
 
-      <Dialog
-        open={revokeTarget !== null}
-        onOpenChange={(open) => {
-          if (!open) setRevokeTarget(null);
-        }}
-      >
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>
-              回收授权 {revokeTarget?.code}
-              {revokeNeedsDualControl && '（L4 核心数据）'}
-            </DialogTitle>
-            <DialogDescription>
-              {revokeNeedsDualControl
-                ? '该数据集为 L4 核心等级：必须由他人复核，并登记对方删除副本的凭证。'
-                : '违规回收必须登记销毁凭证；其余情况可选填。'}
-            </DialogDescription>
-          </DialogHeader>
-          <div className="grid gap-4">
-            <div className="grid gap-2">
-              <Label htmlFor="revoke-reason">回收原因</Label>
-              <Select
-                value={revokeReason}
-                onValueChange={(value) =>
-                  setRevokeReason(value as GrantRevokeReason)
-                }
-              >
-                <SelectTrigger id="revoke-reason">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {(Object.keys(REVOKE_REASON_LABELS) as GrantRevokeReason[]).map(
-                    (key) => (
-                      <SelectItem key={key} value={key}>
-                        {REVOKE_REASON_LABELS[key]}
-                      </SelectItem>
-                    ),
-                  )}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="grid gap-2">
-              <Label htmlFor="revoke-reviewer">
-                复核人{revokeNeedsDualControl ? '（必填，且不能是操作人本人）' : ''}
-              </Label>
-              <Input
-                id="revoke-reviewer"
-                value={reviewedBy}
-                placeholder="复核人 妙搭 userId"
-                onChange={(event) => setReviewedBy(event.target.value)}
-              />
-            </div>
-            <div className="grid gap-2">
-              <Label htmlFor="revoke-proof">
-                销毁凭证
-                {revokeNeedsDualControl || revokeReason === 'violation'
-                  ? '（必填）'
-                  : ''}
-              </Label>
-              <Input
-                id="revoke-proof"
-                value={destructionProof}
-                placeholder="对方出具的删除确认函编号"
-                onChange={(event) => setDestructionProof(event.target.value)}
-              />
-            </div>
-          </div>
-          <DialogFooter>
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => setRevokeTarget(null)}
-            >
-              取消
-            </Button>
-            <Button type="button" disabled={busy} onClick={submitRevoke}>
-              {busy ? '提交中…' : '确认回收'}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <RevokeGrantDialog
+        revokeTarget={revokeTarget}
+        setRevokeTarget={setRevokeTarget}
+        revokeNeedsDualControl={revokeNeedsDualControl}
+        reloadGrants={reloadGrants}
+        reloadLogs={reloadLogs}
+      />
     </div>
   );
 };

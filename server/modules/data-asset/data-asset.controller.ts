@@ -19,6 +19,7 @@ import {
   IsOptional,
   IsString,
   IsUUID,
+  ValidateIf,
 } from 'class-validator';
 import { DataAssetService } from './data-asset.service';
 import type {
@@ -76,6 +77,31 @@ export class UpdateDatasetDto implements IUpdateDatasetDto {
   @IsString()
   maskLevel?: string;
 
+  /*
+   * 关联合同（PATCH 三态）：UUID 换绑 / null 解除关联 / 不传则不动。
+   *
+   * `@IsOptional()` 让 `undefined` 与 `null` 都短路放行（class-validator 把二者
+   * 一同视为"未提供"），`@ValidateIf` 再把 `null` 显式排除，于是**非 null 即必须
+   * 是合法 UUID** —— 与 `master-data.dto.ts#UpdateCustomerDto.taxEntityId`、
+   * `tax-entity.dto.ts` 的既有写法逐字一致。
+   */
+  @IsOptional()
+  @ValidateIf((_, v) => v !== null)
+  @IsUUID()
+  contractId?: string | null;
+
+  /*
+   * ⚠️ `@IsOptional()` 是**必须**的（本轮修复的连带缺陷）。
+   *
+   * 原先这里只有 `@IsString() @IsIn([...])`：Nest 的 `ValidationPipe` 没开
+   * `skipMissingProperties`，而 class-validator 在没有 `@IsOptional()` 时
+   * **会拿 `undefined` 去过校验器** —— 于是「不带 status 的 PATCH」一律 400。
+   *
+   * 而前端编辑弹窗的 payload 里**从来没有 status**（状态流转走
+   * `POST datasets/:id/actions/:action`），结果是「编辑数据集」保存必定失败，
+   * 本轮的「关联合同可改」也会被同一道闸门挡掉。
+   */
+  @IsOptional()
   @IsString()
   @IsIn(['active', 'offline'])
   status?: 'active' | 'offline';
@@ -199,7 +225,7 @@ export class DataAssetController {
     );
   }
 
-  @CanCapability('audit')
+  @CanCapability('data_asset')
   @Post('datasets')
   async createDataset(
     @Body() dto: CreateDatasetDto
@@ -207,7 +233,7 @@ export class DataAssetController {
     return this.dataAssetService.createDataset(dto);
   }
 
-  @CanCapability('audit')
+  @CanCapability('data_asset')
   @Patch('datasets/:id')
   async updateDataset(
     @Param('id', ParseUUIDPipe) id: string,
@@ -216,7 +242,7 @@ export class DataAssetController {
     return this.dataAssetService.updateDataset(id, dto);
   }
 
-  @CanCapability('audit')
+  @CanCapability('data_asset')
   @Post('datasets/:id/actions/:action')
   async datasetAction(
     @Param('id', ParseUUIDPipe) id: string,
@@ -242,13 +268,13 @@ export class DataAssetController {
     );
   }
 
-  @CanCapability('audit')
+  @CanCapability('data_asset')
   @Post('grants')
   async createGrant(@Body() dto: CreateGrantDto): Promise<GrantItem> {
     return this.dataAssetService.createGrant(dto);
   }
 
-  @CanCapability('audit')
+  @CanCapability('data_asset')
   @Post('grants/:id/actions/expire')
   async expireGrant(
     @Param('id', ParseUUIDPipe) id: string
@@ -262,7 +288,7 @@ export class DataAssetController {
    * 人工回收授权（留痕）。到期失效走 `actions/expire`（系统行为，无需复核）。
    * L4 核心数据必须双人确认 + 销毁凭证，否则 400。
    */
-  @CanCapability('audit')
+  @CanCapability('data_asset')
   @Post('grants/:id/actions/revoke')
   async revokeGrant(
     @Req() req: Request,
@@ -306,7 +332,7 @@ export class DataAssetController {
     return this.dataAssetService.listDatasetFields(id);
   }
 
-  @CanCapability('audit')
+  @CanCapability('data_asset')
   @Post('datasets/:id/fields')
   async upsertDatasetField(
     @Param('id', ParseUUIDPipe) id: string,
@@ -315,7 +341,7 @@ export class DataAssetController {
     return this.dataAssetService.upsertDatasetField(id, dto);
   }
 
-  @CanCapability('audit')
+  @CanCapability('data_asset')
   @Post('datasets/:id/fields/:columnName/delete')
   async deleteDatasetField(
     @Param('id', ParseUUIDPipe) id: string,

@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   Inject,
   Injectable,
   Logger,
@@ -17,6 +18,7 @@ import {
   gte,
   inArray,
   like,
+  ne,
   or,
   lt,
   sql,
@@ -26,6 +28,7 @@ import {
   erpCostAllocation,
   erpProjectCost,
   erpTimesheet,
+  finVoucher,
   hrAppraisal,
   hrCandidate,
   hrDepartment,
@@ -37,9 +40,11 @@ import {
   mdEmployee,
 } from '@server/database/schema';
 import { generateBizCode } from '@server/common/utils/biz-code';
+import { round2 } from '@server/common/utils/number';
 import { VoucherHookService } from '@server/modules/voucher/voucher-hook.service';
 import { todayInShanghai } from '@server/common/utils/biz-date';
 import { previewPayroll, cumulativeAdditionalDeduction, monthlyAdditionalDeduction } from './payroll-engine';
+import { payrollAccrualLines } from '@server/common/tax/payroll-posting';
 import { PayrollTaxService } from './payroll-tax.service';
 import type {
   AddTrainingAttendeesDto,
@@ -76,6 +81,39 @@ export class HrPayService {
     private readonly voucherHookService: VoucherHookService,
     private readonly payrollTaxService: PayrollTaxService,
   ) {}
+
+  /**
+   * N-1：取「应发工资」（代扣前）。
+   *
+   * 优先用引擎快照里的 `gross`（引擎算的就是应发口径）；手工录入（无快照）时
+   * 回落到「基本 + 绩效 + 津贴」—— 这正是手工口径下 `net` 的计算基础
+   * （见 createPayroll 里 `engineNet ?? base + perf + allowance - social - fund - tax`），
+   * 两者一致，不会出现应发与实发对不上的情况。
+   */
+  private resolvePayrollGross(payroll: {
+    engineSnapshot?: string | null;
+    baseSalary?: string | number | null;
+    perfSalary?: string | number | null;
+    allowance?: string | number | null;
+  }): number {
+    if (payroll.engineSnapshot) {
+      try {
+        const parsed = JSON.parse(payroll.engineSnapshot) as { gross?: unknown };
+        if (typeof parsed.gross === 'number' && Number.isFinite(parsed.gross)) {
+          return parsed.gross;
+        }
+      } catch {
+        this.logger.warn(
+          '工资单引擎快照解析失败，应发工资回落到「基本+绩效+津贴」口径，请核对工资单数据'
+        );
+      }
+    }
+    return (
+      Number(payroll.baseSalary ?? 0) +
+      Number(payroll.perfSalary ?? 0) +
+      Number(payroll.allowance ?? 0)
+    );
+  }
 
   /* ========== 薪酬 ========== */
 
@@ -417,12 +455,13 @@ export class HrPayService {
         ytdTaxableIncome: String(cumulative.cumulativeTaxable),
         taxRate: String(cumulative.taxRate),
         quickDeduction: String(cumulative.quickDeduction),
-        ytdNet: String(Math.round((priorNet + preview.netSalary) * 100) / 100),
+        ytdNet: String(round2(priorNet + preview.netSalary)),
       });
     }
     // P2-9：走引擎时以引擎实发为准（含其他扣除）；手工录入时按字段简单相减。
-    const net: number =
-      engineNet ?? base + perf + allowance - social - fund - tax;
+    const net: number = round2(
+      engineNet ?? base + perf + allowance - social - fund - tax
+    );
     const code = await generateBizCode(
       this.db,
       hrPayroll,
@@ -479,6 +518,89 @@ export class HrPayService {
         .update(hrPayroll)
         .set({ status: 'rejected', updatedAt: new Date() })
         .where(eq(hrPayroll.id, id));
+    } else if (action === 'pay') {
+      /*
+       * B12（§7.2）：标记已发放。
+       *
+       * 前置条件 `approved` —— 只有批准过的工资单才谈得上"发出去"。
+       * 为什么需要这个独立动作：`approved` 表示"同意发"，不表示"已发"。
+       * 出纳原先只能靠线下表格区分，于是"这个月到底打款了没有"
+       * 在系统里查不到 —— 而这是月度结账必须回答的问题。
+       *
+       * 有意**不做**"标记已发放时自动生成付款凭证"：付款凭证应当由
+       * 银行流水/付款单驱动（本仓的现金流预测也按实际付款取数），
+       * 在这里顺带生成会让"凭证有、银行没这笔"的错账无法被发现。
+       */
+      if (current !== 'approved') {
+        throw new BadRequestException(
+          `仅已批准的工资单可标记发放（当前状态 ${current}）`
+        );
+      }
+      await this.db
+        .update(hrPayroll)
+        .set({ status: 'paid', updatedAt: new Date() })
+        .where(and(eq(hrPayroll.id, id), eq(hrPayroll.status, 'approved')));
+    } else if (action === 'void') {
+      /*
+       * B12：作废已批准的工资单。
+       *
+       * ## 前置条件（不是形式校验）
+       *
+       * · 状态必须是 `approved`（`submitted` 应先 reject 而不是 void；
+       *   `paid` 已实际发钱，作废涉及资金追回，由线下处理）。
+       * · `allocationGenerated` 必须为 false —— 该标记表示**成本分摊已生成**，
+       *   也就是 `erp_project_cost` 里已经落了这笔人工成本、并可能已进项目毛利。
+       *   直接作废会让"工资单不存在、成本还在" —— 项目毛利虚高且无从追溯。
+       *   正确做法是先红冲分摊（本仓有专门的分摊红冲入口），再作废。
+       * · 凭证同理：`approvePayroll` 生成的计提凭证需要先红冲。
+       *
+       * 这里**不自动红冲**：红冲是会计动作，需要会计期间未关账、需要填红冲原因，
+       * 由人在对应入口做才留得下审计痕迹。本方法只保证"不会静默产生不一致"。
+       */
+      if (current !== 'approved') {
+        throw new BadRequestException(
+          `仅已批准的工资单可作废（当前状态 ${current}）` +
+            (current === 'paid'
+              ? '；已发放的工资单作废涉及资金追回，请线下处理并走红冲流程'
+              : '')
+        );
+      }
+      if (payroll.allocationGenerated) {
+        throw new BadRequestException(
+          '该工资单已生成成本分摊，不能直接作废：项目成本里已经落了这笔人工，' +
+            '直接作废会出现"工资单不存在、成本还在"。请先在成本分摊处红冲，再作废工资单'
+        );
+      }
+      await this.db.transaction(async (tx) => {
+        const updated = await tx
+          .update(hrPayroll)
+          .set({ status: 'voided', updatedAt: new Date() })
+          .where(and(eq(hrPayroll.id, id), eq(hrPayroll.status, 'approved')))
+          .returning({ id: hrPayroll.id });
+        if (updated.length === 0) {
+          throw new ConflictException('该工资单状态已变更，请刷新后重试');
+        }
+        /*
+         * 已计提的凭证一并作废，避免"凭证还在、单据已作废"。
+         *
+         * 按 `(source_type, source_ref)` 反查 —— 这是凭证钩子写入时用的关联键
+         * （`sourceType: 'payroll'`、`sourceRef: 'payroll:<单号>'`），
+         * 也是唯一能确定"这张凭证确实是本工资单产生的"的依据。
+         * 不按金额或摘要匹配：那种匹配会在同月多张工资单时误伤。
+         *
+         * 只作废 `draft` / `posted` 状态的凭证；已是 `voided` 的跳过（幂等）。
+         */
+        await tx
+          .update(finVoucher)
+          .set({ status: 'voided', updatedAt: new Date() })
+          .where(
+            and(
+              eq(finVoucher.sourceType, 'payroll'),
+              eq(finVoucher.sourceRef, `payroll:${payroll.code}`),
+              ne(finVoucher.status, 'voided')
+            )
+          );
+      });
     } else {
       if (current !== 'submitted') {
         throw new BadRequestException('仅已提交状态可审批');
@@ -488,11 +610,45 @@ export class HrPayService {
       }
       await this.approvePayroll(payroll);
 
-      /* 方案 A：借 6401 / 贷 2211；预提红冲凭证在 approvePayroll 内按项目发出 */
+      /* N-1：按**应发**计提（借 成本费用 应发 / 贷 2211-工资 应发，代扣部分转入应付个税/社保/公积金）；
+        预提红冲凭证在 approvePayroll 内按项目发出 */
       let payrollVoucherLines: { accountCode: string; debit?: number; credit?: number }[] | undefined;
       let payrollVoucherDate: string | undefined;
       try {
+        const gross = this.resolvePayrollGross(payroll);
         const netAmount = Number(payroll.netSalary ?? 0);
+        // 代扣合计取“应发 - 实发”的**差额**，而不是把 tax/社保/公积金相加：
+        // 引擎口径下还存在“其他扣除”（企业年金等，P2-9），它未单独落库；
+        // 用差额才能保证无论引擎内部怎么拆，2211-工资 余额都恰好落在实发上。
+        /*
+         * ⚠️ 这里必须用共享 `round2`，不要写 `Math.round((gross - netAmount) * 100) / 100`。
+         *
+         * 本处原先是内联的 `Math.round(x*100)/100` —— 正是 `shared/number.ts` 明令
+         * 不要再写的那种写法（全仓另 5 处已统一迁移，此处是遗漏）。它的两处问题实测：
+         *
+         * | 输入 | `Math.round(x*100)/100` | `round2(x)` |
+         * |---|---|---|
+         * | `-0.125` | `-0.12` | `-0.13` |
+         * | `-2.675` | `-2.67` | `-2.68` |
+         * | `x + (-x)`（红冲对称） | **+0.01 不平** | **0 平** |
+         *
+         * `Math.round` 是「向 +∞ 取整」而不是会计要求的「远离零取整」，
+         * 于是同一笔金额在**计提**与**红冲**两个方向上取整不一致，
+         * "原凭证 + 红冲凭证"合计差 1 分 —— 且不会抛错。
+         * `withheldTotal` 直接参与本方法的计提/预提红冲凭证行，所以这条必须成立。
+         */
+        const withheldTotal = round2(gross - netAmount);
+        const taxWithheld = Number(payroll.tax ?? 0);
+        /* 残差 = 其他代扣（社保/公积金/个税之外的部分）。同样统一走 round2，理由见上。 */
+        const otherWithheld = Math.max(
+          0,
+          round2(
+            withheldTotal -
+              taxWithheld -
+              Number(payroll.socialInsurance ?? 0) -
+              Number(payroll.housingFund ?? 0)
+          )
+        );
         const periodMatch = /^(\d{4})-(\d{2})$/.exec(payroll.period ?? '');
         const voucherDate = periodMatch
           ? `${payroll.period}-${String(
@@ -501,22 +657,34 @@ export class HrPayService {
               ).getUTCDate()
             ).padStart(2, '0')}`
           : todayInShanghai();
-        // 修复 P1-8：净工资为 0 或负数时不生成凭证（否则会出现借方为负数的凭证）
-        if (netAmount > 0) {
+        // 修复 P1-8：应发为 0 或负数时不生成凭证（否则会出现借方为负数的凭证）；
+        // N-1：门禁由“净额”改为“应发” —— 应发为正、实发为负（超额代扣）属数据异常，同样跳过。
+        if (gross > 0 && netAmount >= 0) {
           // P1-9：分录提到 try 外层做常量，补偿登记时才能带上可重放的分录
           payrollVoucherDate = voucherDate;
           // P2-11：借方科目不再写死。工资归集到哪个科目是业务决策（生产成本/管理费用/
           // 主营业务成本都可能），6401 又是一级末级科目、走不了下钻配置，因此按场景取。
-          // 未配置时回落 6401，存量行为不变。
           const payrollExpenseAccount =
             await this.voucherHookService.resolveSceneAccount(
               'payroll_accrual',
               '6401'
             );
-          payrollVoucherLines = [
-            { accountCode: payrollExpenseAccount?.code ?? '6401', debit: netAmount },
-            { accountCode: '2211', credit: netAmount },
-          ];
+          // B-3：未配置时必须留痕。静默回落 6401 会让“工资全进了主营业务成本”
+          // 这件事在报表上完全看不出来（成本虚高、管理费用为零）。
+          if (!payrollExpenseAccount) {
+            this.logger.warn(
+              `工资归集科目未配置（场景 payroll_accrual），工资单 ${payroll.code} 已回落 6401 主营业务成本；` +
+                `如实际应为生产成本/管理费用，请配置科目场景映射后重新审批`
+            );
+          }
+          payrollVoucherLines = payrollAccrualLines({
+            gross,
+            expenseAccountCode: payrollExpenseAccount?.code ?? '6401',
+            individualIncomeTax: taxWithheld,
+            socialInsurance: Number(payroll.socialInsurance ?? 0),
+            housingFund: Number(payroll.housingFund ?? 0),
+            otherDeduction: otherWithheld,
+          });
           await this.voucherHookService.generateVoucherDraft({
             sourceType: 'payroll',
             sourceRef: `payroll:${payroll.code}`,
@@ -526,7 +694,7 @@ export class HrPayService {
           });
         } else {
           this.logger.warn(
-            `工资单 ${payroll.code} 净额 ${netAmount} 非正数，跳过凭证生成`
+            `工资单 ${payroll.code} 应发 ${gross} / 实发 ${netAmount} 非正数或异常，跳过凭证生成`
           );
         }
       } catch (error) {
@@ -787,18 +955,27 @@ export class HrPayService {
     );
     if (totalHours <= 0) return [];
     const net: number = Number(payroll.netSalary ?? 0);
+    /*
+     * 按工时占比把工资净额分摊到各项目。
+     *
+     * ⚠️ 统一走 `round2`（原为内联 `Math.round(x*100)/100`）。影响本处的三个理由：
+     *   ① **尾差分摊必须精确**：下面"最后一行找平"要求 `Σ分摊额 === net`。
+     *      用非对称取整时，找平行可能是负数，而 `Math.round` 对负数向 +∞ 取整、
+     *      `round2` 远离零取整 —— 两者在 `-x.xx5` 上差 1 分，找平就不再精确；
+     *   ② **红冲分摊**要走同一套数（本仓有专门的分摊红冲入口），
+     *      两个方向取整不一致 → "原分摊 + 红冲分摊"合计不为 0；
+     *   ③ 项目成本是按分摊额入 `erp_project_cost` 的，1 分差会沿着成本口径传下去。
+     */
     const items = valid.map((row) => ({
       projectId: row.projectId as string,
-      amount:
-        Math.round(net * (Number(row.totalHours) / totalHours) * 100) / 100,
+      amount: round2(net * (Number(row.totalHours) / totalHours)),
     }));
     // L16：最后一行找平，消除四舍五入 ±0.01 尾差
     if (items.length > 0) {
       const allocated = items
         .slice(0, -1)
         .reduce((acc, item) => acc + item.amount, 0);
-      items[items.length - 1].amount =
-        Math.round((net - allocated) * 100) / 100;
+      items[items.length - 1].amount = round2(net - allocated);
     }
     return items;
   }

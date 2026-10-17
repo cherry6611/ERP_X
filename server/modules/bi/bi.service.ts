@@ -21,6 +21,7 @@ import {
 import dayjs from 'dayjs';
 import utc from 'dayjs/plugin/utc';
 import { todayInShanghai } from '@server/common/utils/biz-date';
+import { round2 } from '@server/common/utils/number';
 import {
   astAsset,
   astChange,
@@ -45,6 +46,12 @@ import {
   mdEmployee,
 } from '@server/database/schema';
 import { computeEvm } from '@server/common/utils/evm';
+import {
+  ACTIVE_PROJECT_STATUSES,
+  classifyProjectHealth,
+  projectedFinalCost,
+  remainingMonthsUntil,
+} from './project-health';
 import type {
   AlertItem,
   AlertsResult,
@@ -64,12 +71,12 @@ import type {
 
 dayjs.extend(utc);
 
-const ACTIVE_PROJECT_STATUSES = [
-  'initiating',
-  'executing',
-  'delivering',
-  'accepting',
-];
+/*
+ * 在管项目状态白名单已抽到 `./project-health`（与指标中心共用一份）。
+ * 原先这里写 `['initiating','executing']`、指标中心内联
+ * `('active','delivering','accepting')` —— 后者里的 `'active'` 是**合同**状态，
+ * 于是指标中心那两个项目数指标恒为 0，与看板自相矛盾。详见该文件注释。
+ */
 
 @Injectable()
 export class BiService {
@@ -120,14 +127,16 @@ export class BiService {
         settledAmount: erpAr.settledAmount,
       })
       .from(erpAr)
-      .where(ne(erpAr.status, 'settled'));
+      // B1：白名单化 —— `ne('settled')` 会把新终态 `'voided'` 算进来，
+      // 作废的应收仍在经营看板里占额度。新增状态默认不可见（fail-closed）。
+      .where(inArray(erpAr.status, ['open', 'partial']));
     const apRows = await this.db
       .select({
         amount: erpApBill.amount,
         paidAmount: erpApBill.paidAmount,
       })
       .from(erpApBill)
-      .where(ne(erpApBill.status, 'paid'));
+      .where(inArray(erpApBill.status, ['pending', 'approved', 'partial']));
     const projectRows = await this.db
       .select({ total: sql<number>`count(*)::int` })
       .from(erpProject)
@@ -417,39 +426,45 @@ export class BiService {
       const recognizedRevenue: number =
         (revenueMap.get(project.id) ?? 0) - (adjustMap.get(project.id) ?? 0);
       const monthlyAvgCost: number = (recentCostMap.get(project.id) ?? 0) / 3;
-      let remainingMonths = 0;
-      if (project.endDate !== null) {
-        remainingMonths = Math.max(
-          0,
-          dayjs(project.endDate)
-            .utcOffset(8)
-            .diff(now, 'month', true)
-        );
-      }
-      const projectedFinalCost: number = Math.max(
+      const remainingMonths = remainingMonthsUntil(project.endDate, now);
+      const projectedFinalCostValue: number = projectedFinalCost(
         actualCost,
-        actualCost + monthlyAvgCost * remainingMonths
+        monthlyAvgCost,
+        remainingMonths
       );
-      let healthLevel: ProjectHealthLevel = 'healthy';
-      let healthReason: string | null = null;
-      if (estimatedTotalCost > 0 && estimatedTotalCost < actualCost) {
-        healthLevel = 'unreachable';
-        healthReason = '预计总成本低于已发生成本';
-      } else if (budget > 0 && projectedFinalCost > budget) {
-        healthLevel = 'over_budget';
-        healthReason = '按当前成本进度外推将超出预算';
-        overBudgetCount += 1;
-      } else if (budget > 0 && actualCost > budget * 0.9) {
-        healthLevel = 'watch';
-        healthReason = '已发生成本接近预算';
-        watchCount += 1;
-      }
+      /*
+       * 健康等级判定（含 unreachable > over_budget > watch 的优先级）已抽到
+       * `./project-health` 的纯函数，可逐条单测 —— 生产库里不一定有
+       * over_budget / unreachable 样本，靠真实数据观测不到优先级。
+       */
+      const verdict = classifyProjectHealth({
+        budget,
+        estimatedTotalCost,
+        actualCost,
+        projectedFinalCost: projectedFinalCostValue,
+      });
+      let healthLevel: ProjectHealthLevel = verdict.level;
+      let healthReason: string | null = verdict.reason;
+      if (verdict.overBudget) overBudgetCount += 1;
+      if (verdict.watch) watchCount += 1;
       const evm = computeEvm(
         budget,
         actualCost,
         milestoneMap.get(project.id) ?? [],
         today
       );
+      // B3：权重未配平时 SPI/CPI 不再等价于"完成百分比"，必须在健康度上
+      // 单独暴露。原先 `evm.spi` 会在权重和 = 30 时返回 1.00，
+      // 报表呈现"进度成本双达标"而实际只完成 30% —— 周预警因此集体失明。
+      // 这里与其它健康等级**并列**（取更高优先级），而不是覆盖已有的
+      // unreachable/over_budget：那些是资金问题，不能被一个配置问题盖掉。
+      if (!evm.balanced && evm.totalWeight > 0 && healthReason === null) {
+        healthLevel = 'watch';
+        healthReason =
+          `里程碑权重合计 ${evm.totalWeight}%（应为 100%），` +
+          `SPI/CPI 已按实际权重归一化，但进度基准未配平，请先修正权重`;
+        watchCount += 1;
+      }
       const overdueMilestoneCount = (milestoneMap.get(project.id) ?? []).filter(
         (m) =>
           (m.status ?? 'pending') !== 'reached' &&
@@ -465,13 +480,15 @@ export class BiService {
         estimatedTotalCost,
         actualCost,
         recognizedRevenue,
-        projectedFinalCost,
+        projectedFinalCost: projectedFinalCostValue,
         healthLevel,
         healthReason,
         spi: evm.spi,
         cpi: evm.cpi,
         eac: evm.eac,
         overdueMilestoneCount,
+        milestoneWeightTotal: evm.totalWeight,
+        milestoneWeightBalanced: evm.balanced,
       });
     }
     return { items, overBudgetCount, watchCount };
@@ -564,7 +581,21 @@ export class BiService {
         settledAmount: erpAr.settledAmount,
         status: erpAr.status,
       })
-      .from(erpAr);
+      .from(erpAr)
+      /*
+       * B1（同类缺陷）：与 `getOverview` 同口径白名单化。
+       *
+       * 原先这里**没有任何状态过滤**，下游用 `if (row.status === 'settled') continue`
+       * 排除已结清 —— 那是一个**黑名单**，必然漏掉新增终态 `'voided'`
+       * （`ArStatus = 'open' | 'partial' | 'settled' | 'voided'`）。
+       * 后果：作废的应收被计入客户贡献表的「应收余额」，而同一块看板的
+       * 概览 KPI（`getOverview`）与应收账龄分布（`ArService.listAging`）
+       * 都已排除 —— **同一个屏幕上的两个数字对不上，差额恰为作废金额**。
+       *
+       * 改成白名单后，"新增状态默认不可见"（fail-closed），与 B1 的判据一致：
+       * 将来再加应收状态时，这里不会静默把它算进余额。
+       */
+      .where(inArray(erpAr.status, ['open', 'partial']));
     const contractMap = new Map<string, number>();
     for (const row of contractRows) {
       contractMap.set(row.customerId ?? '', Number(row.total ?? 0));
@@ -579,7 +610,12 @@ export class BiService {
     }
     const arMap = new Map<string, number>();
     for (const row of arRows) {
-      if (row.status === 'settled') continue;
+      /*
+       * 状态过滤已上移到查询层（白名单 `open`/`partial`），此处不再重复判断 ——
+       * 两处各判一次会让"哪些状态算未结"出现两个真相来源，而黑名单正是
+       * 本次缺陷的成因（漏掉新增终态）。
+       * `row.status` 仍在 select 里保留：它参与 `ArCustomerContribution` 的映射。
+       */
       const open = Number(row.amount) - Number(row.settledAmount ?? 0);
       const key = row.customerId ?? '';
       arMap.set(key, (arMap.get(key) ?? 0) + open);
@@ -736,7 +772,7 @@ export class BiService {
     const revenue = Number(revenueRows[0]?.total ?? 0);
     const headcount = activeCount + probationCount;
     const revenuePerHead =
-      headcount > 0 ? Math.round((revenue / headcount) * 100) / 100 : 0;
+      headcount > 0 ? round2(revenue / headcount) : 0;
 
     const laborRows = await this.db
       .select({
@@ -771,7 +807,7 @@ export class BiService {
     const totalHours: number = Number(hoursRows[0]?.total ?? 0);
     const avgProjectHoursPerHead =
       headcount > 0
-        ? Math.round((totalHours / headcount) * 100) / 100
+        ? round2(totalHours / headcount)
         : 0;
 
     const deptRows = await this.db
@@ -869,7 +905,7 @@ export class BiService {
 
     const items: AlertItem[] = [];
 
-    // 1. 应收逾期：未核销（status != settled）且到期日早于今天
+    // 1. 应收逾期：未核销且未作废（B1 白名单：作废的应收不再产生逾期提醒）
     const arRows = await this.db
       .select({
         code: erpAr.code,
@@ -882,7 +918,7 @@ export class BiService {
       .leftJoin(mdCustomer, eq(erpAr.customerId, mdCustomer.id))
       .where(
         and(
-          ne(erpAr.status, 'settled'),
+          inArray(erpAr.status, ['open', 'partial']),
           isNotNull(erpAr.dueDate),
           lt(erpAr.dueDate, today)
         )

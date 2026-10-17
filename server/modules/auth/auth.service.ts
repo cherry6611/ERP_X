@@ -18,6 +18,7 @@ import { SessionStore } from '@server/platform/session-store';
 import { DRIZZLE_DATABASE } from '@server/platform/tokens';
 import { decryptSecret, encryptSecret, secretKeyFromEnv } from '@server/common/security/secret-box';
 import { listCapabilities } from '@shared/rbac';
+import { isProductionRuntime } from '@server/common/utils/runtime-env';
 import { DEFAULT_LOCKOUT_POLICY, LoginSecurityService } from './login-security.service';
 
 const ROLES: Array<{ code: string; name: string }> = [
@@ -470,7 +471,7 @@ export class AuthService implements OnModuleInit {
     if (!redirect) {
       throw new ServiceUnavailableException('飞书应用凭证未配置：缺少 FEISHU_REDIRECT_URI');
     }
-    if (process.env.NODE_ENV !== 'production') {
+    if (!isProductionRuntime()) {
       const appBase = (process.env.APP_BASE_URL ?? '').trim();
       if (appBase) {
         try {

@@ -1,5 +1,5 @@
 import React from 'react';
-import ReactECharts from 'echarts-for-react';
+import { EChart } from '@client/src/components/EChart';
 import type { EChartsOption } from 'echarts';
 import { Clock, Coins, Timer, UserCheck, UserMinus, UserPlus, Wallet } from 'lucide-react';
 import { DataState } from '@client/src/components/DataState';
@@ -151,7 +151,7 @@ const HrOverviewPanel: React.FC = () => {
               <p className="text-sm text-muted-foreground">近 12 个月人数趋势</p>
               {trend.length > 0 ? (
                 <div role="img" aria-label="近12个月人数趋势图">
-                  <ReactECharts option={trendOption} theme="ud" className="h-[300px]" />
+                  <EChart option={trendOption} className="h-[300px]" />
                 </div>
               ) : (
                 <p className="py-8 text-center text-sm text-muted-foreground">
@@ -163,7 +163,7 @@ const HrOverviewPanel: React.FC = () => {
               <p className="text-sm text-muted-foreground">部门人数分布（在职）</p>
               {deptData.length > 0 ? (
                 <div role="img" aria-label="部门人数分布图">
-                  <ReactECharts option={deptOption} theme="ud" className="h-[300px]" />
+                  <EChart option={deptOption} className="h-[300px]" />
                 </div>
               ) : (
                 <p className="py-8 text-center text-sm text-muted-foreground">
@@ -176,7 +176,7 @@ const HrOverviewPanel: React.FC = () => {
             <p className="text-sm text-muted-foreground">近 6 个月工资总包 vs 项目人力成本</p>
             {laborTrend.length > 0 ? (
               <div role="img" aria-label="工资总包与项目人力成本对比图">
-                <ReactECharts option={laborOption} theme="ud" className="h-[300px]" />
+                <EChart option={laborOption} className="h-[300px]" />
               </div>
             ) : (
               <p className="py-8 text-center text-sm text-muted-foreground">

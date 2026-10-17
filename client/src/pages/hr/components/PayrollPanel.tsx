@@ -4,9 +4,10 @@ import { useForm } from 'react-hook-form';
 import { z } from 'zod';
 import { toast } from 'sonner';
 import { Plus } from 'lucide-react';
-import { Table, TableColumnsType } from 'antd';
+import { Table } from 'antd';
 import { CanCapability, CanCapabilityWrite } from '@client/src/platform/auth';
-import HrStatusBadge, { PAYROLL_STATUS_LABELS } from './HrStatusBadge';
+import { PAYROLL_STATUS_LABELS } from './HrStatusBadge';
+import { payrollColumns } from './payroll-columns';
 import { Button } from '@client/src/components/ui/button';
 import {
   Dialog,
@@ -34,7 +35,6 @@ import {
 } from '@client/src/components/ui/select';
 import { hrApi } from '@client/src/api';
 import { sendApprovalNotification } from '@client/src/api/notifications';
-import PayslipPrintButton from '@client/src/components/print/PayslipPrintButton';
 import { useAsyncData } from '@client/src/hooks/useAsyncData';
 import { currentPeriod, formatMoney } from '@client/src/utils/format';
 import type {
@@ -147,6 +147,11 @@ const PayrollPanel: React.FC = () => {
         submit: '已提交审批',
         approve: '已审批通过',
         reject: '已驳回',
+        // B12：`Record<PayrollAction, string>` 是穷尽映射 ——
+        // 新增动作时漏了这里，TypeScript 会直接报错而不是静默显示 undefined。
+        // 这正是"动作枚举 + 穷尽 Record"这个组合值得保留的原因。
+        pay: '已标记发放',
+        void: '工资单已作废',
       };
       toast.success(label[action]);
       await reload();
@@ -155,101 +160,7 @@ const PayrollPanel: React.FC = () => {
     }
   };
 
-  const columns: TableColumnsType<PayrollItem> = [
-    { title: '编号', dataIndex: 'code', fixed: 'left', width: 140 },
-    { title: '员工', dataIndex: 'employeeName', width: 110 },
-    { title: '期间', dataIndex: 'period', width: 90 },
-    {
-      title: '基本工资',
-      dataIndex: 'baseSalary',
-      width: 110,
-      align: 'right',
-      render: (v: number) => formatMoney(v),
-    },
-    {
-      title: '绩效工资',
-      dataIndex: 'perfSalary',
-      width: 110,
-      align: 'right',
-      render: (v: number) => formatMoney(v),
-    },
-    {
-      title: '补贴',
-      dataIndex: 'allowance',
-      width: 100,
-      align: 'right',
-      render: (v: number) => formatMoney(v),
-    },
-    {
-      title: '社保',
-      dataIndex: 'socialInsurance',
-      width: 100,
-      align: 'right',
-      render: (v: number) => formatMoney(v),
-    },
-    {
-      title: '公积金',
-      dataIndex: 'housingFund',
-      width: 100,
-      align: 'right',
-      render: (v: number) => formatMoney(v),
-    },
-    {
-      title: '个税',
-      dataIndex: 'tax',
-      width: 100,
-      align: 'right',
-      render: (v: number) => formatMoney(v),
-    },
-    {
-      title: '实发',
-      dataIndex: 'netSalary',
-      width: 120,
-      align: 'right',
-      render: (v: number) => <span className="font-medium">{formatMoney(v)}</span>,
-    },
-    {
-      title: '状态',
-      dataIndex: 'status',
-      width: 90,
-      render: (s: string) => <HrStatusBadge status={s} labels={PAYROLL_STATUS_LABELS} />,
-    },
-    {
-      title: '操作',
-      key: 'action',
-      width: 260,
-      render: (_: unknown, record: PayrollItem) => (
-        <div className="flex items-center gap-1">
-          {/* C-06：工资条打印（裁剪后随工资发放，或作为个人留存凭证） */}
-          <PayslipPrintButton payroll={record} stopPropagation />
-          <CanCapabilityWrite capability="hr_write">
-            <div className="flex gap-1">
-              {record.status === 'draft' ? (
-                <Button variant="ghost" size="sm" onClick={() => void doAction(record, 'submit')}>
-                  提交审批
-                </Button>
-              ) : null}
-              {record.status === 'submitted' ? (
-                <>
-                  <Button variant="ghost" size="sm" onClick={() => void doAction(record, 'approve')}>
-                    审批通过
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="text-destructive"
-                    onClick={() => void doAction(record, 'reject')}
-                  >
-                    驳回
-                  </Button>
-                </>
-              ) : null}
-            </div>
-          </CanCapabilityWrite>
-        </div>
-      ),
-    },
-  ];
+  const columns = payrollColumns({ doAction });
 
   return (
     <div className="flex flex-col gap-4">

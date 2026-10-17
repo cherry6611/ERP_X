@@ -76,9 +76,11 @@ export interface ReconciliationResult {
   balanced: boolean;
 }
 
-export function round2(value: number): number {
-  return Math.round((value + Number.EPSILON) * 100) / 100;
-}
+// 统一取整口径：原先这里自带一份 `Math.round((v + EPSILON) * 100) / 100`，
+// 对负数不对称（红冲差 1 分）。改为再导出全仓唯一实现，保持本模块的导出面不变。
+import { round2 } from '@server/common/utils/number';
+
+export { round2 };
 
 /**
  * 生成调节表计算结果。

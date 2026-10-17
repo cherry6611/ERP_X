@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import { toast } from 'sonner';
 import { Info, Lock, Pencil, RefreshCw } from 'lucide-react';
 import { Badge } from '@client/src/components/ui/badge';
@@ -13,15 +13,8 @@ import {
 } from '@client/src/components/ui/dialog';
 import { Input } from '@client/src/components/ui/input';
 import { Label } from '@client/src/components/ui/label';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@client/src/components/ui/table';
 import { Textarea } from '@client/src/components/ui/textarea';
+import { Table, type TableColumnsType } from 'antd';
 import DataBoundary from '@client/src/components/erp/DataBoundary';
 import { SectionTitle } from '@client/src/components/SectionTitle';
 import { useAsyncData } from '@client/src/hooks/useAsyncData';
@@ -45,10 +38,14 @@ const ParameterSettings: React.FC = () => {
     return Array.from(map.entries()).sort((a, b) => a[0].localeCompare(b[0]));
   }, [params.data]);
 
-  const openEdit = (item: SystemParamItem) => {
+  /*
+   * `openEdit` 包成 `useCallback`：它要作为 `paramColumns`（useMemo）的依赖，
+   * 每次渲染新建的闭包会让 useMemo 每次都失效 → antd 表头重建。
+   */
+  const openEdit = useCallback((item: SystemParamItem) => {
     setEditing(item);
     setDraft(item.paramValue);
-  };
+  }, []);
 
   const handleSave = async () => {
     if (!editing) return;
@@ -81,6 +78,97 @@ const ParameterSettings: React.FC = () => {
       setSaving(false);
     }
   };
+
+  /**
+   * §5.5（F4）：参数表的列定义。
+   *
+   * ## 两个要点都不是可选的
+   *
+   * ① `useMemo` 稳定引用：antd Table 收到新的 `columns` 数组会重建表头
+   *    （丢失排序/筛选状态）。依赖 `openEdit` 同理，故把它包成 `useCallback`。
+   *
+   * ② `ellipsis: true` 取代原 `max-w-[280px] truncate`：参数值常是长 JSON，
+   *    `truncate` **静默截断**且没有 tooltip；`ellipsis` 自带 tooltip。
+   *    这是**信息可得性**的差别，不是样式偏好 —— 使用者原先看不到完整参数值，
+   *    只能去数据库里查。
+   */
+  const paramColumns = useMemo<TableColumnsType<SystemParamItem>>(
+    () => [
+      {
+        title: '参数键',
+        dataIndex: 'paramKey',
+        width: 260,
+        render: (value: string) => (
+          <span className="font-mono text-xs tabular-nums">{value}</span>
+        ),
+        sorter: (a, b) => a.paramKey.localeCompare(b.paramKey),
+      },
+      {
+        title: '参数值',
+        dataIndex: 'paramValue',
+        width: 300,
+        ellipsis: true,
+        render: (value: string) => (
+          <span className="font-mono text-xs">{value || '(空)'}</span>
+        ),
+      },
+      {
+        title: '值类型',
+        dataIndex: 'valueType',
+        width: 100,
+      },
+      {
+        title: '说明',
+        dataIndex: 'description',
+        width: 280,
+        ellipsis: true,
+        render: (value: string | null) => value ?? '-',
+      },
+      {
+        title: '可编辑',
+        dataIndex: 'editable',
+        width: 130,
+        // 原实现没有筛选，而"哪些参数我能改"是这一页最常见的诉求
+        filters: [
+          { text: '可编辑', value: true },
+          { text: '系统锁定', value: false },
+        ],
+        onFilter: (value, record) => record.editable === value,
+        render: (value: boolean) =>
+          value ? (
+            <Badge variant="info">可编辑</Badge>
+          ) : (
+            <Badge variant="secondary">
+              <Lock className="mr-1 size-3" />
+              系统锁定
+            </Badge>
+          ),
+      },
+      {
+        title: '操作',
+        key: 'action',
+        width: 150,
+        fixed: 'right',
+        render: (_value, record) =>
+          record.editable ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={() => openEdit(record)}
+            >
+              <Pencil className="size-3" />
+              编辑
+            </Button>
+          ) : (
+            <span className="text-xs text-muted-foreground">
+              系统内部参数，禁止修改
+            </span>
+          ),
+      },
+    ],
+    [openEdit],
+  );
 
   return (
     <div className="flex flex-col gap-6">
@@ -118,59 +206,21 @@ const ParameterSettings: React.FC = () => {
                 </span>
               </SectionTitle>
               <div className="rounded-lg border bg-card">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead className="min-w-[240px]">参数键</TableHead>
-                      <TableHead>参数值</TableHead>
-                      <TableHead className="w-[100px]">值类型</TableHead>
-                      <TableHead className="min-w-[220px]">说明</TableHead>
-                      <TableHead className="w-[120px]">可编辑</TableHead>
-                      <TableHead className="w-[110px]">操作</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {rows.map((row) => (
-                      <TableRow key={row.paramKey}>
-                        <TableCell className="tabular-nums">{row.paramKey}</TableCell>
-                        <TableCell className="max-w-[280px] truncate font-mono text-xs">
-                          {row.paramValue || '(空)'}
-                        </TableCell>
-                        <TableCell>{row.valueType}</TableCell>
-                        <TableCell className="max-w-[320px] truncate">
-                          {row.description ?? '-'}
-                        </TableCell>
-                        <TableCell>
-                          {row.editable ? (
-                            <Badge variant="info">可编辑</Badge>
-                          ) : (
-                            <Badge variant="secondary">
-                              <Lock className="mr-1 size-3" />
-                              系统锁定
-                            </Badge>
-                          )}
-                        </TableCell>
-                        <TableCell>
-                          {row.editable ? (
-                            <Button
-                              type="button"
-                              variant="ghost"
-                              size="sm"
-                              onClick={() => openEdit(row)}
-                            >
-                              <Pencil className="size-3" />
-                              编辑
-                            </Button>
-                          ) : (
-                            <span className="text-xs text-muted-foreground">
-                              系统内部参数，禁止修改
-                            </span>
-                          )}
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
+                {/*
+                  §5.5（F4）：参数表改 antd `<Table>`，与全仓数据表同轨。
+                  原先用 shadcn `Table`（纯样式表格）：无分页、无排序、
+                  无 `ellipsis`（参数值可长达数千字符的 JSON，`truncate` 会
+                  静默截断且看不到全文）、无空态钩子。
+                */}
+                <Table<SystemParamItem>
+                  columns={paramColumns}
+                  dataSource={rows}
+                  rowKey="paramKey"
+                  size="small"
+                  scroll={{ x: 1100 }}
+                  pagination={false}
+                  locale={{ emptyText: '该分组暂无参数' }}
+                />
               </div>
             </div>
           ))}

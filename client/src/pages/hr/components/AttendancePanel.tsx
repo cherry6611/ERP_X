@@ -1,35 +1,18 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { zodResolver } from '@hookform/resolvers/zod';
-import { useForm } from 'react-hook-form';
-import { z } from 'zod';
 import { toast } from 'sonner';
 import { Plus } from 'lucide-react';
-import { Table, TableColumnsType } from 'antd';
-import { CanCapability, CanCapabilityWrite } from '@client/src/platform/auth';
+import { Table } from 'antd';
+import { CanCapabilityWrite } from '@client/src/platform/auth';
 import { SectionTitle } from '@client/src/components/SectionTitle';
-import DateField from '@client/src/components/erp/DateField';
-import HrStatusBadge, {
-  ATTENDANCE_STATUS_LABELS,
-  LEAVE_STATUS_LABELS,
-  LEAVE_TYPE_LABELS,
-} from './HrStatusBadge';
+import { LEAVE_STATUS_LABELS } from './HrStatusBadge';
+import { balanceColumns } from './attendance-panel-model';
+import { attendanceColumns } from './attendance-columns';
+import AmendmentSection from './dialogs/AmendmentSection';
+import AttendanceDialog from './dialogs/AttendanceDialog';
+import BalanceDialog from './dialogs/BalanceDialog';
+import LeaveDialog from './dialogs/LeaveDialog';
 import { Button } from '@client/src/components/ui/button';
-import {
-  Dialog,
-  DialogContent,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@client/src/components/ui/dialog';
-import {
-  Form,
-  FormControl,
-  FormField,
-  FormItem,
-  FormLabel,
-  FormMessage,
-} from '@client/src/components/ui/form';
 import { Input } from '@client/src/components/ui/input';
 import { Label } from '@client/src/components/ui/label';
 import {
@@ -40,59 +23,33 @@ import {
   SelectValue,
 } from '@client/src/components/ui/select';
 import { hrApi } from '@client/src/api';
-import { sendApprovalNotification } from '@client/src/api/notifications';
-import AttachmentHint from '@client/src/components/attachments/AttachmentHint';
 import { useAsyncData } from '@client/src/hooks/useAsyncData';
-import { currentPeriod } from '@client/src/utils/format';
+import { currentPeriod, currentBizYear } from '@client/src/utils/format';
 import type {
   AttendanceAmendment,
   AttendanceAmendmentAction,
   AttendanceRecord,
-  AttendanceStatus,
-  CreateAttendanceAmendmentDto,
-  CreateLeaveRequestDto,
   Employee,
   LeaveBalance,
   LeaveRequest,
   LeaveRequestAction,
-  LeaveType,
-  SetLeaveBalanceDto,
-  UpsertAttendanceDto,
 } from '@shared/api.interface';
 
-const AMENDMENT_STATUS_LABELS: Record<string, string> = {
-  pending: '待审批',
-  approved: '已通过',
-  rejected: '已驳回',
-};
-
-const attendanceSchema = z.object({
-  employeeId: z.string().min(1, '请选择员工'),
-  workDate: z.string().min(1, '请选择日期'),
-  status: z.string().min(1, '请选择状态'),
-  remark: z.string(),
-});
-
-const leaveSchema = z.object({
-  employeeId: z.string().min(1, '请选择员工'),
-  leaveType: z.string().min(1, '请选择假别'),
-  startDate: z.string().min(1, '请选择开始日期'),
-  endDate: z.string().min(1, '请选择结束日期'),
-  days: z.coerce.number().positive('请假天数必须大于 0'),
-  reason: z.string(),
-});
-
-const balanceSchema = z.object({
-  employeeId: z.string().min(1, '请选择员工'),
-  leaveType: z.string().min(1, '请选择假别'),
-  year: z.string().min(1, '请填写年份'),
-  totalDays: z.coerce.number().positive('额度天数必须大于 0'),
-});
-
-const amendmentSchema = z.object({
-  workDate: z.string().min(1, '请选择日期'),
-  reason: z.string().min(1, '请填写补卡原因'),
-});
+/*
+ * 本面板的声明式纯逻辑在 `./attendance-panel-model`：补卡状态文案、4 个表单
+ * schema（与 `useForm` 用的 input/output 类型别名）、4 份表单默认值、`balanceColumns`。
+ * 它们零 React 依赖，因此能被 jest 逐条断言 —— 而这几块恰恰是"看代码看不出错"的地方：
+ * schema 的门槛只在提交那一刻以 toast 一闪而过；默认值原先在 `useForm` 与提交后的
+ * `reset` 里各写了一遍、会各自漂移；`balanceColumns` 把「已用（天）」与「剩余（天）」
+ * 配错字段后两列都还是合理数字。
+ *
+ * 4 个表单（补卡 / 登记考勤 / 新建请假 / 额度设置）在 `./dialogs/` 下各自成文件：
+ * 它们**自持** `useForm`、`operating` 与提交处理函数，本文件只给数据与
+ * `onSaved`（即下面的 `reloadAmd` / `reloadAtt` / `reloadLeave` / `reloadBal`）。
+ * `attColumns` / `amendmentColumns` / `leaveColumns` 在 `./attendance-columns`：
+ * 它们的 render 里是 JSX 且闭包了 `navigate` 与提交处理函数，故由本文件注入。
+ * 本文件保留：数据查询、筛选区、三张表、页内区块骨架。
+ */
 
 const AttendancePanel: React.FC = () => {
   const navigate = useNavigate();
@@ -100,12 +57,12 @@ const AttendancePanel: React.FC = () => {
   const [attEmpFilter, setAttEmpFilter] = useState<string>('all');
   const [leaveStatus, setLeaveStatus] = useState<string>('all');
   const [leaveEmpFilter, setLeaveEmpFilter] = useState<string>('all');
-  const [balanceYear, setBalanceYear] = useState<string>(new Date().getFullYear().toString());
+  // 时区修正：年假余额按年分档，必须取业务时区年份（详见 currentBizYear）
+  const [balanceYear, setBalanceYear] = useState<string>(currentBizYear());
   const [attOpen, setAttOpen] = useState(false);
   const [leaveOpen, setLeaveOpen] = useState(false);
   const [balanceOpen, setBalanceOpen] = useState(false);
   const [initingLeave, setInitingLeave] = useState(false);
-    const [operating, setOperating] = useState(false);
 
   const { data: attendance, loading: attLoading, error: attError, reload: reloadAtt } =
     useAsyncData<AttendanceRecord[]>(
@@ -134,116 +91,6 @@ const AttendancePanel: React.FC = () => {
   const { data: amendments, loading: amdLoading, error: amdError, reload: reloadAmd } =
     useAsyncData<AttendanceAmendment[]>(() => hrApi.listAttendanceAmendments(), []);
 
-  const attForm = useForm<z.input<typeof attendanceSchema>, unknown, z.output<typeof attendanceSchema>>({
-    resolver: zodResolver(attendanceSchema),
-    defaultValues: { employeeId: '', workDate: '', status: 'present', remark: '' },
-  });
-
-  const amendmentForm = useForm<
-    z.input<typeof amendmentSchema>,
-    unknown,
-    z.output<typeof amendmentSchema>
-  >({
-    resolver: zodResolver(amendmentSchema),
-    defaultValues: { workDate: '', reason: '' },
-  });
-
-  const leaveForm = useForm<z.input<typeof leaveSchema>, unknown, z.output<typeof leaveSchema>>({
-    resolver: zodResolver(leaveSchema),
-    defaultValues: {
-      employeeId: '',
-      leaveType: 'annual',
-      startDate: '',
-      endDate: '',
-      days: 1,
-      reason: '',
-    },
-  });
-
-  const balanceForm = useForm<z.input<typeof balanceSchema>, unknown, z.output<typeof balanceSchema>>({
-    resolver: zodResolver(balanceSchema),
-    defaultValues: { employeeId: '', leaveType: 'annual', year: balanceYear, totalDays: 5 },
-  });
-
-  const onAttSubmit = attForm.handleSubmit(async (values) => {
-    const dto: UpsertAttendanceDto = {
-      employeeId: values.employeeId,
-      workDate: values.workDate,
-      status: values.status as AttendanceStatus,
-      remark: values.remark || undefined,
-    };
-    setOperating(true);
-    try {
-      await hrApi.createAttendance(dto);
-      toast.success('考勤已登记');
-      setAttOpen(false);
-      attForm.reset({ employeeId: '', workDate: '', status: 'present', remark: '' });
-      await reloadAtt();
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : '登记失败');
-    } finally {
-      setOperating(false);
-    }
-  });
-
-  const onLeaveSubmit = leaveForm.handleSubmit(async (values) => {
-    const dto: CreateLeaveRequestDto = {
-      employeeId: values.employeeId,
-      leaveType: values.leaveType as LeaveType,
-      startDate: values.startDate,
-      endDate: values.endDate,
-      days: values.days,
-      reason: values.reason || undefined,
-    };
-    setOperating(true);
-    try {
-      const req = await hrApi.createLeaveRequest(dto);
-      void sendApprovalNotification({
-        bizType: 'leave',
-        bizCode: req.code,
-        title: '请假审批待办',
-        content: `${req.employeeName} 提交请假申请 ${req.code}（${LEAVE_TYPE_LABELS[req.leaveType] ?? req.leaveType}，${req.days} 天），请审批`,
-      });
-      toast.success('请假申请已提交');
-      setLeaveOpen(false);
-      navigate(`/hr/leaves/${req.id}`, { state: { item: req } });
-      leaveForm.reset({
-        employeeId: '',
-        leaveType: 'annual',
-        startDate: '',
-        endDate: '',
-        days: 1,
-        reason: '',
-      });
-      await reloadLeave();
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : '提交失败');
-    } finally {
-      setOperating(false);
-    }
-  });
-
-  const onBalanceSubmit = balanceForm.handleSubmit(async (values) => {
-    const dto: SetLeaveBalanceDto = {
-      employeeId: values.employeeId,
-      leaveType: values.leaveType as LeaveType,
-      year: values.year,
-      totalDays: values.totalDays,
-    };
-    setOperating(true);
-    try {
-      await hrApi.setLeaveBalance(dto);
-      toast.success('额度已设置');
-      setBalanceOpen(false);
-      balanceForm.reset({ employeeId: '', leaveType: 'annual', year: balanceYear, totalDays: 5 });
-      await reloadBal();
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : '设置失败');
-    } finally {
-      setOperating(false);
-    }
-  });
-
   const doLeaveAction = async (req: LeaveRequest, action: LeaveRequestAction) => {
     try {
       await hrApi.leaveRequestAction(req.id, action);
@@ -253,24 +100,6 @@ const AttendancePanel: React.FC = () => {
       toast.error(err instanceof Error ? err.message : '操作失败');
     }
   };
-
-  const onAmendmentSubmit = amendmentForm.handleSubmit(async (values) => {
-    const dto: CreateAttendanceAmendmentDto = {
-      workDate: values.workDate,
-      reason: values.reason,
-    };
-    setOperating(true);
-    try {
-      await hrApi.createAttendanceAmendment(dto);
-      toast.success('补卡申请已提交');
-      amendmentForm.reset({ workDate: '', reason: '' });
-      await reloadAmd();
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : '提交失败');
-    } finally {
-      setOperating(false);
-    }
-  });
 
   const doAmendmentAction = async (
     record: AttendanceAmendment,
@@ -286,7 +115,14 @@ const AttendancePanel: React.FC = () => {
   };
 
   const doInitAnnualLeave = async () => {
-    const year: string = String(new Date().getFullYear());
+    /*
+     * 时区修正（**这一处后果最具体**）：initLeaveBalances(year) 会往
+     * hr_leave_balance 写「按 (员工, 假期类型, 年) 唯一」的一行。
+     * 传错年份会**给错的年份建余额**，而正确年份仍为空 ——
+     * 员工请年假时 `handleLeaveRequestAction` 因 `balanceRows.length === 0`
+     * 直接抛「请假余额记录不存在」，且错误年份那行需要人工清理。
+     */
+    const year: string = currentBizYear();
     setInitingLeave(true);
     try {
       const result = await hrApi.initLeaveBalances(year);
@@ -305,128 +141,14 @@ const AttendancePanel: React.FC = () => {
     </SelectItem>
   ));
 
-  const attColumns: TableColumnsType<AttendanceRecord> = [
-    { title: '日期', dataIndex: 'workDate', fixed: 'left', width: 120 },
-    { title: '员工', dataIndex: 'employeeName', width: 120 },
-    {
-      title: '状态',
-      dataIndex: 'status',
-      width: 110,
-      render: (s: string) => (
-        <HrStatusBadge status={s} labels={ATTENDANCE_STATUS_LABELS} />
-      ),
-    },
-    { title: '备注', dataIndex: 'remark', width: 220, render: (v) => v ?? '-' },
-  ];
-
-  const amendmentColumns: TableColumnsType<AttendanceAmendment> = [
-    { title: '编号', dataIndex: 'code', fixed: 'left', width: 140 },
-    { title: '员工', dataIndex: 'employeeName', width: 110 },
-    { title: '日期', dataIndex: 'workDate', width: 110 },
-    { title: '原因', dataIndex: 'reason', width: 220 },
-    {
-      title: '状态',
-      dataIndex: 'status',
-      width: 90,
-      render: (s: string) => <HrStatusBadge status={s} labels={AMENDMENT_STATUS_LABELS} />,
-    },
-    { title: '创建时间', dataIndex: 'createdAt', width: 170 },
-    {
-      title: '操作',
-      key: 'action',
-      width: 130,
-      render: (_: unknown, record: AttendanceAmendment) =>
-        record.status === 'pending' ? (
-          <CanCapabilityWrite capability="hr_write">
-            <div className="flex gap-1">
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => void doAmendmentAction(record, 'approve')}
-              >
-                通过
-              </Button>
-              <Button
-                variant="ghost"
-                size="sm"
-                className="text-destructive"
-                onClick={() => void doAmendmentAction(record, 'reject')}
-              >
-                驳回
-              </Button>
-            </div>
-          </CanCapabilityWrite>
-        ) : null,
-    },
-  ];
-
-  const leaveColumns: TableColumnsType<LeaveRequest> = [
-    { title: '编号', dataIndex: 'code', fixed: 'left', width: 140 },
-    { title: '员工', dataIndex: 'employeeName', width: 110 },
-    {
-      title: '类型',
-      dataIndex: 'leaveType',
-      width: 80,
-      render: (v: string) => LEAVE_TYPE_LABELS[v] ?? v,
-    },
-    { title: '开始日期', dataIndex: 'startDate', width: 110 },
-    { title: '结束日期', dataIndex: 'endDate', width: 110 },
-    { title: '天数', dataIndex: 'days', width: 70 },
-    { title: '事由', dataIndex: 'reason', width: 180, render: (v) => v ?? '-' },
-    {
-      title: '状态',
-      dataIndex: 'status',
-      width: 90,
-      render: (s: string) => <HrStatusBadge status={s} labels={LEAVE_STATUS_LABELS} />,
-    },
-    {
-      title: '操作',
-      key: 'action',
-      width: 130,
-      render: (_: unknown, record: LeaveRequest) => (
-        <div className="flex gap-1">
-          <Button variant="ghost" size="sm" onClick={() => navigate(`/hr/leaves/${record.id}`, { state: { item: record } })}>
-            详情
-          </Button>
-          {record.status === 'pending' ? (
-            <CanCapabilityWrite capability="hr_write">
-              <div className="flex gap-1">
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => void doLeaveAction(record, 'approve')}
-                >
-                  批准
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="text-destructive"
-                  onClick={() => void doLeaveAction(record, 'reject')}
-                >
-                  驳回
-                </Button>
-              </div>
-            </CanCapabilityWrite>
-          ) : null}
-        </div>
-      ),
-    },
-  ];
-
-  const balanceColumns: TableColumnsType<LeaveBalance> = [
-    { title: '员工', dataIndex: 'employeeName', fixed: 'left', width: 130 },
-    {
-      title: '类型',
-      dataIndex: 'leaveType',
-      width: 90,
-      render: (v: string) => LEAVE_TYPE_LABELS[v] ?? v,
-    },
-    { title: '年度', dataIndex: 'year', width: 80 },
-    { title: '总额度（天）', dataIndex: 'totalDays', width: 110 },
-    { title: '已用（天）', dataIndex: 'usedDays', width: 100 },
-    { title: '剩余（天）', dataIndex: 'remainingDays', width: 100 },
-  ];
+  const { attColumns, amendmentColumns, leaveColumns } = attendanceColumns({
+    onOpenLeave: (record: LeaveRequest) =>
+      navigate(`/hr/leaves/${record.id}`, { state: { item: record } }),
+    onLeaveAction: (record: LeaveRequest, action: LeaveRequestAction) =>
+      void doLeaveAction(record, action),
+    onAmendmentAction: (record: AttendanceAmendment, action: AttendanceAmendmentAction) =>
+      void doAmendmentAction(record, action),
+  });
 
   return (
     <div className="flex flex-col gap-6">
@@ -491,46 +213,7 @@ const AttendancePanel: React.FC = () => {
           <SectionTitle>补卡申请</SectionTitle>
           <p className="text-sm text-muted-foreground">按当前登录账号绑定的员工提交</p>
         </div>
-        <Form {...amendmentForm}>
-          <form
-            onSubmit={onAmendmentSubmit}
-            className="grid grid-cols-3 items-start gap-4"
-          >
-            <FormField
-              control={amendmentForm.control}
-              name="workDate"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>
-                    日期 <span aria-hidden="true" className="text-destructive">*</span>
-                  </FormLabel>
-                  <DateField value={field.value || null} onChange={field.onChange} />
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-            <FormField
-              control={amendmentForm.control}
-              name="reason"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>
-                    补卡原因 <span aria-hidden="true" className="text-destructive">*</span>
-                  </FormLabel>
-                  <FormControl>
-                    <Input placeholder="如：忘打卡，实际出勤" {...field} />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-            <div className="flex h-full items-end">
-              <Button type="submit" disabled={operating}>
-                提交补卡
-              </Button>
-            </div>
-          </form>
-        </Form>
+        <AmendmentSection onSaved={reloadAmd} />
         {amdError ? (
           <p className="text-sm text-destructive">
             {amdError}
@@ -671,329 +354,27 @@ const AttendancePanel: React.FC = () => {
         />
       </section>
 
-      <Dialog open={attOpen} onOpenChange={setAttOpen}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle>登记考勤</DialogTitle>
-          </DialogHeader>
-          <Form {...attForm}>
-            <form onSubmit={onAttSubmit} className="space-y-4">
-              <FormField
-                control={attForm.control}
-                name="employeeId"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>
-                      员工 <span aria-hidden="true" className="text-destructive">*</span>
-                    </FormLabel>
-                    <Select onValueChange={field.onChange} value={field.value}>
-                      <FormControl>
-                        <SelectTrigger>
-                          <SelectValue placeholder="请选择员工" />
-                        </SelectTrigger>
-                      </FormControl>
-                      <SelectContent>{employeeOptions}</SelectContent>
-                    </Select>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-              <div className="flex gap-4">
-                <FormField
-                  control={attForm.control}
-                  name="workDate"
-                  render={({ field }) => (
-                    <FormItem className="flex-1">
-                      <FormLabel>
-                        日期 <span aria-hidden="true" className="text-destructive">*</span>
-                      </FormLabel>
-                      <DateField value={field.value || null} onChange={field.onChange} />
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-                <FormField
-                  control={attForm.control}
-                  name="status"
-                  render={({ field }) => (
-                    <FormItem className="flex-1">
-                      <FormLabel>
-                        状态 <span aria-hidden="true" className="text-destructive">*</span>
-                      </FormLabel>
-                      <Select onValueChange={field.onChange} value={field.value}>
-                        <FormControl>
-                          <SelectTrigger>
-                            <SelectValue placeholder="请选择" />
-                          </SelectTrigger>
-                        </FormControl>
-                        <SelectContent>
-                          {Object.entries(ATTENDANCE_STATUS_LABELS).map(([value, label]) => (
-                            <SelectItem key={value} value={value}>
-                              {label}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-              </div>
-              <FormField
-                control={attForm.control}
-                name="remark"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>备注</FormLabel>
-                    <FormControl>
-                      <Input placeholder="备注" {...field} />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-              <DialogFooter>
-                <Button type="submit" disabled={operating}>
-                  保存
-                </Button>
-              </DialogFooter>
-            </form>
-          </Form>
-        </DialogContent>
-      </Dialog>
+      <AttendanceDialog
+        open={attOpen}
+        onOpenChange={setAttOpen}
+        employees={employees}
+        onSaved={reloadAtt}
+      />
 
-      <Dialog open={leaveOpen} onOpenChange={setLeaveOpen}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle>新建请假</DialogTitle>
-          </DialogHeader>
-          <Form {...leaveForm}>
-            <form onSubmit={onLeaveSubmit} className="space-y-4">
-              <FormField
-                control={leaveForm.control}
-                name="employeeId"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>
-                      员工 <span aria-hidden="true" className="text-destructive">*</span>
-                    </FormLabel>
-                    <Select onValueChange={field.onChange} value={field.value}>
-                      <FormControl>
-                        <SelectTrigger>
-                          <SelectValue placeholder="请选择员工" />
-                        </SelectTrigger>
-                      </FormControl>
-                      <SelectContent>{employeeOptions}</SelectContent>
-                    </Select>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-              <FormField
-                control={leaveForm.control}
-                name="leaveType"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>
-                      假别 <span aria-hidden="true" className="text-destructive">*</span>
-                    </FormLabel>
-                    <Select onValueChange={field.onChange} value={field.value}>
-                      <FormControl>
-                        <SelectTrigger>
-                          <SelectValue placeholder="请选择" />
-                        </SelectTrigger>
-                      </FormControl>
-                      <SelectContent>
-                        {Object.entries(LEAVE_TYPE_LABELS).map(([value, label]) => (
-                          <SelectItem key={value} value={value}>
-                            {label}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-              <div className="flex gap-4">
-                <FormField
-                  control={leaveForm.control}
-                  name="startDate"
-                  render={({ field }) => (
-                    <FormItem className="flex-1">
-                      <FormLabel>
-                        开始日期 <span aria-hidden="true" className="text-destructive">*</span>
-                      </FormLabel>
-                      <DateField value={field.value || null} onChange={field.onChange} />
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-                <FormField
-                  control={leaveForm.control}
-                  name="endDate"
-                  render={({ field }) => (
-                    <FormItem className="flex-1">
-                      <FormLabel>
-                        结束日期 <span aria-hidden="true" className="text-destructive">*</span>
-                      </FormLabel>
-                      <DateField value={field.value || null} onChange={field.onChange} />
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-              </div>
-              <FormField
-                control={leaveForm.control}
-                name="days"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>
-                      天数 <span aria-hidden="true" className="text-destructive">*</span>
-                    </FormLabel>
-                    <FormControl>
-                      <Input
-                        type="number"
-                        min={0.5}
-                        step={0.5}
-                        value={String(field.value ?? '')}
-                        onChange={field.onChange}
-                        onBlur={field.onBlur}
-                        name={field.name}
-                        ref={field.ref}
-                      />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-              <FormField
-                control={leaveForm.control}
-                name="reason"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>事由</FormLabel>
-                    <FormControl>
-                      <Input placeholder="请假事由" {...field} />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-              <AttachmentHint text="保存后将自动打开详情，可在其中上传病假条、请假证明材料等附件" />
-              <DialogFooter>
-                <Button type="submit" disabled={operating}>
-                  提交
-                </Button>
-              </DialogFooter>
-            </form>
-          </Form>
-        </DialogContent>
-      </Dialog>
+      <LeaveDialog
+        open={leaveOpen}
+        onOpenChange={setLeaveOpen}
+        employees={employees}
+        onSaved={reloadLeave}
+      />
 
-
-      <Dialog open={balanceOpen} onOpenChange={setBalanceOpen}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle>请假额度设置</DialogTitle>
-          </DialogHeader>
-          <Form {...balanceForm}>
-            <form onSubmit={onBalanceSubmit} className="space-y-4">
-              <FormField
-                control={balanceForm.control}
-                name="employeeId"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>
-                      员工 <span aria-hidden="true" className="text-destructive">*</span>
-                    </FormLabel>
-                    <Select onValueChange={field.onChange} value={field.value}>
-                      <FormControl>
-                        <SelectTrigger>
-                          <SelectValue placeholder="请选择员工" />
-                        </SelectTrigger>
-                      </FormControl>
-                      <SelectContent>{employeeOptions}</SelectContent>
-                    </Select>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-              <div className="flex gap-4">
-                <FormField
-                  control={balanceForm.control}
-                  name="leaveType"
-                  render={({ field }) => (
-                    <FormItem className="flex-1">
-                      <FormLabel>
-                        假别 <span aria-hidden="true" className="text-destructive">*</span>
-                      </FormLabel>
-                      <Select onValueChange={field.onChange} value={field.value}>
-                        <FormControl>
-                          <SelectTrigger>
-                            <SelectValue placeholder="请选择" />
-                          </SelectTrigger>
-                        </FormControl>
-                        <SelectContent>
-                          {Object.entries(LEAVE_TYPE_LABELS).map(([value, label]) => (
-                            <SelectItem key={value} value={value}>
-                              {label}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-                <FormField
-                  control={balanceForm.control}
-                  name="year"
-                  render={({ field }) => (
-                    <FormItem className="flex-1">
-                      <FormLabel>
-                        年度 <span aria-hidden="true" className="text-destructive">*</span>
-                      </FormLabel>
-                      <FormControl>
-                        <Input placeholder="如 2026" {...field} />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-              </div>
-              <FormField
-                control={balanceForm.control}
-                name="totalDays"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>
-                      总额度（天） <span aria-hidden="true" className="text-destructive">*</span>
-                    </FormLabel>
-                    <FormControl>
-                      <Input
-                        type="number"
-                        min={1}
-                        value={String(field.value ?? '')}
-                        onChange={field.onChange}
-                        onBlur={field.onBlur}
-                        name={field.name}
-                        ref={field.ref}
-                      />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-              <DialogFooter>
-                <Button type="submit" disabled={operating}>
-                  保存
-                </Button>
-              </DialogFooter>
-            </form>
-          </Form>
-        </DialogContent>
-      </Dialog>
+      <BalanceDialog
+        open={balanceOpen}
+        onOpenChange={setBalanceOpen}
+        employees={employees}
+        balanceYear={balanceYear}
+        onSaved={reloadBal}
+      />
     </div>
   );
 };

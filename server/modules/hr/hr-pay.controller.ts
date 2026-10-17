@@ -151,8 +151,17 @@ class CreatePayrollDto implements ICreatePayrollDto {
 
 class PayrollActionBody {
   @IsString()
-  @IsIn(['submit', 'approve', 'reject'])
-  action!: 'submit' | 'approve' | 'reject';
+  /*
+   * B12（§7.2）：白名单必须与 `PayrollAction` 联合类型**同步**。
+   *
+   * 这个 `@IsIn` 是一道真实闸门：只加类型、漏了这里，
+   * 前端点「标记发放」会得到 400「action must be one of ...」——
+   * 而后端 service 里明明写好了处理分支（甚至已通过 tsc）。
+   * 这类"类型对、白名单没跟上"是新增枚举值最常见的漏点，
+   * 因此这里显式注释两者必须一起改。
+   */
+  @IsIn(['submit', 'approve', 'reject', 'pay', 'void'])
+  action!: 'submit' | 'approve' | 'reject' | 'pay' | 'void';
 }
 
 /** A-07：工资试算入参（class DTO，避免 ValidationPipe 失效） */

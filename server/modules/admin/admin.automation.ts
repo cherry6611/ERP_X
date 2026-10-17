@@ -1,6 +1,6 @@
 import { Logger } from '@nestjs/common';
 import { Inject } from '@nestjs/common';
-import { and, eq, gte, lte, ne, sql } from 'drizzle-orm';
+import { and, eq, gte, inArray, lte, sql } from 'drizzle-orm';
 import {
   Automation,
   BindTrigger,
@@ -57,7 +57,11 @@ export class AdminAutomationTasksService {
       })
       .from(erpAr)
       .innerJoin(mdCustomer, eq(mdCustomer.id, erpAr.customerId))
-      .where(ne(erpAr.status, 'settled'))
+      // B1：作废应收不再占用客户信用额度。
+      // 原条件 `ne('settled')` 会把新终态 `'voided'` 一并纳入 —— 一张误录的
+      // 100 万应收作废后仍会让该客户被误判超限、后续订单被拦。
+      // 用白名单而非"排除 voided"：新增状态默认不计入额度（fail-closed）。
+      .where(inArray(erpAr.status, ['open', 'partial']))
       .groupBy(mdCustomer.code, mdCustomer.name, mdCustomer.creditLimit)
       .having(
         sql`coalesce(sum(${erpAr.amount} - ${erpAr.settledAmount}), 0) >= ${mdCustomer.creditLimit} * ${CREDIT_ALERT_RATIO} and ${mdCustomer.creditLimit} > 0`

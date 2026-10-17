@@ -56,7 +56,7 @@ const AdminAutomationPage: React.FC = () => {
       >
         <div className="flex flex-col gap-4">
           {items.map((item) => (
-            <Card key={item.taskKey}>
+            <Card key={item.taskKey} className="max-w-5xl">
               <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
                 <CardTitle className="text-base font-semibold">
                   {item.taskName}
@@ -79,7 +79,13 @@ const AdminAutomationPage: React.FC = () => {
                   </CanCapabilityWrite>
                 </div>
               </CardHeader>
-              <CardContent className="flex flex-col gap-1">
+              {/*
+                观感修复：卡片在宽屏下会拉满整行（约 1450px），而说明文字只有一行，
+                于是右侧留下大片空白、文字行长过长不利阅读。
+                做法：说明文字限宽（`max-w-3xl`），卡片整体限宽（`max-w-5xl`）。
+                限宽的是**内容**而不是卡片本身，所以开关仍靠卡片右边缘对齐。
+              */}
+              <CardContent className="flex max-w-3xl flex-col gap-1">
                 <p className="text-sm text-muted-foreground">
                   {item.description ?? '暂无说明'}
                 </p>

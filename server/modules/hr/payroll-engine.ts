@@ -11,6 +11,10 @@
  * 注意事项：
  * - `本期应预扣` 允许为负（累计多扣），此时按 0 处理并在结果里给出 `refundable` 供人工复核；
  * - 全年 12 个月连续发放时，累计已预扣税额必须等于全年应纳税额（见 payroll-engine.spec.ts）。
+ *
+ * 取整口径：全仓金额取整唯一入口 `round2`（`shared/number.ts`，十进制四舍五入且对负数对称）。
+ * 本引擎历史上自带一份 `Math.round(n * 100) / 100`，对负数（红冲/退税方向）取整不对称，
+ * 与税务底稿其余部分口径不一致，已统一替换。
  */
 
 export interface CitySsRule {
@@ -158,9 +162,7 @@ export const CUMULATIVE_TAX_BRACKETS: readonly TaxBracket[] = [
   { upTo: Number.POSITIVE_INFINITY, rate: 0.45, quickDeduction: 181920 },
 ];
 
-function r2(n: number): number {
-  return Math.round(n * 100) / 100;
-}
+import { round2 as r2 } from '@shared/number';
 
 /** 定位累计应纳税所得额适用的预扣率与速算扣除数 */
 export function resolveTaxBracket(cumulativeTaxable: number): TaxBracket {

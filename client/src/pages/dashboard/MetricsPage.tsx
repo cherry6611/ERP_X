@@ -6,6 +6,10 @@ import { Button } from '@client/src/components/ui/button';
 import { Input } from '@client/src/components/ui/input';
 import { Label } from '@client/src/components/ui/label';
 import {
+  FieldLabel,
+  useFieldId,
+} from '@client/src/components/erp/FieldLabel';
+import {
   Select,
   SelectContent,
   SelectItem,
@@ -17,19 +21,15 @@ import StatCard from '@client/src/components/erp/StatCard';
 import { useAsyncData } from '@client/src/hooks/useAsyncData';
 import * as biApi from '@client/src/api/bi';
 import { getApiErrorMessage } from '@client/src/utils/api-error-message';
+// 业务时区当前月份统一走 utils/format（原本这里自带一份"手工加 8 小时"的实现，
+// 与 todayIso 的 Intl 口径重复且更脆弱：一旦业务时区/夏令时规则变化就会分叉）。
+import { currentPeriod } from '@client/src/utils/format';
 import { cn } from '@client/src/lib/utils';
 import type {
   BiAlertSubscriptionItem,
   BiMetric,
   BiMetricsResult,
 } from '@shared/api.interface';
-
-/** 业务时区（Asia/Shanghai）当前月份，与后端口径一致（避免用 UTC 月份跨月误判） */
-function currentPeriod(): string {
-  const now = new Date();
-  const shanghai = new Date(now.getTime() + 8 * 60 * 60 * 1000);
-  return shanghai.toISOString().slice(0, 7);
-}
 
 function formatMetric(metric: BiMetric): string {
   if (metric.unit === '%') return `${metric.value.toFixed(2)}%`;
@@ -67,6 +67,13 @@ const MetricsPage: React.FC = () => {
   const [subThreshold, setSubThreshold] = useState<string>('');
   const [subChannel, setSubChannel] = useState<'feishu' | 'inbox'>('feishu');
   const [busy, setBusy] = useState(false);
+  /**
+   * P2-3：阈值输入框的 id —— 由 `useFieldId()`（内部是 `React.useId()`）生成，
+   * 保证全页唯一。手写固定 id 在"页面被渲染两次"（如抽屉里再放一次本组件）时
+   * 会撞车，撞车后 `htmlFor` 指向第一个元素，点标签会聚焦到**别的输入框**，
+   * 比不关联更糟。
+   */
+  const thresholdId = useFieldId('metrics-threshold');
 
   const {
     data: metricsData,
@@ -217,9 +224,9 @@ const MetricsPage: React.FC = () => {
             <h3 className="text-base font-semibold">预警订阅</h3>
             <div className="grid items-end gap-3 rounded-lg border bg-card p-4 md:grid-cols-5">
               <div className="grid gap-1">
-                <Label className="text-xs">指标</Label>
+                <FieldLabel>指标</FieldLabel>
                 <Select value={subMetricKey} onValueChange={setSubMetricKey}>
-                  <SelectTrigger>
+                  <SelectTrigger aria-label="预警订阅指标">
                     <SelectValue placeholder="选择指标" />
                   </SelectTrigger>
                   <SelectContent>
@@ -232,12 +239,12 @@ const MetricsPage: React.FC = () => {
                 </Select>
               </div>
               <div className="grid gap-1">
-                <Label className="text-xs">触发方向</Label>
+                <FieldLabel>触发方向</FieldLabel>
                 <Select
                   value={subDirection}
                   onValueChange={(value) => setSubDirection(value as 'gt' | 'lt')}
                 >
-                  <SelectTrigger>
+                  <SelectTrigger aria-label="触发方向">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -247,8 +254,9 @@ const MetricsPage: React.FC = () => {
                 </Select>
               </div>
               <div className="grid gap-1">
-                <Label className="text-xs">阈值</Label>
+                <FieldLabel htmlFor={thresholdId}>阈值</FieldLabel>
                 <Input
+                  id={thresholdId}
                   inputMode="decimal"
                   value={subThreshold}
                   placeholder="0"
@@ -256,14 +264,14 @@ const MetricsPage: React.FC = () => {
                 />
               </div>
               <div className="grid gap-1">
-                <Label className="text-xs">通知渠道</Label>
+                <FieldLabel>通知渠道</FieldLabel>
                 <Select
                   value={subChannel}
                   onValueChange={(value) =>
                     setSubChannel(value as 'feishu' | 'inbox')
                   }
                 >
-                  <SelectTrigger>
+                  <SelectTrigger aria-label="通知渠道">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>

@@ -1,8 +1,11 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { Table, TableColumnsType } from 'antd';
+import { Download } from 'lucide-react';
+import { toast } from 'sonner';
 import PageShell from '@client/src/components/PageShell';
 import { Badge } from '@client/src/components/ui/badge';
 import { Button } from '@client/src/components/ui/button';
+import { Input } from '@client/src/components/ui/input';
 import { Label } from '@client/src/components/ui/label';
 import {
   Select,
@@ -11,11 +14,23 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@client/src/components/ui/select';
+import { UserDisplay } from '@client/src/components/business-ui/user-display';
 import { useAsyncData } from '@client/src/hooks/useAsyncData';
 import * as auditApi from '@client/src/api/audit';
+import { getApiErrorMessage } from '@client/src/utils/api-error-message';
+import { todayIso } from '@client/src/utils/format';
 import AuditChainPanel from './components/AuditChainPanel';
 import type { AuditLog } from '@shared/api.interface';
 
+/**
+ * 模块标签。
+ *
+ * ⚠️ 这张表原先只有 9 个键，而 `comp_audit_log` 实际写入的 `object_type` 有
+ * `users` / `auth` / `asset` / `pur` / `voucher` / `hr` / `purchase` /
+ * `notifications` / `fin-budget` / `quotation` / `data-asset` 等 —— 界面上
+ * 那一列于是显示成生僻的英文单词（`users`、`fin-budget`），
+ * 与筛选下拉里的中文标签对不上，用户根本对不出"我筛的是这个模块吗"。
+ */
 const OBJECT_TYPE_LABELS: Record<string, string> = {
   'master-data': '主数据',
   crm: 'CRM',
@@ -26,28 +41,123 @@ const OBJECT_TYPE_LABELS: Record<string, string> = {
   finance: '财务',
   bi: 'BI',
   audit: '审计',
+  'data-asset': '数据资产',
+  users: '用户',
+  auth: '登录认证',
+  asset: '资产',
+  pur: '采购',
+  purchase: '采购通知',
+  voucher: '凭证',
+  hr: '人事',
+  notifications: '通知',
+  'fin-budget': '预算',
+  quotation: '报价单',
 };
 
+/**
+ * 操作类型标签。
+ *
+ * 实际写入的 `action` 除 create/update/delete 外还有 `notify`、
+ * `identity.create`、`identity.set_roles`、`invoice_verify`、`invoice_certify`
+ * 等（见 `comp_audit_log` 的分布）。缺标签时会显示原始英文，
+ * 而筛选下拉里也没有这些选项 —— 用户无法按它们筛选。
+ */
 const ACTION_LABELS: Record<string, string> = {
   create: '创建',
   update: '更新',
   delete: '删除',
+  notify: '通知',
+  probe: '自检探针',
+  'identity.create': '身份创建',
+  'identity.set_roles': '设置角色',
+  invoice_verify: '发票查验',
+  invoice_certify: '发票认证',
 };
+
+/** 操作人若不是妙搭 userId（如 anonymous / system / 历史文本），不要走用户解析 */
+const USER_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+const ACTOR_LABELS: Record<string, string> = {
+  anonymous: '匿名（未登录）',
+  system: '系统',
+};
+
+function actorText(actor: string): string {
+  return ACTOR_LABELS[actor] ?? actor;
+}
+
+function ActorCell({ actor }: { actor: string }): React.ReactElement {
+  if (USER_ID_PATTERN.test(actor)) {
+    return <UserDisplay userId={actor} size="small" />;
+  }
+  return <span className="text-muted-foreground">{actorText(actor)}</span>;
+}
+
+/** 触发浏览器下载（CSV 由服务端生成，含 BOM，Excel 不会乱码） */
+function downloadCsv(csv: string, filename: string): void {
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+}
 
 const AuditPage: React.FC = () => {
   const [objectType, setObjectType] = useState<string>('all');
   const [action, setAction] = useState<string>('all');
+  const [actor, setActor] = useState<string>('all');
+  const [dateFrom, setDateFrom] = useState<string>('');
+  const [dateTo, setDateTo] = useState<string>('');
   const [limit, setLimit] = useState(100);
+  const [exporting, setExporting] = useState(false);
 
-  const { data, loading, error, reload } = useAsyncData<AuditLog[]>(
-    () =>
-      auditApi.listAuditLogs({
-        objectType: objectType !== 'all' ? objectType : undefined,
-        action: action !== 'all' ? action : undefined,
-        limit,
-      }),
-    [objectType, action, limit],
+  /*
+   * ⚠️ 筛选变化必须**重新请求**（服务端过滤），不是在本地 filter。
+   * 本地 filter 只能过滤"已经取回来的那 100 行"，用户会以为"没有更多了"。
+   */
+  const params = useMemo(
+    () => ({
+      objectType: objectType !== 'all' ? objectType : undefined,
+      action: action !== 'all' ? action : undefined,
+      actor: actor !== 'all' ? actor : undefined,
+      dateFrom: dateFrom || undefined,
+      dateTo: dateTo || undefined,
+      limit,
+    }),
+    [objectType, action, actor, dateFrom, dateTo, limit],
   );
+
+  const { data, loading, error, reload } = useAsyncData(
+    () => auditApi.listAuditLogs(params),
+    [params],
+  );
+  const { data: actors } = useAsyncData(() => auditApi.listAuditActors(), []);
+
+  const rows: AuditLog[] = data?.items ?? [];
+  const total = data?.total ?? 0;
+
+  const exportCsv = async (): Promise<void> => {
+    setExporting(true);
+    try {
+      const result = await auditApi.exportAuditLogs(params);
+      downloadCsv(result.csv, `审计日志_${todayIso()}.csv`);
+      if (result.truncated) {
+        toast.warning(
+          `命中 ${result.total} 条，已导出最新 ${result.rowCount} 条（超出上限）`,
+        );
+      } else {
+        toast.success(`已导出 ${result.rowCount} 条`);
+      }
+    } catch (err) {
+      toast.error(getApiErrorMessage(err, '导出失败'));
+    } finally {
+      setExporting(false);
+    }
+  };
 
   const columns: TableColumnsType<AuditLog> = [
     {
@@ -57,17 +167,24 @@ const AuditPage: React.FC = () => {
       width: 170,
       render: (v: string) => new Date(v).toLocaleString('zh-CN'),
     },
-    { title: '操作人', dataIndex: 'actor', width: 150 },
+    {
+      title: '操作人',
+      dataIndex: 'actor',
+      width: 170,
+      render: (v: string) => <ActorCell actor={v} />,
+    },
     {
       title: '操作',
       dataIndex: 'action',
-      width: 90,
-      render: (a: string) => <Badge variant="secondary">{ACTION_LABELS[a] ?? a}</Badge>,
+      width: 110,
+      render: (a: string) => (
+        <Badge variant="secondary">{ACTION_LABELS[a] ?? a}</Badge>
+      ),
     },
     {
       title: '模块',
       dataIndex: 'objectType',
-      width: 100,
+      width: 110,
       render: (t: string) => OBJECT_TYPE_LABELS[t] ?? t,
     },
     { title: '对象编号', dataIndex: 'objectCode', width: 150 },
@@ -91,6 +208,23 @@ const AuditPage: React.FC = () => {
     },
   ];
 
+  /** 被筛掉的选项也要能选回来：把当前值并进候选，避免"筛了之后选项消失" */
+  const objectTypeOptions = useMemo(() => {
+    const keys = new Set([
+      ...Object.keys(OBJECT_TYPE_LABELS),
+      ...rows.map((r) => r.objectType).filter(Boolean),
+    ]);
+    return [...keys].sort();
+  }, [rows]);
+
+  const actionOptions = useMemo(() => {
+    const keys = new Set([
+      ...Object.keys(ACTION_LABELS),
+      ...rows.map((r) => r.action).filter(Boolean),
+    ]);
+    return [...keys].sort();
+  }, [rows]);
+
   return (
     <PageShell title="审计日志" description="全局写操作审计记录（只追加，不可篡改）">
       <AuditChainPanel />
@@ -98,14 +232,14 @@ const AuditPage: React.FC = () => {
         <div className="flex flex-col gap-1.5">
           <Label htmlFor="audit-object-type">模块</Label>
           <Select value={objectType} onValueChange={setObjectType}>
-            <SelectTrigger id="audit-object-type" className="w-36">
+            <SelectTrigger id="audit-object-type" className="w-40">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="all">全部模块</SelectItem>
-              {Object.entries(OBJECT_TYPE_LABELS).map(([value, label]) => (
+              {objectTypeOptions.map((value) => (
                 <SelectItem key={value} value={value}>
-                  {label}
+                  {OBJECT_TYPE_LABELS[value] ?? value}
                 </SelectItem>
               ))}
             </SelectContent>
@@ -114,18 +248,54 @@ const AuditPage: React.FC = () => {
         <div className="flex flex-col gap-1.5">
           <Label htmlFor="audit-action">操作类型</Label>
           <Select value={action} onValueChange={setAction}>
-            <SelectTrigger id="audit-action" className="w-36">
+            <SelectTrigger id="audit-action" className="w-40">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="all">全部操作</SelectItem>
-              {Object.entries(ACTION_LABELS).map(([value, label]) => (
+              {actionOptions.map((value) => (
                 <SelectItem key={value} value={value}>
-                  {label}
+                  {ACTION_LABELS[value] ?? value}
                 </SelectItem>
               ))}
             </SelectContent>
           </Select>
+        </div>
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor="audit-actor">操作人</Label>
+          <Select value={actor} onValueChange={setActor}>
+            <SelectTrigger id="audit-actor" className="w-48">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">全部操作人</SelectItem>
+              {(actors ?? []).map((item) => (
+                <SelectItem key={item.actor} value={item.actor}>
+                  {ACTOR_LABELS[item.actor] ?? item.actor}（{item.count}）
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor="audit-date-from">起始日期</Label>
+          <Input
+            id="audit-date-from"
+            type="date"
+            className="w-40"
+            value={dateFrom}
+            onChange={(e) => setDateFrom(e.target.value)}
+          />
+        </div>
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor="audit-date-to">结束日期</Label>
+          <Input
+            id="audit-date-to"
+            type="date"
+            className="w-40"
+            value={dateTo}
+            onChange={(e) => setDateTo(e.target.value)}
+          />
         </div>
         <div className="flex flex-col gap-1.5">
           <Label htmlFor="audit-limit">条数</Label>
@@ -140,6 +310,28 @@ const AuditPage: React.FC = () => {
             </SelectContent>
           </Select>
         </div>
+        <Button
+          type="button"
+          variant="outline"
+          disabled={exporting}
+          onClick={() => void exportCsv()}
+        >
+          <Download className="mr-2 h-4 w-4" aria-hidden />
+          {exporting ? '导出中…' : '导出 CSV'}
+        </Button>
+        <Button
+          type="button"
+          variant="ghost"
+          onClick={() => {
+            setObjectType('all');
+            setAction('all');
+            setActor('all');
+            setDateFrom('');
+            setDateTo('');
+          }}
+        >
+          重置筛选
+        </Button>
       </div>
       {error ? (
         <p className="text-sm text-destructive">
@@ -151,16 +343,29 @@ const AuditPage: React.FC = () => {
       ) : null}
       <Table
         columns={columns}
-        dataSource={data ?? []}
+        dataSource={rows}
         loading={loading}
         rowKey="id"
-        scroll={{ x: 1100, y: 500 }}
+        scroll={{ x: 1200, y: 500 }}
         pagination={{
           pageSize: 10,
-          showTotal: (t: number) => `共 ${t} 条`,
+          /*
+           * 用服务端返回的 `total`，不是 antd 传进来的 `t`。
+           * `t` 只是**已加载行数**（≤ limit），拿它当"共 N 条"会在
+           * 命中数超过 limit 时低报 —— 审计人员据此判断"就这些了"。
+           */
+          showTotal: () =>
+            total > rows.length
+              ? `共 ${total} 条（已加载最新 ${rows.length} 条）`
+              : `共 ${total} 条`,
         }}
         locale={{ emptyText: '暂无审计日志，系统写操作将自动记录' }}
       />
+      {data && total > rows.length ? (
+        <p className="text-xs text-muted-foreground">
+          筛选命中 {total} 条，当前显示最新 {rows.length} 条；需要完整数据请用「导出 CSV」。
+        </p>
+      ) : null}
     </PageShell>
   );
 };

@@ -21,6 +21,7 @@ import { oauthStateMatches } from '@server/common/security/oauth-state';
 import { consumeRate } from '@server/common/security/rate-limit';
 import { IdentityService } from '@server/modules/identity/identity.service';
 import { AuthService, MfaRequiredException } from './auth.service';
+import { isProductionRuntime } from '@server/common/utils/runtime-env';
 import { LoginSecurityService } from './login-security.service';
 
 const STATE_COOKIE = 'erp_oauth_state';
@@ -395,7 +396,10 @@ export class AuthController {
 
   private secureFlag(): string {
     const base = (process.env.APP_BASE_URL ?? '').toLowerCase();
-    if (process.env.NODE_ENV === 'production' || base.startsWith('https://')) {
+    // 修复：原判断为 `NODE_ENV === 'production'`，NODE_ENV 写成 'prod'/留空时
+    // 会把带会话 token 的 Cookie 以**非 Secure** 下发（明文网络可窃取）。
+    // 现改为 fail-safe 判定：非显式开发环境即为生产，必须加 Secure。
+    if (isProductionRuntime() || base.startsWith('https://')) {
       return '; Secure';
     }
     return '';
