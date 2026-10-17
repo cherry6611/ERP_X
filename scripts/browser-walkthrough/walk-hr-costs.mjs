@@ -707,12 +707,43 @@ const dayIn = (period) => `${period}-15`;
 /* ══════════════════════════ 主流程 ══════════════════════════ */
 
 async function main() {
+  /*
+   * 自建夹具（部门 / 预算）：脚本不再依赖"库里恰好有主数据"。
+   * 结束时按引用情况清理 —— 有引用就留着，不为了清干净去删真实数据。
+   */
+  let createdDept = null;
+  let createdBudget = null;
+
   mkdirSync(OUT, { recursive: true });
   const session = await login();
   const sql = postgres({
     host: '127.0.0.1', port: 5433, user: 'erp', password: '******',
     database: 'shengseerp', connect_timeout: 5,
   });
+
+  /*
+   * ⚠️ 夹具必须在**任何页面导航之前**就建好：
+   * 员工表单的「部门」下拉在页面加载时一次性取数，晚建的部门不会出现在已加载的页面里。
+   * 我第一版把创建放在第 850 行（页面可能已加载），于是"部门=no-option"，2 条断言失败。
+   */
+  {
+    const existing = (await sql`SELECT id, name FROM hr_department ORDER BY code LIMIT 1`)[0];
+    if (!existing) {
+      createdDept = (await sql`
+        INSERT INTO hr_department (code, name)
+        VALUES (${'APIDPT' + String(Date.now()).slice(-12)}, ${`${TAG} 走查部门`})
+        RETURNING id, name`)[0];
+      console.log('  已自建夹具部门 ' + createdDept.name);
+    }
+    const bud = (await sql`SELECT id, period, expense_category FROM fin_budget WHERE expense_category = '项目实施' ORDER BY period DESC LIMIT 1`)[0];
+    if (!bud) {
+      createdBudget = (await sql`
+        INSERT INTO fin_budget (code, period, department_id, expense_category, budget_amount, remark)
+        VALUES (${'APIBGT' + String(Date.now()).slice(-12)}, ${new Date().toISOString().slice(0, 7)}, ${createdDept ? createdDept.id : null}, '项目实施', 1, ${TAG + ' 走查预算'})
+        RETURNING id, code`)[0];
+      console.log('  已自建夹具预算 ' + createdBudget.code);
+    }
+  }
   /**
    * 按**精确主键 id 数组**删行。
    *
@@ -833,7 +864,17 @@ async function main() {
      * 于是"回填"这条断言永远失败，而失败原因是**用例没造对前置数据**、
      * 不是代码有问题。早期版本就是这样误报的。
      */
-    const deptRow = (await sql`SELECT id, name FROM hr_department ORDER BY code LIMIT 1`)[0];
+    /*
+     * ⚠️ 2026-10-17：本脚本必须**自给自足**，不能依赖"库里恰好有部门"。
+     * 清理演示数据后部门表为空，这里就整条失败 —— 暴露了它此前的通过
+     * 依赖了环境残留（与 verify-budget-gate 同一类问题，已同样修法）。
+     */
+    let deptRow = (await sql`SELECT id, name FROM hr_department ORDER BY code LIMIT 1`)[0];
+    if (!deptRow) {
+      deptRow = (await sql`
+        INSERT INTO hr_department (code, name) VALUES (${'APIDPT' + String(Date.now()).slice(-12)}, ${`${TAG} 走查部门`}) RETURNING id, name`)[0];
+      createdDept = deptRow;
+    }
     record('准备：取一个部门用于员工建档（验证成本 department_id 回填）',
       !!deptRow, deptRow ? deptRow.name : '库中无部门');
     await clickText(page, '新建员工', { selector: 'button', settleMs: 1200 });
@@ -2324,8 +2365,17 @@ async function main() {
      * 会被 DTO 的 `@IsOptional()` 放过，于是申请落到"无部门无项目"的维度上，
      * 谁也匹配不到 —— 预算校验根本不会触发，这条断言就成了假绿。
      */
-    const targetBudget = sqlBudgets.find((b) => b.expense_category === '项目实施' && b.period)
+    let targetBudget = sqlBudgets.find((b) => b.expense_category === '项目实施' && b.period)
       ?? sqlBudgets[0];
+    if (!targetBudget && deptRow) {
+      /* 同上：没有预算就自建一条，金额设小以便"超支"用例真的触发闸门 */
+      const PERIOD = new Date().toISOString().slice(0, 7);
+      targetBudget = (await sql`
+        INSERT INTO fin_budget (code, period, department_id, expense_category, budget_amount, remark)
+        VALUES (${'APIBGT' + String(Date.now()).slice(-12)}, ${PERIOD}, ${deptRow.id}, '项目实施', 1, ${TAG + ' 走查预算'})
+        RETURNING *`)[0];
+      createdBudget = targetBudget;
+    }
     record('准备：取一条预算作为超支用例的维度来源', !!targetBudget,
       targetBudget ? `${targetBudget.period} ${targetBudget.expense_category} 金额=${targetBudget.budget_amount}` : '库中无预算');
     const overApplyBody = {
@@ -2701,6 +2751,22 @@ async function main() {
       console.log(`  hr_attendance_amendment(兜底): 删除 ${r.length} 行`);
     }
 
+
+    /* 清理自建夹具：**先预算、再部门**（部门被预算引用） */
+    if (createdBudget) {
+      await sql`DELETE FROM fin_budget WHERE id = ${createdBudget.id}`;
+      console.log('  已清理自建预算 ' + createdBudget.code);
+    }
+    if (createdDept) {
+      const refEmp = await sql`SELECT count(*)::int AS n FROM md_employee WHERE department_id = ${createdDept.id}`;
+      const refBud = await sql`SELECT count(*)::int AS n FROM fin_budget WHERE department_id = ${createdDept.id}`;
+      if (refEmp[0].n + refBud[0].n === 0) {
+        await sql`DELETE FROM hr_department WHERE id = ${createdDept.id}`;
+        console.log('  已清理自建部门 ' + createdDept.name);
+      } else {
+        console.log('  ⚠️ 自建部门仍被引用，保留');
+      }
+    }
     /*
      * ── 残留审计 ──
      *
