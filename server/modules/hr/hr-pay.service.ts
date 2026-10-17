@@ -41,6 +41,7 @@ import {
 } from '@server/database/schema';
 import { generateBizCode } from '@server/common/utils/biz-code';
 import { round2 } from '@server/common/utils/number';
+import { allocateByHours } from './payroll-allocation';
 import { VoucherHookService } from '@server/modules/voucher/voucher-hook.service';
 import { todayInShanghai } from '@server/common/utils/biz-date';
 import { previewPayroll, cumulativeAdditionalDeduction, monthlyAdditionalDeduction } from './payroll-engine';
@@ -946,38 +947,15 @@ export class HrPayService {
         )
       )
       .groupBy(erpTimesheet.projectId);
-    const valid = rows.filter(
-      (row) => row.projectId !== null && Number(row.totalHours) > 0
-    );
-    const totalHours: number = valid.reduce(
-      (acc: number, row) => acc + Number(row.totalHours),
-      0
-    );
-    if (totalHours <= 0) return [];
-    const net: number = Number(payroll.netSalary ?? 0);
     /*
-     * 按工时占比把工资净额分摊到各项目。
-     *
-     * ⚠️ 统一走 `round2`（原为内联 `Math.round(x*100)/100`）。影响本处的三个理由：
-     *   ① **尾差分摊必须精确**：下面"最后一行找平"要求 `Σ分摊额 === net`。
-     *      用非对称取整时，找平行可能是负数，而 `Math.round` 对负数向 +∞ 取整、
-     *      `round2` 远离零取整 —— 两者在 `-x.xx5` 上差 1 分，找平就不再精确；
-     *   ② **红冲分摊**要走同一套数（本仓有专门的分摊红冲入口），
-     *      两个方向取整不一致 → "原分摊 + 红冲分摊"合计不为 0；
-     *   ③ 项目成本是按分摊额入 `erp_project_cost` 的，1 分差会沿着成本口径传下去。
+     * 分摊逻辑已抽到 `./payroll-allocation`（纯函数 + 15 条断言），
+     * 那里钉住了三条"界面上看不出来"的错法：
+     *   ① 忘找平 → Σ分摊额 ≠ 净额（每行都看起来对，差几分）；
+     *   ② 找平用非对称取整 → `-x.xx5` 上差 1 分，找平不再精确；
+     *   ③ **红冲不对称** → 原分摊 + 红冲分摊 ≠ 0，账上留残值而借贷仍平。
+     * 本方法只负责查工时聚合（SQL），算术全部在纯函数里。
      */
-    const items = valid.map((row) => ({
-      projectId: row.projectId as string,
-      amount: round2(net * (Number(row.totalHours) / totalHours)),
-    }));
-    // L16：最后一行找平，消除四舍五入 ±0.01 尾差
-    if (items.length > 0) {
-      const allocated = items
-        .slice(0, -1)
-        .reduce((acc, item) => acc + item.amount, 0);
-      items[items.length - 1].amount = round2(net - allocated);
-    }
-    return items;
+    return allocateByHours(Number(payroll.netSalary ?? 0), rows);
   }
 
   private async getPayrollItem(id: string): Promise<PayrollItem> {
