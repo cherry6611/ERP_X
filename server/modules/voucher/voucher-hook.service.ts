@@ -63,14 +63,25 @@ export class VoucherHookService {
   }
 
   async generateVoucherDraft(
-    params: VoucherDraftParams
+    params: VoucherDraftParams,
+    outerDb?: PostgresJsDatabase,
   ): Promise<VoucherDraftResult> {
+    const db = outerDb ?? this.db;
+    /*
+     * 校验失败的处理：
+     *   · 独立调用：写 comp_voucher_job 失败记录并返回 failed（业务不阻断）；
+     *   · 外层事务：直接抛错，让外层把业务与凭证一起回滚，避免“发票已改、凭证没有”。
+     */
+    const fail = async (reason: string): Promise<VoucherDraftResult> => {
+      if (outerDb) throw new Error(reason);
+      await this.markFailed(params, reason);
+      return 'failed';
+    };
     try {
       const voucherDate = params.voucherDate.slice(0, 10);
       const period = voucherDate.slice(0, 7);
       if (params.lines.length === 0) {
-        await this.markFailed(params, '分录为空');
-        return 'failed';
+        return fail('分录为空');
       }
 
       const codes: string[] = Array.from(
@@ -80,22 +91,20 @@ export class VoucherHookService {
       const resolved = await this.accountResolver.resolveMany(codes);
       for (const code of codes) {
         if (!resolved.has(code)) {
-          await this.markFailed(params, `科目 ${code} 不存在、已停用或无可做账末级科目`);
-          return 'failed';
+          return fail(`科目 ${code} 不存在、已停用或无可做账末级科目`);
         }
       }
 
-      const closedRows = await this.db
+      const closedRows = await db
         .select({ period: finPeriodClose.period })
         .from(finPeriodClose)
         .where(eq(finPeriodClose.period, period))
         .limit(1);
       if (closedRows.length > 0) {
-        await this.markFailed(params, `期间 ${period} 已结账`);
-        return 'failed';
+        return fail(`期间 ${period} 已结账`);
       }
       // P0-3：会计年度已年结则该年度期间只读（月结与年结是两套闸门，必须都接线）
-      await assertFiscalYearOpen(this.db, period);
+      await assertFiscalYearOpen(db, period);
 
       let totalDebit = 0;
       let totalCredit = 0;
@@ -104,14 +113,10 @@ export class VoucherHookService {
         totalCredit += Number(line.credit ?? 0);
       }
       if (Math.round(totalDebit * 100) !== Math.round(totalCredit * 100)) {
-        await this.markFailed(
-          params,
-          `借贷不平衡（借 ${totalDebit} / 贷 ${totalCredit}）`
-        );
-        return 'failed';
+        return fail(`借贷不平衡（借 ${totalDebit} / 贷 ${totalCredit}）`);
       }
 
-      const existing = await this.db
+      const existing = await db
         .select({ id: finVoucher.id })
         .from(finVoucher)
         .where(
@@ -127,20 +132,15 @@ export class VoucherHookService {
       if (existing.length > 0) return 'created';
 
       // P0-2：解析纳税主体（读 erp_contract / md_tax_entity，必须在写事务外）
-      const taxEntityId = await resolveVoucherTaxEntityId(this.db, {
+      const taxEntityId = await resolveVoucherTaxEntityId(db, {
         explicit: params.taxEntityId,
         sourceRef: params.sourceRef,
         sourceType: params.sourceType,
       });
 
-      const code = await generateBizCode(
-        this.db,
-        finVoucher,
-        finVoucher.code,
-        'VCH'
-      );
-      await this.db.transaction(async (tx) => {
-        const inserted = await tx
+      const code = await generateBizCode(db, finVoucher, finVoucher.code, 'VCH');
+      const writeVoucher = async (target: PostgresJsDatabase) => {
+        const inserted = await target
           .insert(finVoucher)
           .values({
             code,
@@ -154,7 +154,7 @@ export class VoucherHookService {
             taxEntityId,
           })
           .returning({ id: finVoucher.id });
-        await tx.insert(finVoucherLine).values(
+        await target.insert(finVoucherLine).values(
           params.lines.map((line: VoucherHookLine) => {
             const account = resolved.get(line.accountCode);
             return {
@@ -167,7 +167,15 @@ export class VoucherHookService {
             };
           })
         );
-      });
+      };
+      if (outerDb) {
+        // 调用方已开启事务：直接在同一事务内写，失败由外层统一回滚。
+        await writeVoucher(outerDb);
+      } else {
+        await this.db.transaction(async (tx) => {
+          await writeVoucher(tx as unknown as PostgresJsDatabase);
+        });
+      }
       await this.clearFailure(params);
       return 'created';
     } catch (error) {
@@ -175,6 +183,10 @@ export class VoucherHookService {
         error instanceof Error ? error.message : String(error);
       if (message.includes('23505') || message.includes('uq_fin_voucher_source')) {
         return 'created';
+      }
+      if (outerDb) {
+        // 外层事务由调用方负责回滚；不能在这里用另一条连接写失败记录。
+        throw error;
       }
       await this.markFailed(params, message);
       return 'failed';

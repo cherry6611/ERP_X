@@ -731,13 +731,41 @@ export class FinExpenseService {
         );
       }
       /*
-       * 作废必须**同时作废应付单**（同事务）。
+       * 作废必须**同时作废应付单 + 红冲凭证 + 冲回项目成本**（同事务）。
        *
        * 只改报销单会出现"报销已作废、应付还挂着" —— 现金流预测按应付单算流出，
        * 于是这笔已经取消的钱**仍会占用未来的资金计划**。
        * 反过来（只作废应付单）则会让报销台账与应付台账不一致。
        * 两者必须一起变，这也是`source_ref` 这个关联键存在的意义。
+       *
+       * 另外两件事同样不能省：
+       *   · 审批通过时生成的「借 6602 / 贷 2202」必须红冲，否则总账仍挂费用与应付；
+       *   · 审批通过时插入的 erp_project_cost 必须冲回（负数行 + offset_of），
+       *     否则项目毛利永久偏低。原实现只改状态，属于"业务作废、账还活着"。
        */
+      const amount = Number(claim.amount ?? 0);
+      const reverseDate = todayInShanghai();
+      const reversePeriod = reverseDate.slice(0, 7);
+      const originalCostRows = claim.projectId
+        ? await this.db
+            .select({
+              id: erpProjectCost.id,
+              costType: erpProjectCost.costType,
+            })
+            .from(erpProjectCost)
+            .where(
+              and(
+                eq(erpProjectCost.sourceRef, `expense:${claim.code}`),
+                eq(erpProjectCost.projectId, claim.projectId),
+              ),
+            )
+            .limit(1)
+        : [];
+      const originalCost = originalCostRows[0];
+      const voidCostCode = claim.projectId
+        ? await generateBizCode(this.db, erpProjectCost, erpProjectCost.code, 'CST')
+        : null;
+
       await this.db.transaction(async (tx) => {
         const updated = await tx
           .update(finExpenseClaim)
@@ -755,7 +783,62 @@ export class FinExpenseService {
             .set({ status: 'voided', updatedAt: new Date() })
             .where(and(eq(erpApBill.id, ap.id), ne(erpApBill.status, 'voided')));
         }
+        if (claim.projectId && voidCostCode) {
+          await tx.insert(erpProjectCost).values({
+            code: voidCostCode,
+            projectId: claim.projectId,
+            costType: originalCost?.costType ?? 'travel',
+            amount: String(-amount),
+            period: reversePeriod,
+            occurredDate: reverseDate,
+            sourceRef: `expense-void:${claim.code}`,
+            offsetOf: originalCost?.id ?? null,
+            remark: `报销单${claim.code} 作废冲回`,
+          });
+        }
       });
+
+      /*
+       * 红字凭证在事务外生成（与审批分支一致：外部/凭证写入失败不能把
+       * 已提交的业务回滚成半状态）。失败时登记补偿队列，不能静默。
+       */
+      if (amount !== 0) {
+        const reverseLines = [
+          { accountCode: '6602', credit: amount },
+          { accountCode: '2202', debit: amount },
+        ];
+        try {
+          const result = await this.voucherHookService.generateVoucherDraft({
+            sourceType: 'expense',
+            sourceRef: `expense-void:${claim.code}`,
+            voucherDate: reverseDate,
+            summary: `报销作废 ${claim.code}`,
+            lines: reverseLines,
+          });
+          if (result === 'failed') {
+            this.logger.error(`报销作废红字凭证生成失败：expense-void:${claim.code}`);
+            await this.voucherHookService.recordCompensation(
+              'expense',
+              `expense-void:${claim.code}`,
+              '报销作废红字凭证生成失败',
+              reverseLines,
+              reverseDate,
+            );
+          }
+        } catch (error) {
+          this.logger.error(
+            `报销作废红字凭证生成异常：expense-void:${claim.code}`,
+            error instanceof Error ? error.stack : String(error),
+          );
+          await this.voucherHookService.recordCompensation(
+            'expense',
+            `expense-void:${claim.code}`,
+            error instanceof Error ? error.message : String(error),
+            reverseLines,
+            reverseDate,
+          );
+        }
+      }
       return this.getClaimById(id);
     }
 

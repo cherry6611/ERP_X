@@ -229,6 +229,7 @@ export class AssetController {
     });
   }
 
+  @CanCapability('self_service')
   @Post('changes')
   async createChange(
     @Body() dto: CreateAssetChangeDto

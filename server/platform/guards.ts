@@ -158,6 +158,18 @@ export class LoginGuard implements CanActivate {
   }
 }
 
+/** mfaPending 会话允许访问的最小路径集合（绑定/查看状态/退出）。 */
+function isMfaSetupPath(path: string): boolean {
+  const normalized = (path || '').split('?')[0] ?? '';
+  return (
+    normalized === '/api/auth/me' ||
+    normalized === '/api/auth/logout' ||
+    normalized === '/api/auth/mfa/status' ||
+    normalized === '/api/auth/mfa/setup' ||
+    normalized === '/api/auth/mfa/confirm'
+  );
+}
+
 @Injectable()
 export class RolesGuard implements CanActivate {
   constructor(private readonly reflector: Reflector) {}
@@ -177,6 +189,14 @@ export class RolesGuard implements CanActivate {
       [context.getHandler(), context.getClass()]
     );
     const req = context.switchToHttp().getRequest<Request>();
+    /*
+     * 强制 MFA 但尚未绑定的用户：登录时拿到的是受限会话（mfaPending）。
+     * 只允许访问绑定 MFA 所需的最小接口；其余一律 403，避免"先放进来再说"
+     * 把强制 MFA 变成可绕过的装饰。
+     */
+    if (req.userContext?.mfaPending && !isMfaSetupPath(req.path)) {
+      throw new ForbiddenException('请先完成 MFA 绑定后再使用系统');
+    }
     // ── S1：方法级/类级都没注解时的**兜底解析**（fail-closed）────────────────
     //
     // 原实现：`requiredRoles` 与 `requiredCapability` **都为空**时，

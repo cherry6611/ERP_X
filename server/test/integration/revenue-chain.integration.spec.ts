@@ -18,6 +18,7 @@ import { AccountResolverService } from '@server/modules/voucher/account-resolver
 import { ArService } from '@server/modules/finance/ar.service';
 import { InvoiceService } from '@server/modules/finance/invoice.service';
 import { DataScopeService } from '@server/common/auth/data-scope.service';
+import { ProjectAclService } from '@server/modules/projects/project-acl.service';
 import { RevenuesService } from '@server/modules/revenues/revenues.service';
 import { TaxEntityService } from '@server/modules/tax/tax-entity.service';
 import { TaxResolverService } from '@server/modules/tax/tax-resolver.service';
@@ -107,12 +108,16 @@ describe('N-3/B-4 收入→应收→凭证 事务边界与三方对账自检', (
       taxResolver,
       dataScope
     );
+    const projectAcl = {
+      visibleProjectIds: async () => undefined,
+    } as unknown as ProjectAclService;
     service = new RevenuesService(
       orm,
       arService,
       voucherHook,
       taxResolver,
       dataScope,
+      projectAcl,
       invoiceService
     );
 

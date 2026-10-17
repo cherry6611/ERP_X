@@ -13,7 +13,7 @@
  */
 const BASE = process.argv[2] ?? 'http://127.0.0.1:3100';
 const USER = process.env.ERP_PROBE_USER ?? 'chengsheng@chengshengdata.cn';
-const PASS = process.env.ERP_PROBE_PASS ?? '******';
+const PASS = process.env.ERP_PROBE_PASS ?? '';
 
 const results = [];
 function record(name, ok, detail = '') {

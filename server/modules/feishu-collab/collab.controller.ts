@@ -1,6 +1,6 @@
 import { BadRequestException, Body, Controller, Get, Inject, Param, Post } from '@nestjs/common';
 import { IsArray, IsIn, IsNotEmpty, IsString } from 'class-validator';
-import { CanCapability, DRIZZLE_DATABASE, NeedLogin, type PostgresJsDatabase } from '@server/platform';
+import { CanCapability, CanCapabilityRead, DRIZZLE_DATABASE, NeedLogin, type PostgresJsDatabase } from '@server/platform';
 import { compFeishuApproval } from '@server/database/schema';
 import { FeishuClientService } from '@server/modules/feishu-drive/feishu-client.service';
 import { FeishuContactService } from './contact.service';
@@ -57,7 +57,7 @@ export class FeishuCollabController {
     return this.contact.fullSync();
   }
 
-  @CanCapability('drive')
+  @CanCapabilityRead('drive')
   @Get('contact/conflicts')
   conflicts() {
     return this.contact.listConflicts();

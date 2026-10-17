@@ -190,6 +190,7 @@ export class SessionMiddleware implements NestMiddleware {
       userId: claims?.userId,
       userName: claims?.userName,
       roles: claims?.roles ?? [],
+      mfaPending: claims?.mfaPending === true,
     };
     const userId = req.userContext?.userId ?? '';
 

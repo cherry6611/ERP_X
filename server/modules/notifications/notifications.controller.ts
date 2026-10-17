@@ -9,7 +9,7 @@ import {
   Req,
 } from '@nestjs/common';
 import { IsIn, IsNotEmpty, IsString } from 'class-validator';
-import { NeedLogin } from '@server/platform';
+import { CanCapability, NeedLogin } from '@server/platform';
 import type { Request } from 'express';
 import { actorFromRequest } from '@server/common/auth/actor';
 import { consumeRate } from '@server/common/security/rate-limit';
@@ -65,6 +65,7 @@ export class NotificationsController {
    * U-27 / SEC-A：不在此用 CanRole(admin)，否则提交人无法催办。
    * 服务侧二次校验：仅单据提交人或 admin 可发；其余 403。
    */
+  @CanCapability('self_service')
   @Post('approval')
   async sendApprovalNotification(
     @Req() req: Request,
@@ -94,6 +95,7 @@ export class NotificationsController {
   }
 
   /** B8：将当前用户的一条站内信标为已读 */
+  @CanCapability('self_service')
   @Patch('inbox/:id/read')
   async markInboxRead(
     @Req() req: Request,

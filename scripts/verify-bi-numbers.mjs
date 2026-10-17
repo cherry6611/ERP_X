@@ -50,7 +50,7 @@ async function main() {
   };
 
   const sql = postgres({
-    host: '127.0.0.1', port: 5433, user: 'erp', password: '******',
+    host: '127.0.0.1', port: 5433, user: 'erp', password: process.env.DB_PASSWORD ?? '',
     database: 'shengseerp', connect_timeout: 5,
   });
 

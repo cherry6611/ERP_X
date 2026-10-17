@@ -9,7 +9,7 @@ import {
   Query,
   Req,
 } from '@nestjs/common';
-import { NeedLogin } from '@server/platform';
+import { CanCapability, NeedLogin } from '@server/platform';
 import type { Request } from 'express';
 import {
   IsIn,
@@ -103,6 +103,7 @@ export class AttachmentController {
     );
   }
 
+  @CanCapability('self_service')
   @Post('parse-feishu-url')
   async parseFeishuUrl(
     @Body() dto: ParseFeishuUrlDto,
@@ -110,6 +111,7 @@ export class AttachmentController {
     return this.attachmentService.parseFeishuUrl(dto.url);
   }
 
+  @CanCapability('self_service')
   @Post()
   async create(
     @Req() req: Request,
@@ -123,6 +125,7 @@ export class AttachmentController {
     );
   }
 
+  @CanCapability('self_service')
   @Delete(':id')
   async remove(
     @Req() req: Request,

@@ -107,7 +107,7 @@ function skip(name, why) {
 
 async function login() {
   const user = process.env.WT_USER ?? process.env.BOOTSTRAP_ADMIN_USERNAME ?? 'chengsheng@chengshengdata.cn';
-  const pass = process.env.WT_PASS ?? process.env.BOOTSTRAP_ADMIN_PASSWORD ?? '******';
+  const pass = process.env.WT_PASS ?? process.env.BOOTSTRAP_ADMIN_PASSWORD ?? '';
   const res = await fetch(`${API}/api/auth/login`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
@@ -717,7 +717,7 @@ async function main() {
   mkdirSync(OUT, { recursive: true });
   const session = await login();
   const sql = postgres({
-    host: '127.0.0.1', port: 5433, user: 'erp', password: '******',
+    host: '127.0.0.1', port: 5433, user: 'erp', password: process.env.DB_PASSWORD ?? '',
     database: 'shengseerp', connect_timeout: 5,
   });
 

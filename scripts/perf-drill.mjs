@@ -33,9 +33,29 @@ const OUT_DIR = join(ROOT, '..', 'docs', 'perf-drill');
 const PERF_PORT = Number(process.env.PERF_PORT ?? 3200);
 const PERF_DB = 'shengseerp_perf';
 
-const envLine = readFileSync(join(ROOT, '.env'), 'utf8')
+const envText = readFileSync(join(ROOT, '.env'), 'utf8');
+const envLine = envText
   .split(/\r?\n/).find((l) => l.startsWith('DATABASE_URL='));
 const SRC_URL = envLine.slice(13).trim();
+
+/*
+ * 登录临时实例需要 bootstrap 账号；只读 DATABASE_URL 会让 `npm run drill:perf`
+ * 在默认命令下以 400 失败。这里从同一个 .env 补齐（显式 env 优先），
+ * 使文档里的命令可复现。
+ */
+for (const key of ['BOOTSTRAP_ADMIN_USERNAME', 'BOOTSTRAP_ADMIN_PASSWORD']) {
+  if (!process.env[key]) {
+    const line = envText
+      .split(/\r?\n/)
+      .find((l) => l.startsWith(`${key}=`));
+    if (line) {
+      process.env[key] = line
+        .slice(key.length + 1)
+        .trim()
+        .replace(/^"(.*)"$/, '$1');
+    }
+  }
+}
 const m = SRC_URL.match(/^postgres(?:ql)?:\/\/([^:]+):([^@]*)@([^:]+):(\d+)\/([^?]+)/);
 if (!m) throw new Error('无法解析 DATABASE_URL');
 const cfg = { user: m[1], password: m[2], host: m[3], port: m[4], database: m[5] };

@@ -12,6 +12,7 @@ import {
   type PostgresJsDatabase,
 } from '@server/platform';
 import { and, asc, desc, eq, inArray, lte, ne, or, sql, type SQL } from 'drizzle-orm';
+import type { PgColumn } from 'drizzle-orm/pg-core';
 import {
   erpContract,
   erpCostAllocation,
@@ -34,6 +35,7 @@ import { todayInShanghai, monthInShanghai } from '@server/common/utils/biz-date'
 import { assertPeriodOpen } from '@server/common/utils/period-guard';
 import { ActorAccessService } from '@server/common/auth/actor-access.service';
 import { DataScopeService } from '@server/common/auth/data-scope.service';
+import { ProjectAclService } from '@server/modules/projects/project-acl.service';
 import type { RequestActor } from '@server/common/auth/actor';
 import { round2 } from '@server/common/utils/number';
 import {
@@ -95,7 +97,8 @@ export class CostsService {
     @Inject(DRIZZLE_DATABASE) private readonly db: PostgresJsDatabase,
     private readonly actorAccess: ActorAccessService,
     private readonly voucherHookService: VoucherHookService,
-    private readonly dataScope: DataScopeService
+    private readonly dataScope: DataScopeService,
+    private readonly projectAcl: ProjectAclService
   ) {}
 
   /**
@@ -117,7 +120,20 @@ export class CostsService {
         primary: erpProjectCost.projectId,
       });
       // `undefined` = 未配置/全量；`1 = 0` = 空集（fail-closed），两者语义不同不能混用
-      if (scope) conditions.push(scope);
+      if (scope) {
+        conditions.push(scope);
+      } else {
+        // cost 未配置 sys_data_scope 时不能默认全放行：回退到 ProjectAcl
+        // 的项目可见集（PM 只看到自己/本部门/参与的项目）。
+        const visibleIds = await this.projectAcl.visibleProjectIds(actor);
+        if (visibleIds) {
+          conditions.push(
+            visibleIds.length > 0
+              ? inArray(erpProjectCost.projectId, visibleIds)
+              : sql`1 = 0`,
+          );
+        }
+      }
     }
     const rows = await this.db
       .select({
@@ -176,12 +192,20 @@ export class CostsService {
    * （B5 期初现金那处遗漏正是这么来的）。
    */
   private async costScopeCondition(
-    actor?: RequestActor
+    actor?: RequestActor,
+    projectColumn: PgColumn = erpProjectCost.projectId,
   ): Promise<SQL | undefined> {
     if (!actor) return undefined;
-    return this.dataScope.conditionFor('cost', actor, {
-      primary: erpProject.id,
+    const scope = await this.dataScope.conditionFor('cost', actor, {
+      primary: projectColumn,
     });
+    if (scope) return scope;
+    // 未配置 cost 行级权限时，按项目可见集收窄（不能默认 all）。
+    const visibleIds = await this.projectAcl.visibleProjectIds(actor);
+    if (!visibleIds) return undefined;
+    return visibleIds.length > 0
+      ? inArray(projectColumn, visibleIds)
+      : sql`1 = 0`;
   }
 
   /** 多维成本汇总：costType / department / contract / period */
@@ -421,8 +445,9 @@ export class CostsService {
   ): Promise<Timesheet[]> {
     const conditions: SQL[] = [];
     if (projectId) conditions.push(eq(erpTimesheet.projectId, projectId));
-    // B10：工时同样按项目归属过滤（与成本同一资源口径）
-    const scope = await this.costScopeCondition(actor);
+    // B10：工时同样按项目归属过滤（与成本同一资源口径）；
+    // 列必须是 erpTimesheet.projectId，否则生成的 SQL 会引用不存在的 erp_project_cost。
+    const scope = await this.costScopeCondition(actor, erpTimesheet.projectId);
     if (scope) conditions.push(scope);
     const rows = await this.db
       .select({ sheet: erpTimesheet, projectName: erpProject.name })

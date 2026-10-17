@@ -90,6 +90,11 @@ async function seed(harness: Harness): Promise<void> {
     INSERT INTO erp_contract (id, code, name, customer_id, amount, tax_rate)
     VALUES ('${UUID.contract}', '${PREFIX}CT001', '${PREFIX} 合同甲', '${UUID.customer}', '10000', '6');
 
+    -- 客户丙的合同必须先于引用它的 erp_ar / erp_project_revenue 插入：
+    -- fk_erp_ar_contract 现在会在写入时校验父合同存在。
+    INSERT INTO erp_contract (id, code, name, customer_id, amount, tax_rate)
+    VALUES ('${UUID.contractC}', '${PREFIX}CT003', '${PREFIX} 合同丙', '${UUID.customerC}', '300', '6');
+
     INSERT INTO erp_project (id, code, name, dept_name, pm_user_id)
     VALUES ('${UUID.project}', '${PREFIX}P001', '${PREFIX} 项目甲', '${PREFIX}数据部', '${PREFIX}pm-user');
 
@@ -102,12 +107,9 @@ async function seed(harness: Harness): Promise<void> {
       ('${UUID.arVoided}','${PREFIX}ARR0005','${UUID.contract}', '${UUID.customer}', '${UUID.project}', '999.00',  '0.00',    '2026-12-31', 'voided',  'manual', '2026-10-05 10:00:00+08'),
       ('${UUID.arAugClosed}','${PREFIX}ARR0006','${UUID.contractC}','${UUID.customerC}','${UUID.project}','300.00','300.00','2026-08-31', 'settled', 'manual', '2026-08-20 10:00:00+08');
 
-    -- 客户丙的合同与收入确认单：erp_revenue_adjust 自身没有 customer_id，
+    -- 客户丙的收入确认单：erp_revenue_adjust 自身没有 customer_id，
     -- 只能经 revenue_id -> erp_project_revenue.contract_id -> erp_contract.customer_id
-    -- 关联到客户，因此测试数据必须把这条链建完整。
-    INSERT INTO erp_contract (id, code, name, customer_id, amount, tax_rate)
-    VALUES ('${UUID.contractC}', '${PREFIX}CT003', '${PREFIX} 合同丙', '${UUID.customerC}', '300', '6');
-
+    -- 关联到客户；合同已在前面插入。
     INSERT INTO erp_project_revenue (id, code, project_id, contract_id, period, method, amount, status)
     VALUES ('${UUID.revenueC}', '${PREFIX}REV003', '${UUID.project}', '${UUID.contractC}', '2026-08', 'milestone', '300.00', 'recognized');
 

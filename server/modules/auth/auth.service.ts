@@ -1,6 +1,8 @@
 import {
   BadRequestException,
   ConflictException,
+  HttpException,
+  HttpStatus,
   Injectable,
   Logger,
   OnModuleInit,
@@ -40,7 +42,13 @@ export interface AuthUser {
 
 /** B-04：密码登录结果——可能直接签发会话，也可能要求二次验证 */
 export type PasswordLoginResult =
-  | { mfaRequired: false; token: string; user: AuthUser }
+  | {
+      mfaRequired: false;
+      /** true 表示强制 MFA 但尚未绑定：会话只能调 mfa/setup|confirm|status。 */
+      mfaSetupRequired?: boolean;
+      token: string;
+      user: AuthUser;
+    }
   | { mfaRequired: true; mfaToken: string; expiresAt: string; userName: string };
 
 export interface LoginContext {
@@ -180,6 +188,33 @@ export class AuthService implements OnModuleInit {
       throw new UnauthorizedException('账号或密码错误');
     }
 
+    /*
+     * P2-11：密码过期/管理员重置后的首改必须在登录时拦截。
+     * 不能直接放行再靠前端提示——原实现 `isPasswordExpired` 从未被登录路径调用，
+     * 90 天轮换与“重置后强制改密”都形同虚设。
+     */
+    const mustChangePassword =
+      Number(user.mustChangePassword ?? 0) === 1 ||
+      this.security.isPasswordExpired(user.passwordChangedAt);
+    if (mustChangePassword) {
+      await this.security.writeLoginAudit({
+        username: normalized,
+        userId: user.id,
+        result: 'failed',
+        reason: 'password_change_required',
+        authMethod: 'password',
+        ip: context.ip,
+        userAgent: context.userAgent,
+      });
+      throw new HttpException(
+        {
+          code: 'PASSWORD_CHANGE_REQUIRED',
+          message: '密码已过期或需首次修改，请先修改密码',
+        },
+        HttpStatus.FORBIDDEN,
+      );
+    }
+
     const roles = await loadRoleCodes(this.db, user.id);
     const mfaState = await this.security.mfaStatus(user.id);
     // 已启用 MFA，或角色强制 MFA 但尚未绑定 → 均不得直接签发会话
@@ -206,18 +241,31 @@ export class AuthService implements OnModuleInit {
       };
     }
     if (mfaState.required) {
+      /*
+       * 强制 MFA 但尚未绑定：不能直接拒绝 —— 绑定入口本身需要登录，
+       * 拒绝会让新装库/新角色的用户永远无法完成首登（实测过的死锁）。
+       * 这里签发**受限会话**（mfaPending）：守卫只允许 mfa/status|setup|confirm、
+       * logout、me；绑定确认后前端强制重新登录，再走正常的 TOTP 二次验证。
+       */
       await this.security.writeLoginAudit({
         username: normalized,
         userId: user.id,
-        result: 'failed',
-        reason: 'mfa_required',
+        result: 'success',
+        reason: 'mfa_setup_required',
         authMethod: 'password',
         ip: context.ip,
         userAgent: context.userAgent,
       });
-      throw new UnauthorizedException(
-        '该角色已强制启用双因素认证，请先在设置页完成 MFA 绑定后再登录'
+      await this.security.clearFailedLogin(user.id);
+      const issued = await this.issue(
+        user.id,
+        user.displayName,
+        user.email,
+        context,
+        'password',
+        true,
       );
+      return { mfaRequired: false, mfaSetupRequired: true, ...issued };
     }
 
     await this.security.clearFailedLogin(user.id);
@@ -405,6 +453,79 @@ export class AuthService implements OnModuleInit {
     }
   }
 
+  /**
+   * P2-12：敏感操作（绑定飞书）前的再认证。
+   * 仅凭一个有效会话不足以把攻击者飞书绑到账号上；必须再次证明密码，
+   * 已启用 MFA 的账号还必须提供当前 TOTP/恢复码。
+   */
+  async verifyReauth(
+    userId: string,
+    password: string,
+    mfaCode?: string,
+  ): Promise<void> {
+    const rows = await this.db
+      .select()
+      .from(sysUser)
+      .where(eq(sysUser.id, userId))
+      .limit(1);
+    const user = rows[0];
+    if (!user || user.status !== 'active') {
+      throw new UnauthorizedException('账号不存在或已停用');
+    }
+    if (!user.passwordHash || !verifyPassword(password, user.passwordHash)) {
+      throw new UnauthorizedException('当前密码不正确，无法执行该操作');
+    }
+    const mfa = await this.security.mfaStatus(userId);
+    if (mfa.enabled) {
+      if (!mfaCode || !(await this.security.verifyMfa(userId, mfaCode))) {
+        throw new UnauthorizedException('MFA 验证码不正确或已过期');
+      }
+    }
+  }
+
+  /**
+   * P2-11：登录被 `PASSWORD_CHANGE_REQUIRED` 拦截后的自助改密。
+   * 需要用户名 + 当前密码重新证明身份；已启用 MFA 的账号还必须提供 TOTP，
+   * 不能只凭“知道旧密码”就把账号密码换掉。
+   */
+  async changeExpiredPassword(input: {
+    username: string;
+    currentPassword: string;
+    newPassword: string;
+    mfaCode?: string;
+  }): Promise<void> {
+    const rows = await this.db
+      .select()
+      .from(sysUser)
+      .where(eq(sysUser.username, input.username.trim()))
+      .limit(1);
+    const user = rows[0];
+    if (!user || user.status !== 'active') {
+      throw new UnauthorizedException('账号不存在或已停用');
+    }
+    if (!user.passwordHash || !verifyPassword(input.currentPassword, user.passwordHash)) {
+      throw new UnauthorizedException('当前密码不正确');
+    }
+    const mfa = await this.security.mfaStatus(user.id);
+    if (mfa.enabled) {
+      if (!input.mfaCode || !(await this.security.verifyMfa(user.id, input.mfaCode))) {
+        throw new UnauthorizedException('MFA 验证码不正确或已过期');
+      }
+    }
+    await this.security.changePassword({
+      userId: user.id,
+      newPassword: input.newPassword,
+      currentPassword: input.currentPassword,
+    });
+    await this.security.writeLoginAudit({
+      username: input.username,
+      userId: user.id,
+      result: 'unlock',
+      reason: 'password_changed_after_expiry',
+      authMethod: 'password',
+    });
+  }
+
   async me(userId: string): Promise<(AuthUser & {
     mfaEnabled: boolean;
     mfaRequired: boolean;
@@ -434,14 +555,19 @@ export class AuthService implements OnModuleInit {
     userName: string,
     email: string | null | undefined,
     context: LoginContext,
-    authMethod: 'password' | 'feishu' | 'mfa'
+    authMethod: 'password' | 'feishu' | 'mfa',
+    mfaPending = false,
   ) {
     const account = await this.db.select({ status: sysUser.status }).from(sysUser).where(eq(sysUser.id, userId)).limit(1);
     if (account[0]?.status !== 'active') throw new UnauthorizedException('账号已停用');
     const roles = await loadRoleCodes(this.db, userId);
     const secret = process.env.JWT_SECRET;
     if (!secret) throw new UnauthorizedException('未配置 JWT_SECRET');
-    const token = signSession({ userId, userName, roles }, secret, 60 * 60 * 24 * 7);
+    const token = signSession(
+      { userId, userName, roles, ...(mfaPending ? { mfaPending: true } : {}) },
+      secret,
+      60 * 60 * 24 * 7,
+    );
     const claims = readSession(token, secret);
     if (claims?.jti) {
       await this.sessions.record(userId, claims.jti, new Date(claims.exp * 1000));

@@ -6,6 +6,7 @@ declare global {
         userId?: string;
         userName?: string;
         roles?: string[];
+        mfaPending?: boolean;
         tenantId?: number;
       };
     }

@@ -121,3 +121,21 @@ export function pickVoucherAffectingFields(
   const set = new Set<string>(VOUCHER_AFFECTING_FIELDS);
   return presentKeys.filter((k): k is VoucherAffectingField => set.has(k));
 }
+
+/**
+ * 编辑后是否真的应该重建凭证。
+ *
+ * `decideInvoiceEdit` 只能看到"有没有凭证"，看不到发票方向；而本仓方案 A 下
+ * **销项发票按设计不生成凭证**（收入确认才是收入/销项税的唯一入账入口）。
+ * 因此 `voucherStatus === null` 对销项票是正常状态，不是"缺凭证"。
+ *
+ * 这个判据单独抽出来，是为了防止回退：只有进项票才允许从 0 重建凭证。
+ * 销项票即使历史上曾有过凭证，也不能在编辑时新建一张。
+ */
+export function shouldRebuildInvoiceVoucher(
+  direction: string | null | undefined,
+  decision: InvoiceEditDecision,
+): boolean {
+  if (!decision.ok || !decision.rebuildVoucher) return false;
+  return (direction ?? 'sales') === 'purchase';
+}

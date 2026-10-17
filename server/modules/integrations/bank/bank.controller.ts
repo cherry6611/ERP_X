@@ -13,7 +13,7 @@ import {
   UseInterceptors,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
-import { NeedLogin } from '@server/platform';
+import { CanCapabilityRead, NeedLogin } from '@server/platform';
 import { CanCapability } from '@server/modules/integrations/integration-authz';
 import { actorFromRequest } from '@server/common/auth/actor';
 import type { Request } from 'express';
@@ -298,7 +298,7 @@ export class BankController {
 
   /* ---------- 银行账户主数据 ---------- */
 
-  @CanCapability('finance')
+  @CanCapabilityRead('finance')
   @Get('bank-accounts')
   async listAccounts(
     @Query('page') page?: string,
@@ -314,7 +314,7 @@ export class BankController {
     });
   }
 
-  @CanCapability('finance')
+  @CanCapabilityRead('finance')
   @Get('bank-accounts/:id')
   async getAccount(@Param('id', ParseUUIDPipe) id: string): Promise<BankAccountItem> {
     return this.bankAccounts.getAccount(id);
@@ -337,7 +337,7 @@ export class BankController {
 
   /* ---------- 导入字段映射模板 ---------- */
 
-  @CanCapability('finance')
+  @CanCapabilityRead('finance')
   @Get('bank-import-mappings')
   async listMappings(): Promise<BankImportMappingItem[]> {
     return this.mappings.listMappings();
@@ -354,7 +354,7 @@ export class BankController {
   /* ---------- 银行流水 ---------- */
 
   /** 匹配率统计（验收标准：自动匹配率 > 60%） */
-  @CanCapability('finance')
+  @CanCapabilityRead('finance')
   @Get('bank-statements/match-stat')
   async matchStatistic(
     @Query('bankAccountId') bankAccountId?: string,
@@ -367,7 +367,7 @@ export class BankController {
   }
 
   /** C-02 未匹配流水清单（人工核对入口） */
-  @CanCapability('finance')
+  @CanCapabilityRead('finance')
   @Get('bank-statements/unmatched')
   async listUnmatched(
     @Query('bankAccountId') bankAccountId?: string,
@@ -383,7 +383,7 @@ export class BankController {
     });
   }
 
-  @CanCapability('finance')
+  @CanCapabilityRead('finance')
   @Get('bank-statements')
   async listStatements(
     @Query('bankAccountId') bankAccountId?: string,
@@ -401,7 +401,7 @@ export class BankController {
     });
   }
 
-  @CanCapability('finance')
+  @CanCapabilityRead('finance')
   @Get('bank-statements/:id')
   async getStatement(
     @Param('id', ParseUUIDPipe) id: string
@@ -474,7 +474,7 @@ export class BankController {
   /* ---------- C-03 银企对账 ---------- */
 
   /** 银行存款余额调节表；checks 内含 passed 与 difference，左右恒等断言 */
-  @CanCapability('finance')
+  @CanCapabilityRead('finance')
   @Get('bank-reconciliation')
   async getReconciliation(
     @Query('bankAccountId') bankAccountId?: string,

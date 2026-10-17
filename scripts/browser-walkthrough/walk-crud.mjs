@@ -28,7 +28,7 @@ import { Browser, sleep } from './cdp.mjs';
 const APP = process.env.WT_APP ?? 'http://127.0.0.1:5273';
 const API = process.env.WT_API ?? 'http://127.0.0.1:3100';
 const USER = process.env.WT_USER ?? 'chengsheng@chengshengdata.cn';
-const PASS = process.env.WT_PASS ?? '******';
+const PASS = process.env.WT_PASS ?? '';
 const OUT = 'scripts/browser-walkthrough/out';
 const TAG = '[API_TEST]';
 
@@ -150,7 +150,7 @@ async function main() {
   mkdirSync(OUT, { recursive: true });
   const session = await login();
   const sql = postgres({
-    host: '127.0.0.1', port: 5433, user: 'erp', password: '******',
+    host: '127.0.0.1', port: 5433, user: 'erp', password: process.env.DB_PASSWORD ?? '',
     database: 'shengseerp', connect_timeout: 5,
   });
   /** 为立项临时创建的合同（用完要连项目一起删） */

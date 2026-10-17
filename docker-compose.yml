@@ -55,8 +55,9 @@ services:
       LOG_DIR: ${LOG_DIR:-/app/logs}
       APP_BASE_URL: ${APP_BASE_URL:-}
       ENABLE_SCHEDULER: ${ENABLE_SCHEDULER:-true}
-      # A7：反代后正确识别客户端 IP，避免全局限速误伤
-      TRUST_PROXY_HOPS: ${TRUST_PROXY_HOPS:-1}
+      # 直接暴露 3000 时必须为 0，否则 X-Forwarded-For 可伪造；
+      # Nginx/SLB 前置时在宿主 .env 显式设 TRUST_PROXY_HOPS=1。
+      TRUST_PROXY_HOPS: ${TRUST_PROXY_HOPS:-0}
       UPLOAD_DIR: /app/data/uploads
     ports:
       - "3000:3000"

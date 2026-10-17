@@ -24,7 +24,7 @@ import postgres from 'postgres';
 const DRY_RUN = process.argv.includes('--dry-run');
 const PROBE_ACTOR = 'd09-probe';
 const url =
-  process.env.DATABASE_URL ?? 'postgresql://erp:******@127.0.0.1:5433/shengseerp';
+  process.env.DATABASE_URL ?? 'postgresql://erp@127.0.0.1:5433/shengseerp';
 
 /** 与迁移里的算法保持一致 */
 const RECOMPUTE_SQL = `md5(

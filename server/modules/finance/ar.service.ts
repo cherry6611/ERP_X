@@ -221,12 +221,17 @@ export class ArService {
       }
       voucherRate = resolved.rate;
     }
-    // D-19：同 sourceRef 幂等返回既有应收
+    // D-19：同 sourceRef 幂等返回既有应收；已作废的不算"已存在"
     if (dto.sourceRef) {
       const existed = await db
         .select()
         .from(erpAr)
-        .where(eq(erpAr.sourceRef, dto.sourceRef))
+        .where(
+          and(
+            eq(erpAr.sourceRef, dto.sourceRef),
+            ne(erpAr.status, 'voided'),
+          ),
+        )
         .limit(1);
       if (existed.length > 0) {
         return this.buildArItem({
@@ -827,12 +832,15 @@ export class ArService {
     if (current === 'voided') {
       throw new ConflictException('该应收已作废，请勿重复操作');
     }
-    // 期间闸门：作废是对已结账期间的账务改写，必须与登记同口径拦截
-    await assertPeriodOpen(
-      this.db,
-      before.ar.dueDate ?? todayInShanghai(),
-      '作废应收'
-    );
+    /*
+     * 期间闸门：作废是对已结账期间的账务改写，必须与登记同口径拦截。
+     *
+     * 这里曾用 `dueDate`，与 createAr 的 todayInShanghai 不一致：
+     *   · 到期日落在未结期间、当前期间已结账 → 放行，红字凭证生成失败；
+     *   · 到期日落在已结期间、当前期间已开账 → 误拦。
+     * 红字凭证日期也是 today，因此闸门必须用 today。
+     */
+    await assertPeriodOpen(this.db, todayInShanghai(), '作废应收');
 
     const affected = await this.db.transaction(async (tx) => {
       // ① 行锁重读 + CAS：并发双击/两个标签页同时作废时只有一个能成功
@@ -894,7 +902,7 @@ export class ArService {
             debit: line.credit,
             credit: line.debit,
           }));
-          await this.voucherHookService.generateVoucherDraft({
+          const voucherStatus = await this.voucherHookService.generateVoucherDraft({
             sourceType: 'ar',
             sourceRef: `ar-void:${ar.code}`,
             voucherDate: todayInShanghai(),
@@ -902,6 +910,16 @@ export class ArService {
             lines,
             taxEntityId: before.contractTaxEntityId ?? null,
           });
+          if (voucherStatus === 'failed') {
+            /*
+             * 不能只 log 后继续：事务已把应收置为 voided，若凭证没生成，
+             * 就成了"业务作废、账还挂着"。抛错让整个事务回滚，由使用者
+             * 先处理已结账期间/科目问题再重试。
+             */
+            throw new BadRequestException(
+              '作废应收失败：红字凭证生成失败（当前期间可能已结账），请检查期间后重试',
+            );
+          }
         } else {
           // 取不到税率时不静默跳过：宁可作废失败，也不要留下"业务已作废、
           // 凭证还挂在账上"的悬空账（那种差额对账时极难归因）。

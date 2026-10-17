@@ -28,7 +28,7 @@ async function main(): Promise<void> {
     port: Number(process.env.DB_PORT ?? 5433),
     database: process.env.DB_NAME ?? 'shengseerp',
     username: process.env.DB_USER ?? 'erp',
-    password: process.env.DB_PASSWORD ?? '******',
+    password: process.env.DB_PASSWORD ?? '',
     max: 1,
   });
 

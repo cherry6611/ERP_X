@@ -162,6 +162,7 @@ export class PurController {
     });
   }
 
+  @CanCapability('self_service')
   @Post('requests')
   async createRequest(
     @Body() dto: CreatePurRequestDto

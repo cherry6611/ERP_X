@@ -12,7 +12,7 @@ import { Browser, sleep } from './cdp.mjs';
 const APP = process.env.WT_APP ?? 'http://127.0.0.1:5273';
 const API = process.env.WT_API ?? 'http://127.0.0.1:3100';
 const USER = process.env.WT_USER ?? 'chengsheng@chengshengdata.cn';
-const PASS = process.env.WT_PASS ?? '******';
+const PASS = process.env.WT_PASS ?? '';
 
 const targets = process.argv.slice(2);
 if (targets.length === 0) {

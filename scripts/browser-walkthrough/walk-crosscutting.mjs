@@ -234,7 +234,7 @@ async function main() {
     console.log('\n⑦ 打印');
     page.resetDiagnostics();
     const ctr = (await postgres({
-      host: '127.0.0.1', port: 5433, user: 'erp', password: '******',
+      host: '127.0.0.1', port: 5433, user: 'erp', password: process.env.DB_PASSWORD ?? '',
       database: 'shengseerp', connect_timeout: 5,
     })`SELECT id FROM erp_contract LIMIT 1`.catch(() => [])) ?? [];
     if (ctr[0]?.id) {

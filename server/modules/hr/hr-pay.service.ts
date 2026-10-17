@@ -42,6 +42,7 @@ import {
 import { generateBizCode } from '@server/common/utils/biz-code';
 import { round2 } from '@server/common/utils/number';
 import { allocateByHours } from './payroll-allocation';
+import { employmentMonthIndex } from './payroll-month-index';
 import { VoucherHookService } from '@server/modules/voucher/voucher-hook.service';
 import { todayInShanghai } from '@server/common/utils/biz-date';
 import { previewPayroll, cumulativeAdditionalDeduction, monthlyAdditionalDeduction } from './payroll-engine';
@@ -192,7 +193,9 @@ export class HrPayService {
       );
     }
     const year = dto.period.slice(0, 4);
-    const monthIndex = Number(dto.period.slice(5, 7));
+    // 累计减除费用按"当年在本单位任职月份数"，不是自然月序号。
+    // 详见 payroll-month-index.ts 与 国家税务总局公告 2018 年第 61 号。
+    const monthIndex = employmentMonthIndex(dto.period, emp.hireDate);
     // D-04'：汇总本年前置已批/已提交工资单，按累计预扣法算本期个税
     const prior = await this.db
       .select({

@@ -87,17 +87,22 @@ function logicalName(fileName) {
 }
 
 const sizes = new Map();
+let total = 0;
 for (const entry of readdirSync(ASSETS)) {
   if (!entry.endsWith('.js')) continue;
   const full = join(ASSETS, entry);
   if (!statSync(full).isFile()) continue;
   const key = logicalName(entry);
-  // 同名归并时取最大值（正常只有一个，防御性写法）
   const bytes = statSync(full).size;
+  /*
+   * total 必须按**实际文件**求和：26 个 `index-<hash>.js` 去掉 hash 后
+   * 同名归并成一个 key，只取 max 会把 4,429 KB 的真实产物误报成 3,826 KB
+   * （P2-27）。逐 chunk 仍按逻辑名比较，避免 hash 变化造成噪音。
+   */
+  total += bytes;
+  // 同名归并时取最大值（正常只有一个，防御性写法）
   sizes.set(key, Math.max(sizes.get(key) ?? 0, bytes));
 }
-
-const total = [...sizes.values()].reduce((sum, n) => sum + n, 0);
 const current = {
   totalBytes: total,
   chunks: Object.fromEntries([...sizes.entries()].sort((a, b) => b[1] - a[1])),

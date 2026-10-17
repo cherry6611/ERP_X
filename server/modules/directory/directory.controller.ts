@@ -1,7 +1,7 @@
 import { Body, Controller, Get, Param, Post, Query, Req } from '@nestjs/common';
 import { IsArray, IsString } from 'class-validator';
 import type { Request } from 'express';
-import { CanCapability, NeedLogin } from '@server/platform';
+import { CanCapability, CanCapabilityRead, NeedLogin } from '@server/platform';
 import { DirectoryService } from './directory.service';
 
 class BatchUsersDto {
@@ -37,6 +37,7 @@ export class DirectoryController {
     return { data: { userList } };
   }
 
+  @CanCapability('self_service')
   @Post('users/batch')
   async batch(@Req() req: Request, @Body() dto: BatchUsersDto) {
     const userInfoMap = await this.directory.usersByIds(
@@ -58,7 +59,7 @@ export class DirectoryController {
     return { data: { departmentList } };
   }
 
-  @CanCapability('dashboard')
+  @CanCapabilityRead('dashboard')
   @Get('users/:id/profile')
   async profile(@Param('id') id: string) {
     return this.directory.profile(id);

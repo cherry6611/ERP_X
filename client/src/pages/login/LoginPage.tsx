@@ -5,6 +5,7 @@ import { Button } from '@client/src/components/ui/button';
 import { Input } from '@client/src/components/ui/input';
 import { Label } from '@client/src/components/ui/label';
 import { settingsApi } from '@client/src/api';
+import PasswordExpiredForm from './components/PasswordExpiredForm';
 import { withBasePath } from '@client/src/utils/base-path';
 
 /**
@@ -15,7 +16,9 @@ import { withBasePath } from '@client/src/utils/base-path';
  */
 function resolveRedirectTarget(raw: string | null): string {
   if (!raw) return '/';
-  return raw.startsWith('/') && !raw.startsWith('//') ? raw : '/';
+  // `/\evil.com` 会被浏览器规范化为 `//evil.com`，必须与 `//` 一起拦。
+  if (raw.startsWith('//') || raw.startsWith('/\\')) return '/';
+  return raw.startsWith('/') ? raw : '/';
 }
 
 export default function LoginPage() {
@@ -30,6 +33,25 @@ export default function LoginPage() {
   const [submitting, setSubmitting] = useState(false);
   const [brandName, setBrandName] = useState('晟笙 ERP');
   const [logoUrl, setLogoUrl] = useState<string | null>(null);
+  /*
+   * B-04：MFA 两步登录。
+   *   · verify：已绑定 MFA，密码通过后输入 6 位 TOTP；
+   *   · setup ：角色强制 MFA 但尚未绑定，登录后只能调 mfa/setup|confirm。
+   * 原前端完全没有这两个分支：后端返回 mfaRequired 时仍跳首页，形成登录循环。
+   */
+  const [mfaMode, setMfaMode] = useState<'none' | 'verify' | 'setup'>('none');
+  const [mfaToken, setMfaToken] = useState('');
+  const [mfaCode, setMfaCode] = useState('');
+  const [mfaSetup, setMfaSetup] = useState<{
+    secret: string;
+    otpauthUri: string;
+    recoveryCodes: string[];
+  } | null>(null);
+  const [mfaBusy, setMfaBusy] = useState(false);
+  /* P2-11：密码过期/首改 —— 登录被 403 拦截后在本页完成改密。 */
+  const [passwordChangeMode, setPasswordChangeMode] = useState(false);
+  const [newPassword, setNewPassword] = useState('');
+  const [passwordMfaCode, setPasswordMfaCode] = useState('');
 
   useEffect(() => {
     void settingsApi
@@ -68,8 +90,45 @@ export default function LoginPage() {
     return () => window.clearTimeout(t);
   }, [feishuOk]);
 
+  const submitPasswordChange = async (): Promise<void> => {
+    setError('');
+    setSubmitting(true);
+    try {
+      const resp = await fetch('/api/auth/password/change-expired', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          username: username.trim(),
+          currentPassword: password,
+          newPassword,
+          ...(passwordMfaCode.trim() ? { mfaCode: passwordMfaCode.trim() } : {}),
+        }),
+      });
+      if (!resp.ok) {
+        const body = (await resp.json().catch(() => ({}))) as {
+          error?: { message?: string };
+        };
+        setError(body.error?.message ?? '修改密码失败，请稍后重试');
+        return;
+      }
+      setPasswordChangeMode(false);
+      setPassword('');
+      setNewPassword('');
+      setInfo('密码已修改，请使用新密码重新登录');
+    } catch {
+      setError('修改密码失败，请检查网络后重试');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
   const onSubmit = async (event: FormEvent) => {
     event.preventDefault();
+    if (passwordChangeMode) {
+      await submitPasswordChange();
+      return;
+    }
     setError('');
     setSubmitting(true);
     try {
@@ -80,13 +139,59 @@ export default function LoginPage() {
         body: JSON.stringify({ username, password }),
       });
       if (!resp.ok) {
+        const body = (await resp.json().catch(() => ({}))) as {
+          error?: { code?: string; message?: string; details?: string };
+        };
+        const expiredPassword =
+          typeof body.error?.details === 'string'
+            ? body.error.details.includes('PASSWORD_CHANGE_REQUIRED')
+            : false;
+        if (
+          resp.status === 403 &&
+          (expiredPassword ||
+            body.error?.message?.includes('密码已过期') ||
+            body.error?.code === 'PASSWORD_CHANGE_REQUIRED')
+        ) {
+          setPasswordChangeMode(true);
+          setNewPassword('');
+          setPasswordMfaCode('');
+          setError('');
+          return;
+        }
         setError(
           resp.status === 401 || resp.status === 403
-            ? '账号或密码错误'
+            ? '账号或密码错误，或需要先完成 MFA 绑定'
             : resp.status === 429
               ? '尝试过于频繁，请稍后再试'
               : '登录失败，请稍后重试',
         );
+        return;
+      }
+      const data = (await resp.json()) as {
+        mfaRequired?: boolean;
+        mfaSetupRequired?: boolean;
+        mfaToken?: string;
+        user?: unknown;
+      };
+      if (data.mfaRequired && data.mfaToken) {
+        setMfaToken(data.mfaToken);
+        setMfaCode('');
+        setMfaMode('verify');
+        return;
+      }
+      if (data.mfaSetupRequired) {
+        // 强制 MFA 但未绑定：先拿密钥，用户确认一次动态码后完成绑定。
+        const setup = await fetch('/api/auth/mfa/setup', {
+          method: 'POST',
+          credentials: 'include',
+        });
+        if (!setup.ok) {
+          setError('无法开始 MFA 绑定，请稍后重试或联系管理员');
+          return;
+        }
+        setMfaSetup(await setup.json());
+        setMfaCode('');
+        setMfaMode('setup');
         return;
       }
       goAfterLogin();
@@ -94,6 +199,55 @@ export default function LoginPage() {
       setError('登录失败，请检查网络后重试');
     } finally {
       setSubmitting(false);
+    }
+  };
+
+  const verifyMfa = async () => {
+    setError('');
+    setMfaBusy(true);
+    try {
+      const resp = await fetch('/api/auth/mfa/verify', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mfaToken, code: mfaCode.trim() }),
+      });
+      if (!resp.ok) {
+        setError('动态验证码不正确或已过期');
+        return;
+      }
+      goAfterLogin();
+    } catch {
+      setError('验证失败，请检查网络后重试');
+    } finally {
+      setMfaBusy(false);
+    }
+  };
+
+  const confirmMfaSetup = async () => {
+    setError('');
+    setMfaBusy(true);
+    try {
+      const resp = await fetch('/api/auth/mfa/confirm', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ code: mfaCode.trim() }),
+      });
+      if (!resp.ok) {
+        setError('动态验证码不正确，请确认认证器时间后重试');
+        return;
+      }
+      // 绑定完成后撤销受限会话，强制重新登录走正常 MFA 验证。
+      await fetch('/api/auth/logout', { method: 'POST', credentials: 'include' });
+      setMfaMode('none');
+      setMfaSetup(null);
+      setMfaCode('');
+      setInfo('MFA 已绑定，请使用新动态码重新登录');
+    } catch {
+      setError('绑定失败，请检查网络后重试');
+    } finally {
+      setMfaBusy(false);
     }
   };
 
@@ -151,15 +305,37 @@ export default function LoginPage() {
             </p>
             {/* 同上：与 `PageShell` 的页面标题同字号（`text-2xl tracking-tight`） */}
             <h1 className="text-2xl font-semibold tracking-tight">
-              {bindInvite ? '绑定飞书' : '登录'}
+              {bindInvite
+                ? '绑定飞书'
+                : passwordChangeMode
+                  ? '修改密码'
+                  : mfaMode === 'verify'
+                    ? '双因素验证'
+                    : mfaMode === 'setup'
+                      ? '绑定双因素认证'
+                      : '登录'}
             </h1>
             <p className="mt-1 text-sm text-muted-foreground">
               {bindInvite
                 ? '管理员邀请您绑定飞书。请使用下方「飞书登录」完成代绑，无需输入密码。'
-                : '使用账号登录，或通过飞书免登'}
+                : passwordChangeMode
+                  ? '密码已过期或需首次修改。设置新密码后即可重新登录。'
+                  : mfaMode === 'verify'
+                    ? '请输入认证器中的 6 位动态验证码。'
+                    : mfaMode === 'setup'
+                      ? '当前角色要求启用 MFA。请用认证器扫码/录入密钥，并输入一次动态码完成绑定。'
+                      : '使用账号登录，或通过飞书免登'}
             </p>
           </div>
-          {bindInvite ? null : (
+          {bindInvite ? null : passwordChangeMode ? (
+            <PasswordExpiredForm
+              username={username}
+              newPassword={newPassword}
+              onNewPasswordChange={setNewPassword}
+              mfaCode={passwordMfaCode}
+              onMfaCodeChange={setPasswordMfaCode}
+            />
+          ) : mfaMode === 'none' ? (
             <>
               <div className="space-y-2">
                 <Label htmlFor="login-username">账号</Label>
@@ -202,6 +378,50 @@ export default function LoginPage() {
                 </div>
               </div>
             </>
+          ) : mfaMode === 'verify' ? (
+            <div className="space-y-2">
+              <Label htmlFor="login-mfa-code">动态验证码</Label>
+              <Input
+                id="login-mfa-code"
+                inputMode="numeric"
+                autoComplete="one-time-code"
+                maxLength={6}
+                autoFocus
+                value={mfaCode}
+                onChange={(event) => setMfaCode(event.target.value)}
+              />
+            </div>
+          ) : (
+            <div className="space-y-3 text-sm">
+              <p className="text-muted-foreground">
+                密钥（手动录入）：
+                <code className="ml-1 break-all rounded bg-muted px-1 py-0.5">
+                  {mfaSetup?.secret ?? '加载中…'}
+                </code>
+              </p>
+              {mfaSetup?.otpauthUri ? (
+                <p className="break-all text-xs text-muted-foreground">
+                  {mfaSetup.otpauthUri}
+                </p>
+              ) : null}
+              {mfaSetup?.recoveryCodes?.length ? (
+                <p className="text-xs text-muted-foreground">
+                  恢复码（只显示一次）：{mfaSetup.recoveryCodes.join('、')}
+                </p>
+              ) : null}
+              <div className="space-y-2">
+                <Label htmlFor="login-mfa-code">动态验证码</Label>
+                <Input
+                  id="login-mfa-code"
+                  inputMode="numeric"
+                  autoComplete="one-time-code"
+                  maxLength={6}
+                  autoFocus
+                  value={mfaCode}
+                  onChange={(event) => setMfaCode(event.target.value)}
+                />
+              </div>
+            </div>
           )}
           {info ? (
             <p className="text-sm text-muted-foreground" role="status">
@@ -215,7 +435,42 @@ export default function LoginPage() {
           >
             {error}
           </div>
-          {bindInvite ? null : (
+          {bindInvite ? null : passwordChangeMode ? (
+            <Button
+              className="w-full shadow-brand"
+              type="submit"
+              disabled={submitting || newPassword.length < 12}
+            >
+              {submitting ? (
+                <Loader2 className="size-4 animate-spin motion-reduce:animate-none" aria-hidden="true" />
+              ) : null}
+              修改密码并继续
+            </Button>
+          ) : mfaMode === 'verify' ? (
+            <Button
+              className="w-full shadow-brand"
+              type="button"
+              onClick={() => void verifyMfa()}
+              disabled={mfaBusy || mfaCode.trim().length !== 6}
+            >
+              {mfaBusy ? (
+                <Loader2 className="size-4 animate-spin motion-reduce:animate-none" aria-hidden="true" />
+              ) : null}
+              验证并登录
+            </Button>
+          ) : mfaMode === 'setup' ? (
+            <Button
+              className="w-full shadow-brand"
+              type="button"
+              onClick={() => void confirmMfaSetup()}
+              disabled={mfaBusy || mfaCode.trim().length !== 6 || !mfaSetup}
+            >
+              {mfaBusy ? (
+                <Loader2 className="size-4 animate-spin motion-reduce:animate-none" aria-hidden="true" />
+              ) : null}
+              完成绑定
+            </Button>
+          ) : (
             <Button className="w-full shadow-brand" type="submit" disabled={submitting}>
               {submitting ? (
                 <Loader2
@@ -226,14 +481,16 @@ export default function LoginPage() {
               登录
             </Button>
           )}
-          <Button
-            className="w-full"
-            type="button"
-            variant={bindInvite ? 'default' : 'outline'}
-            onClick={startFeishu}
-          >
-            {bindInvite ? '使用飞书完成绑定' : '飞书登录'}
-          </Button>
+          {(mfaMode === 'none' && !passwordChangeMode) || bindInvite ? (
+            <Button
+              className="w-full"
+              type="button"
+              variant={bindInvite ? 'default' : 'outline'}
+              onClick={startFeishu}
+            >
+              {bindInvite ? '使用飞书完成绑定' : '飞书登录'}
+            </Button>
+          ) : null}
         </form>
       </div>
     </div>

@@ -443,6 +443,7 @@ export class HrCoreController {
     return this.hrCoreService.listLeaveRequests(status, me.id);
   }
 
+  @CanCapability('self_service')
   @Post('leave-requests')
   async createLeaveRequest(
     @Req() req: Request,

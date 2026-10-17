@@ -253,6 +253,15 @@ export class YearEndService {
     userId: string;
   }): Promise<YearEndCloseResult> {
     this.assertPeriod(params.period);
+    /*
+     * 年终结转会写 fin_year_end_close，使该年度全部期间只读；只允许在 12 月执行。
+     * 原实现接受任意月份，6 月点“结转损益”会把 7-12 月一起锁死。
+     */
+    if (!params.period.endsWith('-12')) {
+      throw new BadRequestException(
+        `年终结转只能在会计年度 12 月执行；当前期间 ${params.period}`,
+      );
+    }
     const fiscalYear = this.yearOf(params.period);
     const preview = await this.previewCarryForward({
       period: params.period,

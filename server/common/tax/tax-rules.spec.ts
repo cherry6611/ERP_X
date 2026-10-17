@@ -53,9 +53,10 @@ describe('税率合法性', () => {
     for (const bad of [7, 17, -1, 1.5, 16]) expect(isVatRate(bad)).toBe(false);
   });
 
-  it('一般纳税人不得使用 1% / 3%', () => {
+  it('一般纳税人可用 3%（简易计税），但不得使用小规模 1%', () => {
     expect(rateAllowed('general', 1)).toBe(false);
-    expect(rateAllowed('general', 3)).toBe(false);
+    expect(rateAllowed('general', 3)).toBe(true);
+    expect(rateAllowed('general', 5)).toBe(true);
     expect(rateAllowed('general', 6)).toBe(true);
   });
 

@@ -4,7 +4,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { and, desc, eq, ne, sql, sum } from 'drizzle-orm';
+import { and, desc, eq, inArray, ne, sql, sum } from 'drizzle-orm';
 import type { ReconRowItem } from '@shared/api.interface';
 import { round2 } from '@server/common/utils/number';
 import {
@@ -244,7 +244,8 @@ export class ReconciliationService {
       .where(
         and(
           eq(finVoucher.period, period),
-          eq(finVoucher.status, 'posted'),
+          // 自动凭证生成后是 draft；只统计 posted 会让每次勾稽都显示差额。
+          inArray(finVoucher.status, ['posted', 'draft']),
           sql`(${finVoucherLine.accountCode} like '6001%' or ${finVoucherLine.accountCode} like '6051%')`,
         ),
       );
@@ -252,10 +253,19 @@ export class ReconciliationService {
       Number(ledgerRows[0]?.credit ?? 0) - Number(ledgerRows[0]?.debit ?? 0),
     );
 
-    // 收入台账：已确认收入合计（期间为 YYYY-MM）
+    // 收入台账：已确认收入合计（期间为 YYYY-MM），按合同税率反算不含税，
+    // 与总账 6001/6051（不含税）同口径；否则含税台账永远比总账多一个税额。
     const bookRows = await this.db
-      .select({ total: sum(erpProjectRevenue.amount) })
+      .select({
+        total: sql<string>`coalesce(sum(
+          case
+            when coalesce(${erpContract.taxRate}, 0) <= 0 then ${erpProjectRevenue.amount}
+            else ${erpProjectRevenue.amount} * 100 / (100 + ${erpContract.taxRate})
+          end
+        ), 0)`,
+      })
       .from(erpProjectRevenue)
+      .leftJoin(erpContract, eq(erpProjectRevenue.contractId, erpContract.id))
       .where(
         and(
           eq(erpProjectRevenue.period, period),

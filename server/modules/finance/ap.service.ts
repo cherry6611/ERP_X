@@ -278,11 +278,8 @@ export class ApService {
     if ((before.ap.status ?? 'pending') === 'voided') {
       throw new ConflictException('该应付已作废，请勿重复操作');
     }
-    await assertPeriodOpen(
-      this.db,
-      before.ap.dueDate ?? todayInShanghai(),
-      '作废应付'
-    );
+    // 与 createAp / 红字凭证日期同口径：校验业务日，不校验到期日。
+    await assertPeriodOpen(this.db, todayInShanghai(), '作废应付');
 
     await this.db.transaction(async (tx) => {
       // ① 行锁重读
@@ -352,7 +349,7 @@ export class ApService {
           amount,
           Number.isFinite(rate) ? rate : 0
         );
-        await this.voucherHookService.generateVoucherDraft({
+        const voucherStatus = await this.voucherHookService.generateVoucherDraft({
           sourceType: 'ap',
           sourceRef: `ap-void:${ap.code}`,
           voucherDate: todayInShanghai(),
@@ -360,6 +357,11 @@ export class ApService {
           lines,
           taxEntityId: before.supplierTaxEntityId ?? null,
         });
+        if (voucherStatus === 'failed') {
+          throw new BadRequestException(
+            '作废应付失败：红字凭证生成失败（当前期间可能已结账），请检查期间后重试',
+          );
+        }
       }
     });
 
@@ -625,6 +627,8 @@ export class ApService {
 
   /** 作废未核销付款。已审批付款同时冲回银存凭证。 */
   async voidPayment(id: string): Promise<PaymentItem> {
+    // 与付款登记同口径：作废会写当天的红字凭证，必须先过期间闸门。
+    await assertPeriodOpen(this.db, todayInShanghai(), '作废付款');
     // 修复 P0-4：部分核销后付款单仍是 approved（只有全额核销才置 paid），
     // 直接作废会释放额度占用却留下 erp_ap_writeoff 记录与 ap.paidAmount，
     // 于是可以再建一张付款单 → 重复付款、账实不符。
@@ -660,7 +664,7 @@ export class ApService {
     const row = pending[0];
     if (rows.length > 0) {
       const payAmount = Number(row.amount ?? 0);
-      await this.voucherHookService.generateVoucherDraft({
+      const voucherStatus = await this.voucherHookService.generateVoucherDraft({
         sourceType: 'payment',
         sourceRef: `payment-void:${row.code}`,
         voucherDate: todayInShanghai(),
@@ -668,6 +672,11 @@ export class ApService {
         lines: paymentVoidLines(payAmount),
         taxEntityId: await this.supplierTaxEntityId(row.supplierId),
       });
+      if (voucherStatus === 'failed') {
+        throw new BadRequestException(
+          '作废付款失败：红字凭证生成失败（当前期间可能已结账），请检查期间后重试',
+        );
+      }
     }
     const ap = await this.db
       .select({ code: erpApBill.code })

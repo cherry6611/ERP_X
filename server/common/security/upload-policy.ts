@@ -126,13 +126,16 @@ export function assertMagicMatchesExtension(
 
 /** 文本类格式校验：必须是可解码文本且不含 NUL 与常见脚本宿主特征 */
 function assertTextLikeContent(ext: string, buffer: Buffer): void {
-  const head = buffer.subarray(0, Math.min(buffer.length, 4096));
-  if (head.includes(0)) {
+  /*
+   * 必须扫**整个文件**：只扫前 4096 字节时，把 <script> 放到第 5KB
+   * 就能绕过（SVG 会被浏览器当 HTML 执行）。文件上限 20MB，全量解码可接受。
+   */
+  if (buffer.includes(0)) {
     throw new BadRequestException(
       `文件内容包含二进制数据，与扩展名 .${ext} 不符，已拒绝上传`
     );
   }
-  const text = head.toString('utf8');
+  const text = buffer.toString('utf8');
   if (text.includes('\uFFFD')) {
     throw new BadRequestException(
       `文件不是合法的 UTF-8 文本，与扩展名 .${ext} 不符，已拒绝上传`
@@ -145,7 +148,8 @@ function assertTextLikeContent(ext: string, buffer: Buffer): void {
       lower.includes('<script') ||
       /\son[a-z]+\s*=/.test(lower) ||
       lower.includes('javascript:') ||
-      lower.includes('<!entity')
+      lower.includes('<!entity') ||
+      lower.includes('<foreignobject')
     ) {
       throw new BadRequestException(
         'SVG 中包含脚本或事件处理器，出于安全考虑已拒绝上传'

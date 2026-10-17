@@ -46,7 +46,7 @@ const url =
     } catch {
       /* 忽略：回落到默认值 */
     }
-    return 'postgresql://erp:******@127.0.0.1:5433/shengseerp';
+    return 'postgresql://erp@127.0.0.1:5433/shengseerp';
   })();
 
 const postgres = (await import('postgres')).default;

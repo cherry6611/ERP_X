@@ -49,7 +49,7 @@ const APP = process.env.WT_APP ?? 'http://127.0.0.1:5273';
 const API = process.env.WT_API ?? 'http://127.0.0.1:3100';
 const API_PROXY = process.env.WT_API_PROXY ?? '';
 const USER = process.env.WT_USER ?? 'chengsheng@chengshengdata.cn';
-const PASS = process.env.WT_PASS ?? '******';
+const PASS = process.env.WT_PASS ?? '';
 const OUT = 'scripts/browser-walkthrough/out';
 const DOWNLOADS = resolve(OUT, 'downloads');
 /** ⚠️ 本 agent 独占 9365，其他 agent 用别的端口 */
@@ -643,7 +643,7 @@ async function main() {
     host: '127.0.0.1',
     port: 5433,
     user: 'erp',
-    password: '******',
+    password: process.env.DB_PASSWORD ?? '',
     database: 'shengseerp',
     connect_timeout: 5,
   });

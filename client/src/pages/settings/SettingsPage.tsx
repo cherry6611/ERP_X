@@ -23,6 +23,7 @@ import { CanCapability, CanCapabilityWrite } from '@client/src/platform/auth';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@client/src/components/ui/tabs';
 import DictionarySettings from './DictionarySettings';
 import ParameterSettings from './ParameterSettings';
+import FeishuBindCard from './components/FeishuBindCard';
 import * as settingsApi from '@client/src/api/settings';
 import * as feishuDriveApi from '@client/src/api/feishu-drive';
 import type { BrandConfig } from '@client/src/api/settings';
@@ -372,25 +373,7 @@ export default function SettingsPage() {
         </Card>
       </CanCapabilityWrite>
 
-      <Card>
-        <CardHeader>
-          <SectionTitle>我的飞书</SectionTitle>
-          <CardDescription>
-            系统禁止飞书扫码自动注册。绑定本人飞书后可使用飞书登录；管理员也可在 HR「身份管理」代绑。
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <Button
-            type="button"
-            variant="outline"
-            onClick={() => {
-              window.location.assign('/api/auth/feishu/bind');
-            }}
-          >
-            绑定飞书
-          </Button>
-        </CardContent>
-      </Card>
+      <FeishuBindCard />
     </div>
   );
 

@@ -170,7 +170,9 @@ jobs:
       # 而不是删门禁或调大容差。
       - name: bundle size ratchet
         run: npm run check:bundle-size
-      - run: npm audit --audit-level=high
+      # 用官方 registry：内网 npm 镜像的 audit 接口可能返回 NOT_IMPLEMENTED，
+      # 那会让门禁形同虚设（报告 P2-30）。当前 0 high / 0 critical。
+      - run: npm audit --omit=dev --audit-level=high --registry=https://registry.npmjs.org
       # D-09 / NFR-S8：审计日志只追加约束 + 校验和链。
       # 需要真实 PostgreSQL（触发器/异常码/SET LOCAL 语义与 pglite 不完全一致，
       # 迁移 dryrun 只证明"迁移能执行"，不能证明"约束真的生效"）。

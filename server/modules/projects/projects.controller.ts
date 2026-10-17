@@ -110,45 +110,55 @@ export class ProjectsController {
   @CanCapability('projects_write')
   @Patch(':id')
   async updateProject(
+    @Req() req: Request,
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: UpdateProjectDto
   ): Promise<Project> {
+    await this.projectAcl.assertEditable(id, actorFromRequest(req));
     return this.projectsService.updateProject(id, dto);
   }
 
   @CanCapability('projects_write')
   @Post(':id/status')
   async changeStatus(
+    @Req() req: Request,
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: ProjectStatusActionDto
   ): Promise<Project> {
+    await this.projectAcl.assertEditable(id, actorFromRequest(req));
     return this.projectsStatusService.changeStatus(id, dto.action, dto);
   }
 
   @CanCapability('projects_write')
   @Post(':id/milestones')
   async addMilestone(
+    @Req() req: Request,
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: CreateProjectMilestoneDto
   ): Promise<ProjectMilestone> {
+    await this.projectAcl.assertEditable(id, actorFromRequest(req));
     return this.projectsService.addMilestone(id, dto);
   }
 
   @CanCapability('projects_write')
   @Patch('milestones/:id')
   async updateMilestone(
+    @Req() req: Request,
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: ProjectMilestoneCloseDto
   ): Promise<ProjectMilestone> {
+    await this.projectAcl.assertEditableByMilestone(id, actorFromRequest(req));
     return this.projectsService.updateMilestone(id, dto);
   }
 
   @CanCapability('projects_write')
   @Post(':id/revenues')
   async createProjectRevenue(
+    @Req() req: Request,
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: CreateProjectRevenueDto
   ): Promise<ProjectRevenueItem> {
+    await this.projectAcl.assertEditable(id, actorFromRequest(req));
     return this.projectsService.createProjectRevenue(id, dto);
   }
 
@@ -166,53 +176,65 @@ export class ProjectsController {
   @CanCapability('projects_write')
   @Post(':id/deliverables')
   async createDeliverable(
+    @Req() req: Request,
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: CreateDeliverableDto
   ): Promise<DeliverableItem> {
+    await this.projectAcl.assertEditable(id, actorFromRequest(req));
     return this.deliverableService.create(id, dto);
   }
 
   @CanCapability('projects_write')
   @Patch('deliverables/:id')
   async updateDeliverable(
+    @Req() req: Request,
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: UpdateDeliverableDto
   ): Promise<DeliverableItem> {
+    await this.projectAcl.assertEditableByDeliverable(id, actorFromRequest(req));
     return this.deliverableService.update(id, dto);
   }
 
   @CanCapability('projects_write')
   @Post('deliverables/:id/submit')
   async submitDeliverable(
+    @Req() req: Request,
     @Param('id', ParseUUIDPipe) id: string
   ): Promise<DeliverableItem> {
+    await this.projectAcl.assertEditableByDeliverable(id, actorFromRequest(req));
     return this.deliverableService.submit(id);
   }
 
   @CanCapability('projects_write')
   @Post('deliverables/:id/accept')
   async acceptDeliverable(
+    @Req() req: Request,
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: AcceptDeliverableDto
   ): Promise<DeliverableItem> {
+    await this.projectAcl.assertEditableByDeliverable(id, actorFromRequest(req));
     return this.deliverableService.accept(id, dto);
   }
 
   @CanCapability('projects_write')
   @Post('deliverables/:id/return')
   async returnDeliverable(
+    @Req() req: Request,
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: ReturnDeliverableDto
   ): Promise<DeliverableItem> {
+    await this.projectAcl.assertEditableByDeliverable(id, actorFromRequest(req));
     return this.deliverableService.returnDeliverable(id, dto);
   }
 
   @CanCapability('projects_write')
   @Post('changes/:id/approve')
   async approveChange(
+    @Req() req: Request,
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: ApproveChangeDto
   ): Promise<ProjectChange> {
+    await this.projectAcl.assertEditableByChange(id, actorFromRequest(req));
     return this.projectsService.approveChange(id, dto.action);
   }
 
@@ -228,23 +250,31 @@ export class ProjectsController {
   @CanCapability('projects_write')
   @Post(':id/minutes')
   async createMinutes(
+    @Req() req: Request,
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: CreateProjectMinutesDto
   ): Promise<ProjectMinutes> {
+    await this.projectAcl.assertEditable(id, actorFromRequest(req));
     return this.minutesService.create(id, dto);
   }
 
   @CanCapability('projects_write')
   @Delete('minutes/:id')
-  async deleteMinutes(@Param('id', ParseUUIDPipe) id: string): Promise<void> {
+  async deleteMinutes(
+    @Req() req: Request,
+    @Param('id', ParseUUIDPipe) id: string,
+  ): Promise<void> {
+    await this.projectAcl.assertEditableByMinutes(id, actorFromRequest(req));
     return this.minutesService.remove(id);
   }
 
   @CanCapability('projects_write')
   @Post(':id/sync-drive')
   async syncProjectDrive(
+    @Req() req: Request,
     @Param('id', ParseUUIDPipe) id: string
   ): Promise<ProjectDriveSyncResult> {
+    await this.projectAcl.assertEditable(id, actorFromRequest(req));
     return this.projectArchiveService.syncProjectFiles(id);
   }
 

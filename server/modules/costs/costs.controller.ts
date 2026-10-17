@@ -9,7 +9,7 @@ import {
   Req,
 } from '@nestjs/common';
 import type { Request } from 'express';
-import { CanCapability, NeedLogin } from '@server/platform';
+import { CanCapability, CanCapabilityRead, NeedLogin } from '@server/platform';
 import { actorFromRequest } from '@server/common/auth/actor';
 import {
   IsDateString,
@@ -195,6 +195,7 @@ export class CostsController {
     return this.costsService.listTimesheets(projectId, actorFromRequest(req));
   }
 
+  @CanCapability('self_service')
   @Post('timesheets')
   async createTimesheet(
     @Req() req: Request,
@@ -203,6 +204,7 @@ export class CostsController {
     return this.costsService.createTimesheet(dto, actorFromRequest(req).userId);
   }
 
+  @CanCapability('self_service')
   @Post('timesheets/:id/action')
   async timesheetAction(
     @Req() req: Request,
@@ -212,6 +214,7 @@ export class CostsController {
     return this.costsService.timesheetAction(id, dto.action, actorFromRequest(req));
   }
 
+  @CanCapabilityRead('finance')
   @Get('labor-rates')
   async listLaborRates(): Promise<LaborRate[]> {
     return this.costsService.listLaborRates();

@@ -46,6 +46,7 @@ import { todayInShanghai } from '@server/common/utils/biz-date';
 import {
   decideInvoiceEdit,
   pickVoucherAffectingFields,
+  shouldRebuildInvoiceVoucher,
 } from './invoice-edit-guard';
 import { round2 } from '@server/common/utils/number';
 import type {
@@ -675,10 +676,15 @@ export class InvoiceService {
     const existing = await this.db
       .select({ id: erpInvoice.id })
       .from(erpInvoice)
-      .where(eq(erpInvoice.sourceRef, input.sourceRef))
+      .where(
+        and(
+          eq(erpInvoice.sourceRef, input.sourceRef),
+          ne(erpInvoice.status, 'voided'),
+        ),
+      )
       .limit(1);
     if (existing.length > 0) {
-      // 幂等：同一来源单据只出一张红字发票
+      // 幂等：同一来源单据只出一张有效红字发票；已作废的红字票可重开
       return this.getInvoiceItem(existing[0].id);
     }
     const split = splitTax(input.amount, input.taxRate);
@@ -805,6 +811,37 @@ export class InvoiceService {
       touchesVoucherFields: affecting.length > 0,
     });
     if (!decision.ok) throw new BadRequestException(decision.reason);
+    /*
+     * 已确认申报的期间不得再走"编辑"路径改金额/日期等影响凭证的字段。
+     *
+     * 作废路径已有 `isVatPeriodDeclared` 硬闸门（见 voidInvoice）；编辑路径
+     * 原先没有，导致"已申报 106,000 → PATCH 成 10,600"后底稿重算、已申报数
+     * 在系统里消失且无红字票/无留痕。要更正必须走红字发票，不能靠 PATCH。
+     */
+    if (affecting.length > 0) {
+      const periodToCheck = (
+        dto.invoiceDate ??
+        existing.invoiceDate ??
+        todayInShanghai()
+      ).slice(0, 7);
+      if (await isVatPeriodDeclared(this.db, periodToCheck)) {
+        throw new BadRequestException(
+          `发票所属期间 ${periodToCheck} 已确认申报，不能直接修改金额/税率/日期；` +
+            `请先开具红字发票，再重新登记`,
+        );
+      }
+    }
+    /*
+     * 方案 A：销项发票按设计不生成凭证。
+     *
+     * `voucherStatus === null` 对销项票是正常状态；若直接按 `decision.rebuildVoucher`
+     * 走重建分支，会把一张从未入账的销项票补成一张收入/销项税凭证，导致
+     * 收入、销项税、应收三重重复。这里必须按方向收口：只有进项票才允许重建。
+     */
+    const rebuildVoucher = shouldRebuildInvoiceVoucher(
+      dto.direction ?? existing.direction,
+      decision,
+    );
 
     /* ── 组装 patch（金额/税率变化必须重算价税分离）── */
     const patch: Partial<typeof erpInvoice.$inferInsert> = {};
@@ -834,11 +871,13 @@ export class InvoiceService {
     const mergedContractId =
       dto.contractId !== undefined ? dto.contractId : existing.contractId;
     let upstreamRate: number | undefined;
+    let upstreamContractAmount: number | undefined;
     let customerIdForRate: string | null = existing.customerId;
     let taxEntityIdForRate: string | null = existing.taxEntityId;
     if (mergedContractId) {
       const cRows = await this.db
         .select({
+          amount: erpContract.amount,
           taxRate: erpContract.taxRate,
           customerId: erpContract.customerId,
           taxEntityId: erpContract.taxEntityId,
@@ -848,10 +887,42 @@ export class InvoiceService {
         .limit(1);
       if (cRows.length === 0) throw new NotFoundException('合同不存在');
       upstreamRate = Number(cRows[0].taxRate ?? NaN);
+      upstreamContractAmount = Number(cRows[0].amount ?? 0);
       customerIdForRate = cRows[0].customerId;
       taxEntityIdForRate = cRows[0].taxEntityId;
     }
     const isPurchase = (dto.direction ?? existing.direction) === 'purchase';
+    /*
+     * 销售发票 PATCH 也必须复用「合同可开金额」校验（与 createSalesInvoice 同口径）。
+     * 否则可以先生成 1 元发票、再 PATCH 到 1,000,000，绕过开票上限。
+     * 计算时排除当前这张票，避免把它自己算成“已开票”。
+     */
+    if (
+      !isPurchase &&
+      mergedContractId &&
+      (dto.amount !== undefined || dto.contractId !== undefined)
+    ) {
+      const otherInvoices = await this.db
+        .select({ amount: erpInvoice.amount })
+        .from(erpInvoice)
+        .where(
+          and(
+            eq(erpInvoice.contractId, mergedContractId),
+            eq(erpInvoice.status, 'issued'),
+            eq(erpInvoice.direction, 'sales'),
+            ne(erpInvoice.id, id),
+          ),
+        );
+      const billable = computeBillable(
+        upstreamContractAmount ?? 0,
+        otherInvoices.map((row) => row.amount),
+      );
+      if (newAmount > billable + 0.01) {
+        throw new BadRequestException(
+          `开票金额 ${newAmount} 超过合同可开金额 ${billable}（合同额 − 其他已开销项发票）`,
+        );
+      }
+    }
     const resolved = await this.taxResolver.resolve({
       explicit: dto.taxRate,
       upstream: upstreamRate,
@@ -874,53 +945,61 @@ export class InvoiceService {
     patch.updatedAt = new Date();
     patch.updatedBy = userId;
 
-    /* ── 作废旧凭证（若需重建）→ 写发票 → 重建凭证 ── */
-    if (decision.rebuildVoucher && voucherStatus !== null) {
-      /*
-       * 先作废：`generateVoucherDraft` 视"非 voided 的同 sourceRef 凭证"为
-       * 已出凭证，不作废就不会生成新的一张。
-       */
-      await this.db
-        .update(finVoucher)
-        .set({ status: 'voided', updatedAt: new Date() })
-        .where(
-          and(
-            eq(finVoucher.sourceType, 'invoice'),
-            eq(finVoucher.sourceRef, `invoice:${existing.invoiceNo ?? existing.code}`),
-            ne(finVoucher.status, 'voided'),
-          ),
-        );
-    }
-
-    const updated = await this.db
-      .update(erpInvoice)
-      .set(patch)
-      .where(eq(erpInvoice.id, id))
-      .returning();
-    if (updated.length === 0) throw new NotFoundException('发票记录不存在');
-    const row = updated[0];
-
-    if (decision.rebuildVoucher) {
-      const finalAmount = Number(row.amount ?? 0);
-      const finalRate = Number(row.taxRate ?? 0);
-      const isPurchaseRow = (row.direction ?? 'sales') === 'purchase';
-      const lines = isPurchaseRow
-        ? inputIssueLines(finalAmount, finalRate)
-        : outputIssueLines(finalAmount, finalRate);
-      const vStatus = await this.voucherHookService.generateVoucherDraft({
-        sourceType: 'invoice',
-        sourceRef: `invoice:${row.invoiceNo ?? row.code}`,
-        voucherDate: row.invoiceDate ?? todayInShanghai(),
-        summary: `${isPurchaseRow ? '进项' : '销项'}发票 ${row.invoiceNo ?? row.code}`,
-        lines,
-        taxEntityId: row.taxEntityId ?? undefined,
-      });
-      if (vStatus !== 'created') {
-        this.logger.error(
-          `发票编辑后重建凭证 voucherStatus=${vStatus} invoice:${row.invoiceNo ?? row.code}`,
-        );
+    /* ── 作废旧凭证（若需重建）→ 写发票（同一事务）→ 重建凭证 ── */
+    let row: typeof erpInvoice.$inferSelect | undefined;
+    await this.db.transaction(async (tx) => {
+      if (rebuildVoucher && voucherStatus !== null) {
+        /*
+         * 先作废：`generateVoucherDraft` 视"非 voided 的同 sourceRef 凭证"为
+         * 已出凭证，不作废就不会生成新的一张。
+         */
+        await tx
+          .update(finVoucher)
+          .set({ status: 'voided', updatedAt: new Date() })
+          .where(
+            and(
+              eq(finVoucher.sourceType, 'invoice'),
+              eq(finVoucher.sourceRef, `invoice:${existing.invoiceNo ?? existing.code}`),
+              ne(finVoucher.status, 'voided'),
+            ),
+          );
       }
-    }
+
+      const updated = await tx
+        .update(erpInvoice)
+        .set(patch)
+        .where(eq(erpInvoice.id, id))
+        .returning();
+      if (updated.length === 0) throw new NotFoundException('发票记录不存在');
+      const updatedRow = updated[0];
+      row = updatedRow;
+
+      if (rebuildVoucher) {
+        const finalAmount = Number(updatedRow.amount ?? 0);
+        const finalRate = Number(updatedRow.taxRate ?? 0);
+        const isPurchaseRow = (updatedRow.direction ?? 'sales') === 'purchase';
+        const lines = isPurchaseRow
+          ? inputIssueLines(finalAmount, finalRate)
+          : outputIssueLines(finalAmount, finalRate);
+        const vStatus = await this.voucherHookService.generateVoucherDraft(
+          {
+            sourceType: 'invoice',
+            sourceRef: `invoice:${updatedRow.invoiceNo ?? updatedRow.code}`,
+            voucherDate: updatedRow.invoiceDate ?? todayInShanghai(),
+            summary: `${isPurchaseRow ? '进项' : '销项'}发票 ${updatedRow.invoiceNo ?? updatedRow.code}`,
+            lines,
+            taxEntityId: updatedRow.taxEntityId ?? undefined,
+          },
+          tx as unknown as PostgresJsDatabase,
+        );
+        if (vStatus !== 'created') {
+          throw new BadRequestException(
+            '发票已更新，但重建凭证失败；本次修改已回滚，请检查期间/科目后重试',
+          );
+        }
+      }
+    });
+    if (!row) throw new NotFoundException('发票记录不存在');
 
     return this.getInvoiceItem(id);
   }

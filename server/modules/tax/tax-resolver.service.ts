@@ -67,10 +67,19 @@ export class TaxResolverService {
     }
     if (!isVatRate(rate)) {
       throw new BadRequestException(
-        `非法税率 ${rate}，允许值为 0/1/3/6/9/13`
+        `非法税率 ${rate}，允许值为 0/1/3/5/6/9/13`
       );
     }
-    if (entity && !rateAllowed(entity.taxpayerType as TaxpayerType, rate)) {
+    /*
+     * 只有“本主体自行选择”的税率才按本主体纳税人类型校验。
+     * `counterparty` 来自客户/供应商档案：一般纳税人收到小规模供应商的 3% 专票
+     * 是合法场景，不能拿本主体的档位去拒收。
+     */
+    if (
+      entity &&
+      source !== 'counterparty' &&
+      !rateAllowed(entity.taxpayerType as TaxpayerType, rate)
+    ) {
       throw new BadRequestException('税率与纳税主体类型不匹配');
     }
     return { rate, source, taxEntityId: entity?.id ?? null };

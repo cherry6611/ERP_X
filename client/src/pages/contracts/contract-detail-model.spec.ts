@@ -94,7 +94,7 @@ function entity(overrides: Partial<TaxEntity> = {}): TaxEntity {
   };
 }
 
-/** 一般纳税人主体（`ALLOWED_RATES.general = [0,5,6,9,13]`，**不含 1/3**） */
+/** 一般纳税人主体（`ALLOWED_RATES.general = [0,3,5,6,9,13]`，**不含 1**） */
 const GENERAL = entity();
 /** 小规模主体（`ALLOWED_RATES.small = [0,1,3,5]`，**不含 6**） */
 const SMALL = entity({
@@ -694,8 +694,8 @@ describe('明细弹窗的主体选择（pickTaxEntity）', () => {
 /* ── 明细默认税率（本轮修复点） ──────────────────────────────────────────── */
 
 describe('明细默认税率（itemRateOptions / resolveItemTaxRate）', () => {
-  it('下拉可选项按主体类型给出（小规模没有 6%、一般纳税人没有 1%/3%）', () => {
-    expect(itemRateOptions([GENERAL], 'te-general')).toEqual([0, 5, 6, 9, 13]);
+  it('下拉可选项按主体类型给出（小规模没有 6%、一般纳税人没有 1%）', () => {
+    expect(itemRateOptions([GENERAL], 'te-general')).toEqual([0, 3, 5, 6, 9, 13]);
     expect(itemRateOptions([SMALL], 'te-small')).toEqual([0, 1, 3, 5]);
     // 主体列表为空 → 给全字典（原实现即 `resolveRateOptions(undefined)`）
     expect(itemRateOptions([], undefined)).toEqual([...VAT_RATES]);
@@ -715,7 +715,9 @@ describe('明细默认税率（itemRateOptions / resolveItemTaxRate）', () => {
      * 直接放进 `taxRate`，所以下面两个 `null` 就是当年真正被送进请求体的值。
      */
     expect(coerceTaxRate(6, SMALL)).toBeNull();
-    expect(coerceTaxRate(3, GENERAL)).toBeNull();
+    // 一般纳税人可用 3%（简易计税）；1% 仍不适用
+    expect(coerceTaxRate(1, GENERAL)).toBeNull();
+    expect(coerceTaxRate(3, GENERAL)).toBe(3);
     expect(coerceTaxRate(6, GENERAL)).toBe(6);
     // 修复后的入口不再把这个 null 交出去
     expect(resolveItemTaxRate(6, [SMALL], 'te-small')).toBe(5);
@@ -735,10 +737,10 @@ describe('明细默认税率（itemRateOptions / resolveItemTaxRate）', () => {
       defaultTaxRate(SMALL),
     );
     expect(resolveItemTaxRate(6, [SMALL], 'te-small')).toBe(5);
-    expect(resolveItemTaxRate(3, [GENERAL], 'te-general')).toBe(
+    expect(resolveItemTaxRate(1, [GENERAL], 'te-general')).toBe(
       defaultTaxRate(GENERAL),
     );
-    expect(resolveItemTaxRate(3, [GENERAL], 'te-general')).not.toBeNull();
+    expect(resolveItemTaxRate(1, [GENERAL], 'te-general')).not.toBeNull();
     // 非法（不在全量档位内）的税率同样被兜底，例如 7 或负数
     expect(resolveItemTaxRate(7, [GENERAL], 'te-general')).not.toBeNull();
     expect(resolveItemTaxRate(-1, [], undefined)).toBe(defaultTaxRate(null));

@@ -32,6 +32,15 @@ export const ROLE_LABELS: Record<RoleCode, string> = {
 /** 侧栏/页面级能力码 */
 export type Capability =
   | 'dashboard'
+  /**
+   * 登录即用的自助写能力（改密/绑定 MFA/撤销自己的会话/附件/工时/请假/
+   * 补卡/采购申请/资产变更/用户姓名解析/站内信已读）。
+   *
+   * 这些端点**不是业务域写权限**：普通员工也必须能调用；真正的对象级校验
+   * 在 service 层（只能操作本人/本人单据）。默认 `_default: 'rw'` 表示
+   * 任何登录用户（含无角色用户）都具备；不要再给具体角色单独配。
+   */
+  | 'self_service'
   | 'crm'
   | 'crm_write'
   | 'tax_entity'
@@ -74,6 +83,8 @@ type Access = 'rw' | 'r' | '-';
 
 const MATRIX: Record<Capability, Partial<Record<RoleCode, Access>> & { _default?: Access }> = {
   dashboard: { admin: 'rw', _default: 'r' },
+  // 登录即用的自助端点：所有登录用户（含无角色）都可写；对象级校验在 service。
+  self_service: { _default: 'rw' },
   crm: {
     admin: 'rw',
     finance_viewer: 'r',
@@ -229,6 +240,14 @@ export function hasCapability(roles: string[], capability: Capability): boolean 
 
 export function hasWriteCapability(roles: string[], capability: Capability): boolean {
   if (roles.includes('admin')) return true;
+  /*
+   * 无角色但仍登录的用户：只认 `_default`。
+   * 之前这里直接返回 false，导致 `self_service`（_default: rw）对
+   * 无角色账号（含 bootstrap 前/未分配角色的员工）也失效。
+   */
+  if (roles.length === 0) {
+    return MATRIX[capability]?._default === 'rw';
+  }
   for (const role of roles) {
     if (roleAccess(capability, role) === 'rw') return true;
   }

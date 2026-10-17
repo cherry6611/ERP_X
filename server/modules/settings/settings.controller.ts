@@ -60,6 +60,12 @@ export class SettingsController {
     }
     res.setHeader('Content-Type', file.mime || 'image/png');
     res.setHeader('Cache-Control', 'public, max-age=300');
+    // 即便上传校验被绕过，也不能让同源 SVG 执行脚本（报告 P3-1）。
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader(
+      'Content-Security-Policy',
+      "default-src 'none'; style-src 'unsafe-inline'; sandbox",
+    );
     createReadStream(file.storagePath).pipe(res);
   }
 

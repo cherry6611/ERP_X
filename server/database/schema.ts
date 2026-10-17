@@ -1673,7 +1673,9 @@ export const erpInvoice = pgTable("erp_invoice", {
   // P0-C/P0-D：红字发票幂等（只约束 amount < 0 的行）
   uniqueIndex("uq_erp_invoice_red_letter_source")
     .on(table.sourceRef)
-    .where(sql`${table.amount} < 0 AND ${table.sourceRef} IS NOT NULL`),
+    .where(
+      sql`${table.amount} < 0 AND ${table.sourceRef} IS NOT NULL AND coalesce(${table.status}, '') <> 'voided'`,
+    ),
   // T8：发票税率法定档位（与迁移 chk_invoice_tax_rate 一致）
   check("chk_invoice_tax_rate", sql`${table.taxRate} IS NULL OR ${table.taxRate} IN (0, 1, 3, 5, 6, 9, 13)`),
 ]);
@@ -1769,7 +1771,9 @@ export const erpApBill = pgTable("erp_ap_bill", {
   index("idx_erp_ap_bill_supplier").on(table.supplierId),
   uniqueIndex("uq_erp_ap_bill_source_ref")
     .on(table.sourceRef)
-    .where(sql`${table.sourceRef} IS NOT NULL`),
+    .where(
+      sql`${table.sourceRef} IS NOT NULL AND coalesce(${table.status}, '') <> 'voided'`,
+    ),
   // S5：与 erp_ar 同因（现金流预测按 status + due_date 过滤，此前无索引）
   index("idx_erp_ap_bill_status_due_date").on(table.status, table.dueDate),
 ]);
@@ -1877,7 +1881,9 @@ export const erpAr = pgTable("erp_ar", {
   index("idx_erp_ar_contract").on(table.contractId),
   uniqueIndex("uq_erp_ar_source_ref")
     .on(table.sourceRef)
-    .where(sql`${table.sourceRef} IS NOT NULL`),
+    .where(
+      sql`${table.sourceRef} IS NOT NULL AND coalesce(${table.status}, '') <> 'voided'`,
+    ),
   // S5：催款 cron（`ar-reminder.automation.ts` 每日 `status IN ('open','partial')
   // AND due_date <= horizon`）与现金流预测（`cash-flow.service.ts`）此前无索引可用，
   // 数据量上来后每日全表扫描。列序 `(status, due_date)` 与两类查询的过滤顺序一致。

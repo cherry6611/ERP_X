@@ -10,7 +10,7 @@ import {
   DRIZZLE_DATABASE,
   type PostgresJsDatabase,
 } from '@server/platform';
-import { and, eq, gte, inArray, lt } from 'drizzle-orm';
+import { and, eq, gte, inArray, lt, ne } from 'drizzle-orm';
 import {
   erpApBill,
   erpLaborRate,
@@ -118,7 +118,12 @@ export class VendorSettlementService {
     const existing = await this.db
       .select({ id: erpApBill.id })
       .from(erpApBill)
-      .where(eq(erpApBill.sourceRef, computation.sourceRef))
+      .where(
+        and(
+          eq(erpApBill.sourceRef, computation.sourceRef),
+          ne(erpApBill.status, 'voided'),
+        ),
+      )
       .limit(1);
     return {
       supplierId: effectiveSupplierId,
@@ -167,7 +172,12 @@ export class VendorSettlementService {
       const existing = await tx
         .select({ id: erpApBill.id })
         .from(erpApBill)
-        .where(eq(erpApBill.sourceRef, computation.sourceRef))
+        .where(
+        and(
+          eq(erpApBill.sourceRef, computation.sourceRef),
+          ne(erpApBill.status, 'voided'),
+        ),
+      )
         .limit(1)
         .for('update');
       if (existing.length > 0) {

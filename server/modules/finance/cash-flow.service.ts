@@ -164,7 +164,9 @@ export class CashFlowService {
     const periodRows = await this.db
       .select({ period: hrPayroll.period })
       .from(hrPayroll)
-      .where(eq(hrPayroll.status, 'approved'))
+      // 已发放（paid）说明该月工资标准已确认，仍应作为未来月份的固定流出参考；
+      // 只查 approved 会在工资发放后把整块工资流出从预测里抹掉。
+      .where(inArray(hrPayroll.status, ['approved', 'paid']))
       .orderBy(desc(hrPayroll.period))
       .limit(1);
     const period: string | null = periodRows[0]?.period ?? null;
@@ -177,7 +179,7 @@ export class CashFlowService {
       .from(hrPayroll)
       .where(
         and(
-          eq(hrPayroll.status, 'approved'),
+          inArray(hrPayroll.status, ['approved', 'paid']),
           eq(hrPayroll.period, period)
         )
       );

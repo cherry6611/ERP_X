@@ -142,15 +142,15 @@ async function bootstrap() {
     bodyParser: false,
     ...(logDir ? { logger: new JsonFileLogger(logDir) } : {}),
   });
-  // 修复 P1-1：部署在 Nginx / SLB / CDN 之后时，若不设 trust proxy，
-  // 所有请求的 req.ip 都是网关地址 —— 全局限速会把全体用户一起封掉，
-  // 登录限速也形同虚设。跳数由 TRUST_PROXY_HOPS 控制（默认 1 层）。
-  // A7：未显式关闭时默认信任 1 层反代（可用 TRUST_PROXY_HOPS=0 关闭）
+  /*
+   * 部署在 Nginx / SLB / CDN 之后时，若不设 trust proxy，req.ip 全是网关地址，
+   * 全局限速会把所有用户一起封掉；但**直接暴露 3000 时默认信任 1 层**会让任意
+   * 客户端用 X-Forwarded-For 伪造 IP，绕过登录限速与审计（P2-10）。
+   * 因此默认 0 层，只有显式设置 TRUST_PROXY_HOPS=1（或更多）才信任反代。
+   */
   const trustHopsRaw = process.env.TRUST_PROXY_HOPS;
-  if (trustHopsRaw !== '0' && trustHopsRaw !== 'false') {
-    const hops = trustHopsRaw ? Number(trustHopsRaw) : 1;
-    app.set('trust proxy', Number.isFinite(hops) && hops > 0 ? hops : 1);
-  }
+  const hops = trustHopsRaw ? Number(trustHopsRaw) : 0;
+  app.set('trust proxy', Number.isFinite(hops) && hops > 0 ? hops : 0);
   // 10MB 文件的 base64 约 14MB，限制略高于该值，避免把合法上传挡在门外
   app.use(json({ limit: '16mb' }));
   app.use(urlencoded({ extended: true, limit: '16mb' }));

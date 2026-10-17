@@ -1,7 +1,6 @@
 import { Controller, Get, Query, Req } from '@nestjs/common';
 import type { Request } from 'express';
-import { NeedLogin } from '@server/platform';
-import { CanCapability } from '@server/modules/integrations/integration-authz';
+import { CanCapabilityRead, NeedLogin } from '@server/platform';
 import { actorFromRequest } from '@server/common/auth/actor';
 import { TasksService } from './tasks.service';
 import type {
@@ -24,7 +23,7 @@ export class TasksController {
   constructor(private readonly tasksService: TasksService) {}
 
   /** 聚合待办：并行查询各模块"待我处理"，统一模型返回，支持按类型/紧急度排序 */
-  @CanCapability('dashboard')
+  @CanCapabilityRead('dashboard')
   @Get('my')
   async listMy(
     @Req() req: Request,
@@ -52,7 +51,7 @@ export class TasksController {
   }
 
   /** 角标数量：与列表口径完全一致（total 与 /api/tasks/my 的 total 相同） */
-  @CanCapability('dashboard')
+  @CanCapabilityRead('dashboard')
   @Get('summary')
   async summary(@Req() req: Request): Promise<TaskSummary> {
     const actor = actorFromRequest(req);

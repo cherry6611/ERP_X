@@ -4,6 +4,11 @@ export interface SessionClaims {
   userId: string;
   userName: string;
   roles: string[];
+  /**
+   * 强制 MFA 但尚未绑定的用户：会话只允许访问 mfa/setup|confirm|status、
+   * logout、me，其余接口由 RolesGuard 拒绝。绑定完成后必须重新登录。
+   */
+  mfaPending?: boolean;
   exp: number;
   jti: string;
 }

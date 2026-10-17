@@ -8,7 +8,10 @@ import {
   Patch,
   Post,
   Query,
+  Req,
 } from '@nestjs/common';
+import type { Request } from 'express';
+import { actorFromRequest } from '@server/common/auth/actor';
 import { CanCapability, NeedLogin } from '@server/platform';
 import { IsIn } from 'class-validator';
 import { MasterDataService } from './master-data.service';
@@ -148,8 +151,8 @@ export class MasterDataController {
   }
 
   @Get('employees')
-  async listEmployees(): Promise<Employee[]> {
-    return this.masterDataService.listEmployees();
+  async listEmployees(@Req() req: Request): Promise<Employee[]> {
+    return this.masterDataService.listEmployees(actorFromRequest(req));
   }
 }
 

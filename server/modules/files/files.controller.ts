@@ -14,7 +14,7 @@ import {
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import type { Request, Response } from 'express';
-import { NeedLogin } from '@server/platform';
+import { CanCapability, NeedLogin } from '@server/platform';
 import { FilesService } from './files.service';
 
 @NeedLogin()
@@ -26,6 +26,7 @@ export class FilesController {
    * B-06 ②：上传。带 `parentFileId` 时创建新版本（同一版本链只保留一个 is_latest）。
    * 响应回传 `version / scanStatus / scanDetail`，前端需展示"未扫描/扫描失败"提示。
    */
+  @CanCapability('self_service')
   @Post('upload')
   @UseInterceptors(
     FileInterceptor('file', { limits: { fileSize: 20 * 1024 * 1024 } })

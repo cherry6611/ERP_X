@@ -4,6 +4,7 @@ import {
   httpMethodAccess,
 } from './guards';
 import { ROUTE_CAPABILITY_RULES } from '@server/common/auth/route-capability';
+import { hasWriteCapability } from '@shared/rbac';
 
 describe('allowsRequest', () => {
   it('lets public routes through', () => {
@@ -239,5 +240,19 @@ describe('S1 权限守卫兜底（不得 fail-open）', () => {
         requiredCapability: requirement ?? undefined,
       })
     ).toBe('forbidden');
+  });
+});
+
+describe('self_service：登录即用的自助能力', () => {
+  it('任何角色（含无角色）都具备写权限', () => {
+    expect(hasWriteCapability(['admin'], 'self_service')).toBe(true);
+    expect(hasWriteCapability(['finance_viewer'], 'self_service')).toBe(true);
+    expect(hasWriteCapability(['hr_manager'], 'self_service')).toBe(true);
+    expect(hasWriteCapability([], 'self_service')).toBe(true);
+  });
+
+  it('不会把 dashboard 的默认读权限误当成写权限', () => {
+    expect(hasWriteCapability(['finance_viewer'], 'dashboard')).toBe(false);
+    expect(hasWriteCapability([], 'dashboard')).toBe(false);
   });
 });

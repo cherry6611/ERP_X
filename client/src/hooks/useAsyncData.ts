@@ -57,24 +57,15 @@ export function useAsyncData<T>(loader: () => Promise<T>, deps: unknown[] = []) 
   callSeqRef.current += 1;
   const depsKey = depsKeyOf(deps, callSeqRef.current);
   /*
-   * `reloadSeq`：手动重载计数器。**每个"应取数"事件 +1**，并被折进 `depsKey`
-   * 参与对比 —— 于是"依赖变化"与"手动重载"走**同一条**取数路径，
-   * 不需要两个 effect，也不会出现"两条路径各取一次"。
+   * `fetchKey` 是"**依赖变化时该不该重新取数**"的唯一判据：依赖内容的序列化键。
    *
-   * 它是 state 而不是 ref：`reload()` 必须让组件重渲染（否则只取数不更新 UI），
-   * 而 state 变化正是重渲染的触发器。
+   * 手动 `reload()` 不再推进一个额外的 seq —— 原实现同时 `setReloadSeq(n+1)`
+   * 和 `runLoad()`，而 seq 变化又会触发下面的 effect，于是每次刷新**发两次请求**，
+   * 且 `await reload()` 可能在"被 loadId 丢弃的那次请求"结束时 resolve。
+   * 现在 `reload()` 只调用 `runLoad()`：一次刷新 = 一次请求，await 语义成立；
+   * effect 仍负责依赖变化触发的取数。
    */
-  const [reloadSeq, setReloadSeq] = useState(0);
-
-  /*
-   * `fetchKey` 是"**这一次渲染该不该取数**"的唯一判据：
-   * 依赖内容的序列化键 + 手动重载计数器。
-   *
-   * 它必须是**每次渲染都重算出来的原始值**（不是 ref、也不是 `useMemo` 的返回值）——
-   * 只有这样 `useEffect` 才有一个 lint 认可且语义直白的依赖项：
-   * "key 变了就取数"。没有中间层，也就没有"靠某个不变量成立"的隐含假设。
-   */
-  const fetchKey = `${depsKey}\u0000seq${reloadSeq}`;
+  const fetchKey = depsKey;
 
   /*
    * F9（§5.8）：取数触发**由 effect 直接声明**，不再靠一个中间计数器间接驱动。
@@ -150,13 +141,12 @@ export function useAsyncData<T>(loader: () => Promise<T>, deps: unknown[] = []) 
    * **立即 resolve 而数据还没到**，后续读到的仍是旧值 —— 而且不会报错，
    * 只是结果悄悄不对。这是比多渲染一次严重得多的代价。
    *
-   * 因此这里刻意**同步**调用 `runLoad()`：既立刻取数并返回可 await 的 Promise，
-   * 又推进 `reloadSeq` 让 `fetchKey` 变化（保证 UI 更新且下次依赖变化仍会取数）。
-   * 并发的两次 `reload()` 由 `runLoad` 内部未被 await 的每次调用直接覆盖 ——
-   * 与改动前行为一致。
+   * 因此这里**同步**调用 `runLoad()`：立刻取数并返回可 await 的 Promise。
+   * 不再额外推进 seq —— 那会让 effect 再取一次（每次刷新两个请求），
+   * 且 await 落到被丢弃的那次请求上。并发的两次 `reload()` 由 `runLoad`
+   * 内部的 loadId 覆盖，只有最后一次能写回。
    */
   const reload = useCallback(async (): Promise<void> => {
-    setReloadSeq((n) => n + 1);
     await runLoad();
   }, [runLoad]);
 

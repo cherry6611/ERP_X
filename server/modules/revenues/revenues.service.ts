@@ -9,7 +9,7 @@ import {
   DRIZZLE_DATABASE,
   type PostgresJsDatabase,
 } from '@server/platform';
-import { and, desc, eq, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, sql } from 'drizzle-orm';
 import {
   erpContract,
   erpInvoice,
@@ -22,6 +22,7 @@ import { unwrapRows } from '@server/common/utils/rows';
 import { ArService } from '@server/modules/finance/ar.service';
 import { InvoiceService } from '@server/modules/finance/invoice.service';
 import { DataScopeService } from '@server/common/auth/data-scope.service';
+import { ProjectAclService } from '@server/modules/projects/project-acl.service';
 import type { RequestActor } from '@server/common/auth/actor';
 import { TaxResolverService } from '@server/modules/tax/tax-resolver.service';
 import { VoucherHookService } from '@server/modules/voucher/voucher-hook.service';
@@ -55,6 +56,7 @@ export class RevenuesService {
     private readonly voucherHookService: VoucherHookService,
     private readonly taxResolver: TaxResolverService,
     private readonly dataScope: DataScopeService,
+    private readonly projectAcl: ProjectAclService,
     // P0-D：收入冲回/调整同步登记红字发票（增值税申报口径随账务一并冲减）
     private readonly invoiceService: InvoiceService
   ) {}
@@ -150,7 +152,19 @@ export class RevenuesService {
       const scope = await this.dataScope.conditionFor('revenue', actor, {
         primary: erpProjectRevenue.projectId,
       });
-      if (scope) conditions.push(scope);
+      if (scope) {
+        conditions.push(scope);
+      } else {
+        // revenue 未配置 sys_data_scope 时不能默认 all：回退项目可见集。
+        const visibleIds = await this.projectAcl.visibleProjectIds(actor);
+        if (visibleIds) {
+          conditions.push(
+            visibleIds.length > 0
+              ? inArray(erpProjectRevenue.projectId, visibleIds)
+              : sql`1 = 0`,
+          );
+        }
+      }
     }
     const rows = await this.db
       .select({ revenue: erpProjectRevenue, projectName: erpProject.name })

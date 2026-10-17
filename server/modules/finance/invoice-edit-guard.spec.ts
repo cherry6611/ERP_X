@@ -2,6 +2,7 @@ import {
   VOUCHER_AFFECTING_FIELDS,
   decideInvoiceEdit,
   pickVoucherAffectingFields,
+  shouldRebuildInvoiceVoucher,
 } from './invoice-edit-guard';
 
 /**
@@ -123,5 +124,37 @@ describe('pickVoucherAffectingFields', () => {
         'taxRate',
       ].sort(),
     );
+  });
+});
+
+describe('shouldRebuildInvoiceVoucher：销项票不得补凭证', () => {
+  const rebuildable = {
+    ok: true as const,
+    rebuildVoucher: true,
+  };
+
+  it('进项票 + 无凭证/草稿/作废 → 允许重建（补凭证是设计内行为）', () => {
+    expect(shouldRebuildInvoiceVoucher('purchase', rebuildable)).toBe(true);
+  });
+
+  it('销项票 + 无凭证 → 不重建（方案 A：收入确认是唯一收入入口）', () => {
+    expect(shouldRebuildInvoiceVoucher('sales', rebuildable)).toBe(false);
+    expect(shouldRebuildInvoiceVoucher(null, rebuildable)).toBe(false);
+    expect(shouldRebuildInvoiceVoucher(undefined, rebuildable)).toBe(false);
+  });
+
+  it('无需重建 / 不可编辑时一律 false', () => {
+    expect(
+      shouldRebuildInvoiceVoucher('purchase', {
+        ok: true,
+        rebuildVoucher: false,
+      }),
+    ).toBe(false);
+    expect(
+      shouldRebuildInvoiceVoucher('purchase', {
+        ok: false,
+        reason: 'x',
+      }),
+    ).toBe(false);
   });
 });

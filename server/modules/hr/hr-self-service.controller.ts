@@ -82,6 +82,7 @@ export class HrSelfServiceController {
     return this.hrSelfService.listAmendments(status, actorFromRequest(req));
   }
 
+  @CanCapability('self_service')
   @Post('attendance-amendments')
   async createAmendment(
     @Req() req: Request,

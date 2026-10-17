@@ -8,7 +8,7 @@ import {
   Query,
   Req,
 } from '@nestjs/common';
-import { CanCapability, NeedLogin } from '@server/platform';
+import { CanCapability, CanCapabilityRead, NeedLogin } from '@server/platform';
 import type { Request } from 'express';
 import {
   IsBoolean,
@@ -194,7 +194,7 @@ export class FinanceReportsController {
 
   /* ========== A-01 / A-02 法定财务报表 ========== */
 
-  @CanCapability('finance')
+  @CanCapabilityRead('finance')
   @Get('reports/balance-sheet')
   async getBalanceSheet(
     @Req() req: Request,
@@ -209,7 +209,7 @@ export class FinanceReportsController {
     });
   }
 
-  @CanCapability('finance')
+  @CanCapabilityRead('finance')
   @Get('reports/income-statement')
   async getIncomeStatement(
     @Req() req: Request,
@@ -224,7 +224,7 @@ export class FinanceReportsController {
     });
   }
 
-  @CanCapability('finance')
+  @CanCapabilityRead('finance')
   @Get('reports/cash-flow')
   async getCashFlow(
     @Req() req: Request,
@@ -244,7 +244,7 @@ export class FinanceReportsController {
    * 注意路由顺序——必须排在 `reports/templates/:reportCode` 之前，
    * 否则 `templates` 会被当作 reportCode 匹配（Nest 按注册顺序匹配）。
    */
-  @CanCapability('finance')
+  @CanCapabilityRead('finance')
   @Get('reports/:reportCode')
   async getReport(
     @Param('reportCode') reportCode: string,
@@ -266,7 +266,7 @@ export class FinanceReportsController {
   }
 
   /** 报表模板（口径评审与前端分组小标题用） */
-  @CanCapability('finance')
+  @CanCapabilityRead('finance')
   @Get('reports/templates/:reportCode')
   listTemplates(@Param('reportCode') reportCode: string) {
     return this.reportsService.listTemplates(reportCode);
@@ -278,7 +278,7 @@ export class FinanceReportsController {
    * 打印本身走纯前端（react-to-print + @media print），后端只提供数据包，
    * 避免引入服务端渲染 PDF 的运维成本（需求书 §2.1 A-12 需求细化①）。
    */
-  @CanCapability('finance')
+  @CanCapabilityRead('finance')
   @Get('reports/:reportCode/print')
   async getReportPrintPack(
     @Param('reportCode') reportCode: string,
@@ -302,7 +302,7 @@ export class FinanceReportsController {
 
   /* ========== A-03 账簿 ========== */
 
-  @CanCapability('finance')
+  @CanCapabilityRead('finance')
   @Get('ledgers/account-balance')
   async getAccountBalance(
     @Req() req: Request,
@@ -319,7 +319,7 @@ export class FinanceReportsController {
     });
   }
 
-  @CanCapability('finance')
+  @CanCapabilityRead('finance')
   @Get('ledgers/general')
   async getGeneralLedger(
     @Req() req: Request,
@@ -334,7 +334,7 @@ export class FinanceReportsController {
     });
   }
 
-  @CanCapability('finance')
+  @CanCapabilityRead('finance')
   @Get('ledgers/detail')
   async getDetailLedger(
     @Req() req: Request,
@@ -360,7 +360,7 @@ export class FinanceReportsController {
     });
   }
 
-  @CanCapability('finance')
+  @CanCapabilityRead('finance')
   @Get('ledgers/aux-balance')
   async getAuxBalance(
     @Req() req: Request,
@@ -382,13 +382,13 @@ export class FinanceReportsController {
     });
   }
 
-  @CanCapability('finance')
+  @CanCapabilityRead('finance')
   @Get('ledgers/aux-dimensions')
   listAuxDimensions() {
     return this.auxiliaryService.listDimensions();
   }
 
-  @CanCapability('finance')
+  @CanCapabilityRead('finance')
   @Get('ledgers/trial-balance')
   async getTrialBalance(@Req() req: Request, @Query('period') period?: string) {
     return this.ledgersService.trialBalance(
@@ -399,7 +399,7 @@ export class FinanceReportsController {
 
   /* ========== A-04 期末结转损益与年结 ========== */
 
-  @CanCapability('finance')
+  @CanCapabilityRead('finance')
   @Get('year-end/preview')
   previewCarryForward(
     @Query('period') period?: string,
@@ -443,13 +443,13 @@ export class FinanceReportsController {
     });
   }
 
-  @CanCapability('finance')
+  @CanCapabilityRead('finance')
   @Get('year-end/status')
   yearEndStatus(@Query('taxEntityId') taxEntityId?: string) {
     return this.yearEndService.listStatus(taxEntityId || undefined);
   }
 
-  @CanCapability('finance')
+  @CanCapabilityRead('finance')
   @Get('year-end/log')
   yearEndLog(@Query('fiscalYear') fiscalYear?: string) {
     const year = fiscalYear ? Number(fiscalYear) : undefined;
@@ -458,7 +458,7 @@ export class FinanceReportsController {
 
   /* ========== A-06 增值税申报底稿 ========== */
 
-  @CanCapability('finance')
+  @CanCapabilityRead('finance')
   @Get('tax-declaration')
   getVatDeclaration(
     @Query('period') period?: string,
@@ -477,7 +477,7 @@ export class FinanceReportsController {
     return this.vatService.confirm(dto, userId);
   }
 
-  @CanCapability('finance')
+  @CanCapabilityRead('finance')
   @Get('tax-declaration/list')
   listVatDeclarations(@Query('limit') limit?: string) {
     return this.vatService.list(
@@ -493,7 +493,7 @@ export class FinanceReportsController {
    * 复用 A-06 底稿作为进销项匹配的输入（不重算，避免两处口径漂移）；
    * 三个方向独立容错，部分取数失败时在 `skipped` 里如实告知。
    */
-  @CanCapability('finance')
+  @CanCapabilityRead('finance')
   @Get('tax-risk-scan')
   scanTaxRisk(
     @Query('period') period?: string,
@@ -506,14 +506,14 @@ export class FinanceReportsController {
   }
 
   /** 当前生效的风险阈值（前端展示口径说明，让业务知道按什么标准判定） */
-  @CanCapability('finance')
+  @CanCapabilityRead('finance')
   @Get('tax-risk-thresholds')
   taxRiskThresholds() {
     return this.taxRiskService.thresholds();
   }
 
   /** 增值税明细科目的本期发生额（解释底稿"总账口径"数字从哪来） */
-  @CanCapability('finance')
+  @CanCapabilityRead('finance')
   @Get('tax-risk-vat-movement')
   vatAccountMovement(@Query('period') period?: string) {
     return this.taxRiskService.vatAccountMovement(this.assertPeriod(period));
@@ -527,7 +527,7 @@ export class FinanceReportsController {
    * 必须同时看 `coverage`：组合金额之和通常小于科目总额（部分分录只挂了
    * 部分维度），不告知覆盖率就是给使用者一份看似完整实则缺口的表。
    */
-  @CanCapability('finance')
+  @CanCapabilityRead('finance')
   @Get('ledgers/aux-combination')
   auxCombination(
     @Query('period') period?: string,
@@ -547,7 +547,7 @@ export class FinanceReportsController {
   }
 
   /** 区间多维度组合（用于"某项目全年投入"这类跨月问题） */
-  @CanCapability('finance')
+  @CanCapabilityRead('finance')
   @Get('ledgers/aux-combination-range')
   auxCombinationRange(
     @Query('from') from?: string,
@@ -569,7 +569,7 @@ export class FinanceReportsController {
   }
 
   /** 跨维度结构对比（各维度余额并列 + 结构占比） */
-  @CanCapability('finance')
+  @CanCapabilityRead('finance')
   @Get('ledgers/aux-cross-dimension')
   auxCrossDimension(
     @Query('period') period?: string,
@@ -589,7 +589,7 @@ export class FinanceReportsController {
   }
 
   /** 某维度在本期的取值范围与余额（供前端下拉，选之前就知道金额） */
-  @CanCapability('finance')
+  @CanCapabilityRead('finance')
   @Get('ledgers/aux-dimension-values')
   auxDimensionValues(
     @Query('period') period?: string,

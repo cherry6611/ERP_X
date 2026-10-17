@@ -183,6 +183,20 @@ export class LoginSecurityService {
         updatedAt: new Date(),
       })
       .where(eq(sysUser.id, params.userId));
+    /*
+     * 改密后必须撤销全部会话（README 的硬约束）：
+     * 旧 token 是无状态 JWT，不撤销则被盗会话在改密后仍可用至 7 天。
+     * 撤销后当前请求仍可返回 ok，但下一次请求需要重新登录。
+     */
+    await this.db
+      .update(sysLoginSession)
+      .set({ revokedAt: new Date() })
+      .where(
+        and(
+          eq(sysLoginSession.userId, params.userId),
+          isNull(sysLoginSession.revokedAt),
+        ),
+      );
     this.logger.log(`密码已更新 userId=${params.userId} by=${params.actorUserId ?? params.userId}`);
     return { ok: true };
   }
@@ -229,30 +243,46 @@ export class LoginSecurityService {
     policy: LockoutPolicy = DEFAULT_LOCKOUT_POLICY
   ): Promise<{ locked: boolean; attempts: number; lockedUntil: Date | null }> {
     if (!userId) return { locked: false, attempts: 0, lockedUntil: null };
-    const rows = await this.db
-      .select({ failed: sysUser.failedLoginAttempts })
-      .from(sysUser)
-      .where(eq(sysUser.id, userId))
-      .limit(1);
-    const attempts = Number(rows[0]?.failed ?? 0) + 1;
-    const locked = attempts >= policy.maxAttempts;
-    const lockedUntil = locked
-      ? new Date(Date.now() + policy.lockMinutes * 60_000)
+    /*
+     * 原子 upsert：原实现先 SELECT 再 UPDATE，两个并发失败请求会读到同一个
+     * failed 值，只加一次，锁定永远不触发。这里用单条 UPDATE 完成
+     * “+1 / 达到阈值则清零并写 locked_until”，返回落库后的真实值。
+     */
+    const lockedUntil = new Date(Date.now() + policy.lockMinutes * 60_000);
+    const result = await this.db.execute(sql`
+      UPDATE sys_user
+      SET failed_login_attempts = CASE
+            WHEN coalesce(failed_login_attempts, 0) + 1 >= ${policy.maxAttempts} THEN 0
+            ELSE coalesce(failed_login_attempts, 0) + 1
+          END,
+          locked_until = CASE
+            WHEN coalesce(failed_login_attempts, 0) + 1 >= ${policy.maxAttempts}
+              THEN ${lockedUntil.toISOString()}::timestamptz
+            ELSE locked_until
+          END,
+          _updated_at = now()
+      WHERE id = ${userId}::uuid
+      RETURNING failed_login_attempts, locked_until
+    `);
+    const row = unwrapRows<{
+      failed_login_attempts: number;
+      locked_until: string | Date | null;
+    }>(result)[0];
+    const lockedUntilValue = row?.locked_until
+      ? new Date(row.locked_until)
       : null;
-    await this.db
-      .update(sysUser)
-      .set({
-        failedLoginAttempts: locked ? 0 : attempts,
-        lockedUntil,
-        updatedAt: new Date(),
-      })
-      .where(eq(sysUser.id, userId));
+    const locked = Boolean(
+      lockedUntilValue && lockedUntilValue.getTime() > Date.now(),
+    );
+    const attempts = locked
+      ? policy.maxAttempts
+      : Number(row?.failed_login_attempts ?? 0);
     if (locked) {
       this.logger.warn(
         `账号锁定 userId=${userId} 连续失败 ${attempts} 次，锁定 ${policy.lockMinutes} 分钟`
       );
     }
-    return { locked, attempts, lockedUntil };
+    return { locked, attempts, lockedUntil: locked ? lockedUntilValue : null };
   }
 
   async clearFailedLogin(userId: string): Promise<void> {

@@ -8,6 +8,7 @@ import {
   DRIZZLE_DATABASE,
   type PostgresJsDatabase,
 } from '@server/platform';
+import type { RequestActor } from '@server/common/auth/actor';
 import { and, count, desc, eq, ne, or } from 'drizzle-orm';
 import {
   ilikeEscaped,
@@ -444,7 +445,11 @@ export class MasterDataService {
     };
   }
 
-  async listEmployees(): Promise<Employee[]> {
+  async listEmployees(actor?: RequestActor): Promise<Employee[]> {
+    // 员工手机号/飞书身份属于 PII：只给 admin / HR 看；项目负责人只需要姓名/部门。
+    const canSeePii =
+      actor?.roles?.some((role) => role === 'admin' || role === 'hr_manager') ??
+      false;
     const rows = await this.db
       .select({
         id: mdEmployee.id,
@@ -473,7 +478,8 @@ export class MasterDataService {
     return rows.map((row) => ({
       ...row,
       status: row.status ?? 'active',
-      platformUserId: row.platformUserId ?? null,
+      phone: canSeePii ? row.phone : null,
+      platformUserId: canSeePii ? (row.platformUserId ?? null) : null,
       supplierId: row.supplierId ?? null,
       supplierName: row.supplierName ?? null,
     }));

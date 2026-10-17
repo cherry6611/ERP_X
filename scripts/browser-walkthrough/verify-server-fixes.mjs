@@ -24,7 +24,7 @@ import postgres from 'postgres';
 
 const API = process.env.WT_API_VERIFY ?? 'http://127.0.0.1:3111';
 const USER = process.env.WT_USER ?? 'chengsheng@chengshengdata.cn';
-const PASS = process.env.WT_PASS ?? '******';
+const PASS = process.env.WT_PASS ?? '';
 const OUT = 'scripts/browser-walkthrough/out';
 const TAG = '[API_TEST]';
 
@@ -63,7 +63,7 @@ async function main() {
     return { status: res.status, body: json };
   };
   const msg = (r) => JSON.stringify(r.body ?? '').slice(0, 200);
-  const sql = postgres({ host: '127.0.0.1', port: 5433, user: 'erp', password: '******', database: 'shengseerp' });
+  const sql = postgres({ host: '127.0.0.1', port: 5433, user: 'erp', password: process.env.DB_PASSWORD ?? '', database: 'shengseerp' });
   const mine = { contractIds: [], customerIds: [], projectIds: [] };
 
   try {

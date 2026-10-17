@@ -19,6 +19,7 @@ import { generateBizCode } from '@server/common/utils/biz-code';
 import { VoucherHookService } from '@server/modules/voucher/voucher-hook.service';
 import { round2 } from '@server/common/utils/number';
 import { computeDepreciation } from './depreciation-math';
+import { isDepreciableInPeriod } from './asset-depreciation-eligibility';
 import type {
   AssetDepreciationItem,
   DepreciatePeriodDto,
@@ -135,11 +136,20 @@ export class AssetDepreciationService {
     if (!PERIOD_PATTERN.test(period)) {
       throw new BadRequestException('期间格式必须为 YYYY-MM');
     }
-    const assets = await this.db
+    const allAssets = await this.db
       .select()
       .from(astAsset)
       .where(inArray(astAsset.status, DEPRECIABLE_STATUSES))
       .orderBy(asc(astAsset.code));
+    /*
+     * 会计准则：当月增加的固定资产当月不提折旧，下月起提。
+     * 原实现只按 status 取全部资产，导致 3 月购入的资产 3 月就计提，
+     * 且补跑 2 月也能给“尚未购入”的资产计提。
+     * 这里按 purchase_date 过滤：period 必须严格晚于购置月份。
+     */
+    const assets = allAssets.filter((asset) =>
+      isDepreciableInPeriod(asset.purchaseDate, period),
+    );
 
     const thisPeriodRows: Array<{ assetId: string | null }> = await this.db
       .select({ assetId: astDepreciation.assetId })

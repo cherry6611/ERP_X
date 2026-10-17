@@ -7,7 +7,7 @@ import { Browser, sleep } from './cdp.mjs';
 const APP = process.env.WT_APP ?? 'http://127.0.0.1:5273';
 const API = process.env.WT_API ?? 'http://127.0.0.1:3100';
 const USER = process.env.WT_USER ?? 'chengsheng@chengshengdata.cn';
-const PASS = process.env.WT_PASS ?? '******';
+const PASS = process.env.WT_PASS ?? '';
 
 const pairs = [];
 for (let i = 0; i + 1 < process.argv.length - 1; i += 2) {

@@ -20,6 +20,10 @@ import { DRIZZLE_DATABASE } from '@server/platform/tokens';
 import { hashPassword } from '@server/platform/password';
 import { SessionStore } from '@server/platform/session-store';
 import { AuditService } from '@server/modules/audit/audit.service';
+import {
+  DEFAULT_PASSWORD_POLICY,
+  LoginSecurityService,
+} from '@server/modules/auth/login-security.service';
 import { ROLE_CODES } from '@shared/rbac';
 
 export interface IdentityUserItem {
@@ -130,8 +134,8 @@ export class IdentityService {
       await this.assertEmployeeFree(dto.employeeId);
     }
 
-    const password = dto.password?.trim() || randomBytes(9).toString('base64url');
-    if (password.length < 8) throw new BadRequestException('密码至少 8 位');
+    const password = dto.password?.trim() || this.generateTemporaryPassword();
+    this.assertPasswordPolicy(password, username);
 
     const [created] = await this.db
       .insert(sysUser)
@@ -179,6 +183,7 @@ export class IdentityService {
     dto: { displayName?: string; email?: string | null; mobile?: string | null; employeeId?: string | null },
   ): Promise<IdentityUserItem> {
     const user = await this.requireUser(id);
+    this.assertCanManageUser(actor.roles, user);
     if (dto.employeeId && dto.employeeId !== user.employeeId) {
       await this.assertEmployeeFree(dto.employeeId, id);
     }
@@ -208,6 +213,7 @@ export class IdentityService {
 
   async setStatus(actor: { userId: string; roles: string[] }, id: string, status: 'active' | 'disabled'): Promise<void> {
     const user = await this.requireUser(id);
+    this.assertCanManageUser(actor.roles, user);
     if (id === actor.userId && status === 'disabled') {
       throw new BadRequestException('不能禁用自己的账号');
     }
@@ -229,6 +235,10 @@ export class IdentityService {
 
   async setRoles(actor: { userId: string; roles: string[] }, id: string, roles: string[]): Promise<void> {
     const user = await this.requireUser(id);
+    this.assertCanManageUser(actor.roles, user);
+    if (id === actor.userId) {
+      throw new ForbiddenException('不能修改自己的角色；请联系其他管理员操作');
+    }
     const next = this.sanitizeRoles(roles, actor.roles);
     const wasAdmin = user.roles.includes('admin');
     const willAdmin = next.includes('admin');
@@ -247,15 +257,31 @@ export class IdentityService {
       objectCode: user.username,
       detail: JSON.stringify({ roles: next }),
     });
+    /*
+     * 角色变更必须让旧 token 失效：JWT 内嵌 roles，若只改 sys_role_member，
+     * 被降权者仍能凭旧 token 通过 @CanCapability 检查，最长 7 天。
+     */
+    await this.sessions.revokeUser(id);
   }
 
-  async resetPassword(actor: { userId: string }, id: string, password?: string): Promise<{ temporaryPassword: string }> {
+  async resetPassword(
+    actor: { userId: string; roles: string[] },
+    id: string,
+    password?: string,
+  ): Promise<{ temporaryPassword: string }> {
     const user = await this.requireUser(id);
-    const temporaryPassword = password?.trim() || randomBytes(9).toString('base64url');
-    if (temporaryPassword.length < 8) throw new BadRequestException('密码至少 8 位');
+    this.assertCanManageUser(actor.roles, user);
+    const temporaryPassword =
+      password?.trim() || this.generateTemporaryPassword();
+    this.assertPasswordPolicy(temporaryPassword, user.username ?? undefined);
     await this.db
       .update(sysUser)
-      .set({ passwordHash: hashPassword(temporaryPassword), updatedAt: new Date() })
+      .set({
+        passwordHash: hashPassword(temporaryPassword),
+        mustChangePassword: 1,
+        passwordChangedAt: new Date(),
+        updatedAt: new Date(),
+      })
       .where(eq(sysUser.id, id));
     await this.sessions.revokeUser(id);
     await this.audit.record({
@@ -285,8 +311,13 @@ export class IdentityService {
     }));
   }
 
-  async revokeSession(actor: { userId: string }, userId: string, jti: string): Promise<void> {
-    await this.requireUser(userId);
+  async revokeSession(
+    actor: { userId: string; roles: string[] },
+    userId: string,
+    jti: string,
+  ): Promise<void> {
+    const target = await this.requireUser(userId);
+    this.assertCanManageUser(actor.roles, target);
     await this.sessions.revoke(jti);
     await this.audit.record({
       actor: actor.userId,
@@ -297,8 +328,12 @@ export class IdentityService {
     });
   }
 
-  async revokeAllSessions(actor: { userId: string }, userId: string): Promise<void> {
-    await this.requireUser(userId);
+  async revokeAllSessions(
+    actor: { userId: string; roles: string[] },
+    userId: string,
+  ): Promise<void> {
+    const target = await this.requireUser(userId);
+    this.assertCanManageUser(actor.roles, target);
     await this.sessions.revokeUser(userId);
     await this.audit.record({
       actor: actor.userId,
@@ -308,8 +343,12 @@ export class IdentityService {
     });
   }
 
-  async createFeishuInvite(actor: { userId: string }, targetUserId: string): Promise<{ token: string; inviteUrl: string; expiresAt: string }> {
-    await this.requireUser(targetUserId);
+  async createFeishuInvite(
+    actor: { userId: string; roles: string[] },
+    targetUserId: string,
+  ): Promise<{ token: string; inviteUrl: string; expiresAt: string }> {
+    const target = await this.requireUser(targetUserId);
+    this.assertCanManageUser(actor.roles, target);
     const token = randomBytes(24).toString('hex');
     const expiresAt = new Date(Date.now() + 48 * 60 * 60 * 1000);
     await this.db.insert(sysFeishuBindInvite).values({
@@ -348,8 +387,12 @@ export class IdentityService {
     });
   }
 
-  async unbindFeishu(actor: { userId: string }, targetUserId: string): Promise<void> {
+  async unbindFeishu(
+    actor: { userId: string; roles: string[] },
+    targetUserId: string,
+  ): Promise<void> {
     const user = await this.requireUser(targetUserId);
+    this.assertCanManageUser(actor.roles, user);
     await this.db
       .update(sysUser)
       .set({
@@ -462,6 +505,25 @@ export class IdentityService {
     return found;
   }
 
+  /**
+   * 账号管理员（user_admin）不得操作超级管理员账号。
+   *
+   * 原实现只拦"非 admin 授予 admin 角色"，但 resetPassword / setStatus /
+   * revokeAllSessions 等都能直接作用在 admin 账号上：user_admin 重置 admin
+   * 密码后即可用新密码登录成 admin。这里统一在服务层收口，控制器能力码不再是
+   * 唯一防线。
+   */
+  private assertCanManageUser(
+    actorRoles: string[],
+    target: Pick<IdentityUserItem, 'roles' | 'username'>,
+  ): void {
+    if (!target.roles.includes('admin')) return;
+    if (actorRoles.includes('admin')) return;
+    throw new ForbiddenException(
+      `仅超级管理员可以操作超级管理员账号（目标：${target.username}）`,
+    );
+  }
+
   private async assertEmployeeFree(employeeId: string, exceptUserId?: string): Promise<void> {
     const linked = await this.db
       .select({ id: sysUser.id })
@@ -494,5 +556,28 @@ export class IdentityService {
     if (activeAdminIds.length <= 1 && activeAdminIds.includes(userId)) {
       throw new BadRequestException('系统须至少保留一名启用中的管理员');
     }
+  }
+
+  /**
+   * 创建/重置密码统一走登录密码策略（12 位 + 四类字符 + 不含用户名），
+   * 不再允许管理员设 `12345678` 这类 8 位弱口令（P2-11）。
+   */
+  private assertPasswordPolicy(password: string, username?: string): void {
+    const security = new LoginSecurityService(this.db);
+    const result = security.validatePassword(
+      password,
+      DEFAULT_PASSWORD_POLICY,
+      { username },
+    );
+    if (!result.ok) {
+      throw new BadRequestException(
+        `密码不符合策略：${result.errors.join('；')}`,
+      );
+    }
+  }
+
+  /** 随机临时密码：固定四类字符前缀 + 12 字节随机，长度约 20 位 */
+  private generateTemporaryPassword(): string {
+    return `Aa1!${randomBytes(12).toString('base64url')}`;
   }
 }

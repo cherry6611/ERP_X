@@ -12,7 +12,7 @@ import {
 } from '@nestjs/common';
 import { IsInt, IsNotEmpty, IsOptional, IsString, Max, Min } from 'class-validator';
 import type { Request } from 'express';
-import { CanCapability, NeedLogin } from '@server/platform';
+import { CanCapability, CanCapabilityRead, NeedLogin } from '@server/platform';
 import { DriveEditor } from '@server/common/auth/read-roles';
 import { consumeRate } from '@server/common/security/rate-limit';
 import { actorFromRequest } from '@server/common/auth/actor';
@@ -168,7 +168,7 @@ export class DriveController {
     return { token: fileToken, deleted: true };
   }
 
-  @CanCapability('drive')
+  @CanCapabilityRead('drive')
   @Get('files/:fileToken/members')
   async listMembers(
     @Param('fileToken') fileToken: string,

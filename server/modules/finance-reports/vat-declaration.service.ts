@@ -338,9 +338,14 @@ export class VatDeclarationService {
     const rows = await this.db.execute(sql`
       SELECT
         coalesce((
-          SELECT sum(r.amount)
+          SELECT sum(
+            CASE
+              WHEN coalesce(c.tax_rate, 0) <= 0 THEN r.amount
+              ELSE r.amount * 100 / (100 + c.tax_rate)
+            END
+          )
           FROM erp_project_revenue r
-          JOIN erp_contract c ON c.id = r.contract_id
+          LEFT JOIN erp_contract c ON c.id = r.contract_id
           WHERE r.status = 'recognized'
             AND r.period = ${period}
             AND NOT EXISTS (
@@ -348,17 +353,23 @@ export class VatDeclarationService {
               WHERE a.revenue_id = r.id AND a.status = 'applied'
             )
             ${taxEntityId ? sql`AND c.tax_entity_id = ${taxEntityId}::uuid` : sql``}
-        ), 0) AS revenue_gross,
+        ), 0) AS revenue_net,
         coalesce((
-          SELECT sum(r.amount)
+          SELECT sum(
+            CASE
+              WHEN coalesce(c.tax_rate, 0) <= 0 THEN r.amount
+              ELSE r.amount * 100 / (100 + c.tax_rate)
+            END
+          )
           FROM erp_project_revenue r
+          LEFT JOIN erp_contract c ON c.id = r.contract_id
           WHERE r.status = 'recognized'
             AND r.period = ${period}
             AND NOT EXISTS (
               SELECT 1 FROM erp_revenue_adjust a
               WHERE a.revenue_id = r.id AND a.status = 'applied'
             )
-        ), 0) AS revenue_gross_all,
+        ), 0) AS revenue_net_all,
         coalesce((
           SELECT sum(coalesce(i.net_amount, coalesce(i.amount, 0) - coalesce(i.tax_amount, 0), 0))
           FROM erp_invoice i
@@ -372,22 +383,24 @@ export class VatDeclarationService {
       ? (rows as Array<Record<string, unknown>>)
       : ((rows as { rows?: Array<Record<string, unknown>> }).rows ?? []);
     const row = list[0] ?? {};
-    const revenueGross = round2(toNumber(row.revenue_gross as string | number));
-    const revenueGrossAll = round2(toNumber(row.revenue_gross_all as string | number));
+    const revenueNet = round2(toNumber(row.revenue_net as string | number));
+    const revenueNetAll = round2(toNumber(row.revenue_net_all as string | number));
     const invoicedNet = round2(toNumber(row.invoiced_net as string | number));
-    // 收入台账的 amount 是**含税**口径（与 erp_invoice.amount 同源）。
-    // 未开票收入的税额无法从收入台账直接得到（它没有税率列），
-    // 因此这里按"未开票含税额"与当期销项税率反算 —— 但税率因票而异，
-    // 所以采用**保守做法**：只用不含税额参与第 1 行销售额，税额按 0 计，
-    // 并在差异区显式披露"未开票收入的税额需人工确认"。
-    // 这样不会凭空少缴：应纳税额仍按发票税额 + 未开票销售额参与免征判定与留抵无关。
-    const net = unbilledRevenueNet(revenueGross, invoicedNet);
+    /*
+     * 口径必须统一为**不含税**：
+     *   · erp_project_revenue.amount 是含税价税合计（收入确认分录借 1122 = amount）；
+     *   · erp_invoice.net_amount 是不含税。
+     * 原实现直接 `含税收入 - 不含税已开票`，全额开票也会凭空产生"未开票收入"
+     * （其金额恰好等于税额），并让第 1 行销售额虚增。
+     * 这里按收入所属合同的税率逐笔反算净额，再与已开票净额比较。
+     */
+    const net = unbilledRevenueNet(revenueNet, invoicedNet);
     return {
       net,
       tax: 0,
-      revenueNet: revenueGross,
+      revenueNet,
       invoicedNet,
-      excludedRevenue: round2(Math.max(revenueGrossAll - revenueGross, 0)),
+      excludedRevenue: round2(Math.max(revenueNetAll - revenueNet, 0)),
     };
   }
 

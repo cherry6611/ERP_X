@@ -8,6 +8,7 @@ import {
 import { CostsService } from '@server/modules/costs/costs.service';
 import { ActorAccessService } from '@server/common/auth/actor-access.service';
 import { DataScopeService } from '@server/common/auth/data-scope.service';
+import { ProjectAclService } from '@server/modules/projects/project-acl.service';
 import { VoucherHookService } from '@server/modules/voucher/voucher-hook.service';
 import { AccountResolverService } from '@server/modules/voucher/account-resolver.service';
 import type { PostgresJsDatabase } from '@server/platform';
@@ -55,11 +56,14 @@ describe('D-07 批量加权分摊', () => {
     db = await createPglite();
     await applyMigrationChain(db, loadMigrations());
     const orm = createDrizzle(db) as unknown as PostgresJsDatabase;
+    const actorAccess = new ActorAccessService(stubAuthzSdk);
+    const dataScope = new DataScopeService(orm);
     service = new CostsService(
       orm,
-      new ActorAccessService(stubAuthzSdk),
+      actorAccess,
       new VoucherHookService(orm, new AccountResolverService(orm)),
-      new DataScopeService(orm)
+      dataScope,
+      new ProjectAclService(orm, actorAccess, dataScope),
     );
 
     for (let i = 1; i <= 4; i += 1) {

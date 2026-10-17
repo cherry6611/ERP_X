@@ -16,7 +16,7 @@ async function main() {
   // 登录
   await page.goto(BASE + '/login', { waitUntil: 'networkidle' });
   await page.fill('#login-username', 'chengsheng@chengshengdata.cn');
-  await page.fill('#login-password', '******');
+  await page.fill('#login-password', '');
   await page.click('button[type="submit"]');
   await page.waitForTimeout(3000);
   await page.goto(BASE + '/finance', { waitUntil: 'networkidle' });

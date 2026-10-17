@@ -56,7 +56,7 @@ async function main() {
 
   /* 期间取自库内实际有凭证的期间，避免拿空期间做"平凡通过" */
   const sql = postgres({
-    host: '127.0.0.1', port: 5433, user: 'erp', password: '******',
+    host: '127.0.0.1', port: 5433, user: 'erp', password: process.env.DB_PASSWORD ?? '',
     database: 'shengseerp', connect_timeout: 5,
   });
   const periods = (await sql`SELECT DISTINCT period FROM fin_voucher ORDER BY period DESC LIMIT 3`)

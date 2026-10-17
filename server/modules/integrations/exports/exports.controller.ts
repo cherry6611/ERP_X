@@ -12,7 +12,7 @@ import {
   Res,
 } from '@nestjs/common';
 import type { Request, Response } from 'express';
-import { NeedLogin } from '@server/platform';
+import { CanCapabilityRead, NeedLogin } from '@server/platform';
 import { CanCapability } from '@server/modules/integrations/integration-authz';
 import { actorFromRequest } from '@server/common/auth/actor';
 import { IsIn, IsObject, IsOptional, IsString } from 'class-validator';
@@ -58,7 +58,7 @@ export class ExportsController {
   }
 
   /** 我的导出列表（admin 可见全部） */
-  @CanCapability('finance')
+  @CanCapabilityRead('finance')
   @Get()
   async listTasks(
     @Req() req: Request,
@@ -80,7 +80,7 @@ export class ExportsController {
   }
 
   /** 单任务状态与下载链接 */
-  @CanCapability('finance')
+  @CanCapabilityRead('finance')
   @Get(':id')
   async getTask(
     @Param('id', ParseUUIDPipe) id: string,
@@ -94,7 +94,7 @@ export class ExportsController {
   }
 
   /** 下载导出文件（仅任务发起人或 admin） */
-  @CanCapability('finance')
+  @CanCapabilityRead('finance')
   @Get(':id/download')
   @Header('Cache-Control', 'private, no-store')
   async download(

@@ -13,7 +13,13 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { randomBytes } from 'node:crypto';
-import { IsNotEmpty, IsString, Matches, MinLength } from 'class-validator';
+import {
+  IsNotEmpty,
+  IsOptional,
+  IsString,
+  Matches,
+  MinLength,
+} from 'class-validator';
 import type { Request, Response } from 'express';
 import { CanCapability, NeedLogin, Public } from '@server/platform';
 import { readCookie, readSession as readSessionToken, SESSION_COOKIE } from '@server/platform/jwt';
@@ -99,8 +105,38 @@ class ChangePasswordDto {
   currentPassword!: string;
 
   @IsString()
-  @MinLength(8, { message: '新密码至少 8 位' })
+  @MinLength(12, { message: '新密码至少 12 位' })
   newPassword!: string;
+}
+
+/** P2-11：密码过期/首改的自助改密（无需会话，凭当前密码 + MFA） */
+class ChangeExpiredPasswordDto {
+  @IsString()
+  @IsNotEmpty()
+  username!: string;
+
+  @IsString()
+  @IsNotEmpty()
+  currentPassword!: string;
+
+  @IsString()
+  @MinLength(12, { message: '新密码至少 12 位' })
+  newPassword!: string;
+
+  @IsOptional()
+  @IsString()
+  mfaCode?: string;
+}
+
+/** P2-12：绑定飞书前的再认证 */
+class BindFeishuDto {
+  @IsString()
+  @IsNotEmpty()
+  password!: string;
+
+  @IsOptional()
+  @IsString()
+  code?: string;
 }
 
 @NeedLogin()
@@ -113,6 +149,22 @@ export class AuthController {
   ) {}
 
   @Public()
+  @Post('password/change-expired')
+  async changeExpiredPassword(
+    @Body() dto: ChangeExpiredPasswordDto,
+    @Req() req: Request,
+  ): Promise<{ ok: true }> {
+    await consumeRate(`expired-pw-ip:${req.ip ?? 'unknown'}`, 20, 15 * 60 * 1000);
+    await consumeRate(
+      `expired-pw-user:${String(dto.username ?? '').trim().toLowerCase()}`,
+      5,
+      15 * 60 * 1000,
+    );
+    await this.auth.changeExpiredPassword(dto);
+    return { ok: true };
+  }
+
+  @Public()
   @Post('login')
   async login(
     @Body() dto: LoginDto,
@@ -123,7 +175,17 @@ export class AuthController {
       ip: req.ip ?? null,
       userAgent: (req.headers['user-agent'] as string | undefined) ?? null,
     };
-    // 仅对失败尝试限流，避免自动化/联调被成功登录误伤；失败阈值仍防爆破
+    /*
+     * 限额必须在验证**之前**占用：原实现只在 catch 里 consumeRate，
+     * 并发猜解可以在第一次失败写计数前打满全部请求。成功登录也计数，
+     * 阈值（IP 40 / 账号 10 每 15 分钟）足够自动化联调。
+     */
+    await consumeRate(`login-ip:${req.ip ?? 'unknown'}`, 40, 15 * 60 * 1000);
+    await consumeRate(
+      `login-user:${String(dto.username ?? '').trim().toLowerCase()}`,
+      10,
+      15 * 60 * 1000,
+    );
     try {
       const result = await this.auth.login(dto.username, dto.password, context);
       if (result.mfaRequired) {
@@ -138,12 +200,6 @@ export class AuthController {
       this.writeCookie(res, result.token);
       return { mfaRequired: false as const, user: result.user };
     } catch (error: unknown) {
-      await consumeRate(`login-ip:${req.ip ?? 'unknown'}`, 40, 15 * 60 * 1000);
-      await consumeRate(
-        `login-user:${String(dto.username ?? '').trim().toLowerCase()}`,
-        10,
-        15 * 60 * 1000,
-      );
       throw error;
     }
   }
@@ -177,6 +233,7 @@ export class AuthController {
   }
 
   /** B-04：生成 MFA 密钥与恢复码（此时尚未生效，需 confirm 校验一次动态码） */
+  @CanCapability('self_service')
   @Post('mfa/setup')
   async mfaSetup(@Req() req: Request) {
     const userId = this.requireUserId(req);
@@ -184,6 +241,7 @@ export class AuthController {
   }
 
   /** B-04：确认绑定 */
+  @CanCapability('self_service')
   @Post('mfa/confirm')
   async mfaConfirm(@Body() dto: ConfirmMfaDto, @Req() req: Request) {
     const userId = this.requireUserId(req);
@@ -191,6 +249,7 @@ export class AuthController {
   }
 
   /** B-04：关闭 MFA */
+  @CanCapability('self_service')
   @Post('mfa/disable')
   async mfaDisable(@Body() dto: DisableMfaDto, @Req() req: Request) {
     const userId = this.requireUserId(req);
@@ -198,6 +257,7 @@ export class AuthController {
   }
 
   /** B-04：修改自己的密码（含密码策略与历史校验） */
+  @CanCapability('self_service')
   @Post('password/change')
   async changePassword(@Body() dto: ChangePasswordDto, @Req() req: Request) {
     const userId = this.requireUserId(req);
@@ -223,6 +283,7 @@ export class AuthController {
   }
 
   /** B-04：远程下线指定设备 */
+  @CanCapability('self_service')
   @Post('sessions/:jti/revoke')
   async revokeSession(
     @Param('jti') jti: string,
@@ -277,24 +338,29 @@ export class AuthController {
     }
   }
 
-  @Get('feishu/bind')
-  async bind(@Req() req: Request, @Res() res: Response): Promise<void> {
-    try {
-      const state = randomBytes(16).toString('hex');
-      const url = await this.auth.authorizeUrl(state);
-      const session = readCookie(req.headers.cookie, SESSION_COOKIE);
-      res.setHeader('Set-Cookie', [
-        session
-          ? `${SESSION_COOKIE}=${encodeURIComponent(session)}; HttpOnly; Path=/; Max-Age=604800; SameSite=Lax${this.secureFlag()}`
-          : '',
-        `${STATE_COOKIE}=${state}; HttpOnly; Path=/; Max-Age=300; SameSite=Lax${this.secureFlag()}`,
-        `${MODE_COOKIE}=bind; HttpOnly; Path=/; Max-Age=300; SameSite=Lax${this.secureFlag()}`,
-        `${INVITE_COOKIE}=; HttpOnly; Path=/; Max-Age=0; SameSite=Lax${this.secureFlag()}`,
-      ].filter(Boolean));
-      res.redirect(url);
-    } catch (error: unknown) {
-      res.redirect(loginErrorUrl(httpErrorMessage(error, '飞书绑定启动失败')));
-    }
+  /**
+   * P2-12：绑定飞书必须先做密码（+ MFA）再认证。
+   * 原 GET 仅凭现有会话就发 OAuth，被盗会话可把攻击者飞书绑到账号上，
+   * 之后改密/撤会话仍能通过飞书登录。现改为 POST + JSON，前端拿到 url 再跳转。
+   */
+  @Post('feishu/bind')
+  @CanCapability('self_service')
+  async bind(
+    @Req() req: Request,
+    @Body() dto: BindFeishuDto,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<{ url: string }> {
+    const userId = this.requireUserId(req);
+    await consumeRate(`feishu-bind:${userId}`, 5, 15 * 60 * 1000);
+    await this.auth.verifyReauth(userId, dto.password, dto.code);
+    const state = randomBytes(16).toString('hex');
+    const url = await this.auth.authorizeUrl(state);
+    res.setHeader('Set-Cookie', [
+      `${STATE_COOKIE}=${state}; HttpOnly; Path=/; Max-Age=300; SameSite=Lax${this.secureFlag()}`,
+      `${MODE_COOKIE}=bind; HttpOnly; Path=/; Max-Age=300; SameSite=Lax${this.secureFlag()}`,
+      `${INVITE_COOKIE}=; HttpOnly; Path=/; Max-Age=0; SameSite=Lax${this.secureFlag()}`,
+    ]);
+    return { url };
   }
 
   /** 管理员邀请代绑：Public，凭 invite token 进入 OAuth */

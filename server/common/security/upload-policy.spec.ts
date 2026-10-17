@@ -89,6 +89,11 @@ describe('B-06 魔数校验', () => {
     expect(() => assertMagicMatchesExtension('a.svg', scripted)).toThrow(/脚本/);
     const onload = Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" onload="x()"/>');
     expect(() => assertMagicMatchesExtension('a.svg', onload)).toThrow(/脚本/);
+    // 只扫前 4KB 时，脚本放到 4KB 之后就能绕过；必须全文件扫描。
+    const hidden = Buffer.from(
+      `<svg xmlns="http://www.w3.org/2000/svg"><!--${'x'.repeat(5000)}--><script>alert(1)</script></svg>`
+    );
+    expect(() => assertMagicMatchesExtension('a.svg', hidden)).toThrow(/脚本/);
   });
 });
 

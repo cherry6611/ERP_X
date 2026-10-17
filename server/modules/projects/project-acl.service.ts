@@ -4,7 +4,15 @@ import {
   type PostgresJsDatabase,
 } from '@server/platform';
 import { and, eq, or, sql, type SQL } from 'drizzle-orm';
-import { erpProject, hrDepartment, mdEmployee } from '@server/database/schema';
+import {
+  erpDeliverable,
+  erpProject,
+  erpProjectChange,
+  erpProjectMilestone,
+  erpProjectMinutes,
+  hrDepartment,
+  mdEmployee,
+} from '@server/database/schema';
 import { ActorAccessService } from '@server/common/auth/actor-access.service';
 import {
   DataScopeService,
@@ -96,6 +104,28 @@ export class ProjectAclService {
   }
 
   /**
+   * 当前 actor 可见的项目 id 集合；`undefined` 表示不受限（admin/finance）。
+   *
+   * 成本/收入表只有 project_id，没有 dept/pm 列；把 ProjectAcl 的可见性
+   * 翻译成 id 集合，查询侧直接 `inArray(table.projectId, ids)` 即可，
+   * 不必为了过滤去 join erp_project。空数组表示 fail-closed（无可见项目）。
+   */
+  async visibleProjectIds(actor: RequestActor): Promise<string[] | undefined> {
+    const privileged: boolean = await this.actorAccess.hasAnyRole(actor.userId, [
+      'admin',
+      'finance_viewer',
+    ]);
+    if (privileged) return undefined;
+    const where = await this.visibilitySql(actor);
+    if (!where) return undefined;
+    const rows = await this.db
+      .select({ id: erpProject.id })
+      .from(erpProject)
+      .where(where);
+    return rows.map((row) => row.id);
+  }
+
+  /**
    * B-02 验收标准③：越权直连接口返回 403（区分"不存在"的 404，便于排障），
    * 并且**记 warn 日志**（需求细化④"审计：越权访问尝试记 warn"）。
    */
@@ -138,7 +168,7 @@ export class ProjectAclService {
     const pmUserId: string = rows[0].pmUserId ?? '';
     if (pmUserId.length > 0) {
       if (pmUserId !== actor.userId) {
-        throw new ForbiddenException('仅项目负责人或管理员可提交变更');
+        throw new ForbiddenException('仅项目负责人或管理员可修改项目');
       }
       return;
     }
@@ -149,8 +179,72 @@ export class ProjectAclService {
       !!employee &&
       ownerName === employee.name;
     if (!isOwner) {
-      throw new ForbiddenException('仅项目负责人或管理员可提交变更');
+      throw new ForbiddenException('仅项目负责人或管理员可修改项目');
     }
+  }
+
+  /** 由交付物 id 反查项目，再按项目负责人校验（写接口不能只看"有 projects_write"）。 */
+  async assertEditableByDeliverable(
+    deliverableId: string,
+    actor: RequestActor,
+  ): Promise<void> {
+    const rows = await this.db
+      .select({ projectId: erpDeliverable.projectId })
+      .from(erpDeliverable)
+      .where(eq(erpDeliverable.id, deliverableId))
+      .limit(1);
+    if (rows.length === 0) throw new NotFoundException('交付物不存在');
+    const projectId = rows[0].projectId;
+    if (!projectId) throw new ForbiddenException('交付物未关联项目，无法校验项目权限');
+    await this.assertEditable(projectId, actor);
+  }
+
+  /** 由里程碑 id 反查项目。 */
+  async assertEditableByMilestone(
+    milestoneId: string,
+    actor: RequestActor,
+  ): Promise<void> {
+    const rows = await this.db
+      .select({ projectId: erpProjectMilestone.projectId })
+      .from(erpProjectMilestone)
+      .where(eq(erpProjectMilestone.id, milestoneId))
+      .limit(1);
+    if (rows.length === 0) throw new NotFoundException('里程碑不存在');
+    const projectId = rows[0].projectId;
+    if (!projectId) throw new ForbiddenException('里程碑未关联项目，无法校验项目权限');
+    await this.assertEditable(projectId, actor);
+  }
+
+  /** 由项目变更 id 反查项目。 */
+  async assertEditableByChange(
+    changeId: string,
+    actor: RequestActor,
+  ): Promise<void> {
+    const rows = await this.db
+      .select({ projectId: erpProjectChange.projectId })
+      .from(erpProjectChange)
+      .where(eq(erpProjectChange.id, changeId))
+      .limit(1);
+    if (rows.length === 0) throw new NotFoundException('项目变更不存在');
+    const projectId = rows[0].projectId;
+    if (!projectId) throw new ForbiddenException('变更未关联项目，无法校验项目权限');
+    await this.assertEditable(projectId, actor);
+  }
+
+  /** 由周报/纪要 id 反查项目。 */
+  async assertEditableByMinutes(
+    minutesId: string,
+    actor: RequestActor,
+  ): Promise<void> {
+    const rows = await this.db
+      .select({ projectId: erpProjectMinutes.projectId })
+      .from(erpProjectMinutes)
+      .where(eq(erpProjectMinutes.id, minutesId))
+      .limit(1);
+    if (rows.length === 0) throw new NotFoundException('纪要不存在');
+    const projectId = rows[0].projectId;
+    if (!projectId) throw new ForbiddenException('纪要未关联项目，无法校验项目权限');
+    await this.assertEditable(projectId, actor);
   }
 
   private async canSee(projectId: string, actor: RequestActor): Promise<boolean> {

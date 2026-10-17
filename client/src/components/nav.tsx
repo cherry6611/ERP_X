@@ -79,7 +79,10 @@ export const NAV_GROUPS: { title: string; items: NavItem[] }[] = [
     items: [
       { label: '采购管理', path: '/pur', icon: Package, capability: 'pur_asset' },
       // C-05：采购/销售退货闭环
-      { label: '退货管理', path: '/returns', icon: PackageX, capability: 'pur_asset' },
+      // 与 shared/rbac.ts 的 NAV_CAPABILITY['/returns'] 保持一致：
+      // 退货页按财务域做路由守卫（采购退货写仍要求 pur_asset），
+      // 原 nav 用 pur_asset 会让 PM 看到菜单但点进去被 finance 守卫拒绝。
+      { label: '退货管理', path: '/returns', icon: PackageX, capability: 'finance' },
       { label: '固定资产', path: '/asset', icon: Laptop, capability: 'pur_asset' },
     ],
   },

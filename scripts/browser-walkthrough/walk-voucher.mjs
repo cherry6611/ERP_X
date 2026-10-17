@@ -84,7 +84,7 @@ async function main() {
   mkdirSync(OUT, { recursive: true });
   const session = await login();
   const sql = postgres({
-    host: '127.0.0.1', port: 5433, user: 'erp', password: '******',
+    host: '127.0.0.1', port: 5433, user: 'erp', password: process.env.DB_PASSWORD ?? '',
     database: 'shengseerp', connect_timeout: 5,
   });
   const browser = await Browser.launch({ port: 9371 });
