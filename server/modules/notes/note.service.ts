@@ -30,6 +30,7 @@ import {
   NOTE_ACTION_REQUIRES_COUNTERPARTY,
   NOTE_ACTION_REQUIRES_RATE,
   NOTE_STATUS_LABELS,
+  NOTE_TRANSITIONS,
   NOTE_TYPE_LABELS,
   NOTE_TYPES,
   TERMINAL_NOTE_STATUSES,
@@ -43,6 +44,7 @@ import {
   type NoteType,
 } from '@server/common/tax/note-rules';
 import { VoucherHookService } from '@server/modules/voucher/voucher-hook.service';
+import { round2 } from '@server/common/utils/number';
 import type {
   CreateNoteDto,
   NoteActionDto,
@@ -72,9 +74,6 @@ import type {
  *    接口返回 `voucherRef: null`，前端显示"待补录"。
  */
 
-function round2(value: number): number {
-  return Math.round(value * 100) / 100;
-}
 
 function toNumber(value: string | number | null | undefined): number {
   if (value === null || value === undefined) return 0;
@@ -683,7 +682,28 @@ export class NoteService {
     return { ar, ap };
   }
 
-  /** 状态与动作字典（前端渲染操作按钮用，避免前端硬编码状态机） */
+  /**
+   * 状态与动作字典（前端渲染操作按钮用，避免前端硬编码状态机）。
+   *
+   * ## 为什么 `actions` 里要带 `allowedFrom`（真实缺陷修复）
+   *
+   * 票据页的操作列只列"当前状态允许的动作"，但它原先**没有**拿到权威状态机，
+   * 只能在前端自己写一份过滤 —— 而那份只钉了 `endorse` / `discount` 两个动作，
+   * 其余落到 `return true` 兜底。后果是**已背书 / 已贴现**的票据
+   * （两者都不是终态，默认"未结清"筛选下就在列表里）多出一个「确认持有」按钮，
+   * 而 `NOTE_TRANSITIONS.hold = ['received', 'held']` —— 点下去必然被本服务的
+   * `noteAction()`（第一行的 `validateNoteAction()`）以 400
+   * 「「确认持有」不允许从「已背书」发起，允许的前置状态：已收到 / 持有中」拒绝。
+   *
+   * 这类"前端显示点了必然失败的按钮"与本仓 B-01 已修复的
+   * `finance_viewer` 越权按钮是同一类问题。修法是**把允许前置状态随字典一起下发**
+   * （`allowedFrom` = `NOTE_TRANSITIONS[action]`，唯一真源仍是
+   * `server/common/tax/note-rules.ts`）—— 前端因此**不再持有任何状态机副本**，
+   * 状态机改动不会再出现"前后端各写一份、改一处漏一处"。
+   *
+   * ⚠️ 与 `target`（动作完成后的状态）不同：`target` 是"结果"，
+   * `allowedFrom` 是"前置条件"，前端做按钮显隐要用后者。
+   */
   dictionaries(): {
     statuses: Array<{ value: NoteStatus; label: string }>;
     types: Array<{ value: NoteType; label: string }>;
@@ -693,6 +713,8 @@ export class NoteService {
       target: NoteStatus;
       requiresCounterparty: boolean;
       requiresRate: boolean;
+      /** 该动作允许的前置状态（= `NOTE_TRANSITIONS[action]`），前端据此显隐按钮 */
+      allowedFrom: NoteStatus[];
     }>;
   } {
     const statusOrder: NoteStatus[] = [
@@ -720,6 +742,8 @@ export class NoteService {
         target: NOTE_ACTION_TARGET[value],
         requiresCounterparty: NOTE_ACTION_REQUIRES_COUNTERPARTY.includes(value),
         requiresRate: NOTE_ACTION_REQUIRES_RATE.includes(value),
+        // 展开成新数组：不要把状态机的模块级数组直接交给调用方（可被改写）
+        allowedFrom: [...NOTE_TRANSITIONS[value]],
       })),
     };
   }

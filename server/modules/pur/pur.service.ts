@@ -10,7 +10,7 @@ import {
   DRIZZLE_DATABASE,
   type PostgresJsDatabase,
 } from '@server/platform';
-import { and, count, desc, eq, ne, sum } from 'drizzle-orm';
+import { and, count, desc, eq, ne, sql, sum } from 'drizzle-orm';
 import {
   astAsset,
   erpApBill,
@@ -23,6 +23,8 @@ import {
   purRequest,
 } from '@server/database/schema';
 import { generateBizCode } from '@server/common/utils/biz-code';
+import { round2 } from '@server/common/utils/number';
+import { accumulateCapitalizedValue } from './pur-capitalize';
 import { inputCapitalizeLines, inputIssueLines } from '@server/common/tax/posting';
 import { TaxResolverService } from '@server/modules/tax/tax-resolver.service';
 import { VoucherHookService } from '@server/modules/voucher/voucher-hook.service';
@@ -65,6 +67,8 @@ interface PurRequestRow {
 interface PurOrderRow {
   id: string;
   code: string;
+  /** 已验收金额（聚合列，见 `orderSelect()`） */
+  acceptedAmount: number | null;
   requestId: string | null;
   requestCode: string | null;
   contractId: string | null;
@@ -121,6 +125,56 @@ export class PurService {
     };
   }
 
+  /**
+   * 采购订单的**共享查询列**（列表与详情必须用同一份，否则两处口径会漂移）。
+   *
+   * `acceptedAmount` 是**已验收金额**：该订单所有**有效**验收应付之和。
+   * 关联键是验收时写入的 `erp_ap_bill.source_ref = 'po-accept:{订单号}:{应付号}'`
+   * （见 `acceptOrder`），因此用 `'po-accept:' || code || ':%'` 前缀匹配。
+   *
+   * 为什么必须排除 `voided`：作废的应付已经从资金计划里退出（B1 按 status 判定），
+   * 若把它算进已验收金额，打印件会显示一个**已作废**的金额。
+   * 用白名单语义（`status <> 'voided'`）而不是列举有效态，避免将来新增状态时
+   * 又把它算进来。
+   *
+   * ⚠️ 这里**不**用 `unitPrice * acceptedQuantity` 推导 —— 服务端落库时是
+   * **逐次验收各自 round2** 后相加，与"合计数量一次性取整"不等（单价 0.333、
+   * 分 3 次各验 1 时两者差 1 分）。只有聚合真实落库金额才与应付一致。
+   */
+  private orderSelect() {
+    return {
+      id: purOrder.id,
+      code: purOrder.code,
+      requestId: purOrder.requestId,
+      requestCode: purRequest.code,
+      contractId: purOrder.contractId,
+      contractName: erpContract.name,
+      supplierId: purOrder.supplierId,
+      supplierName: mdSupplier.name,
+      projectId: purOrder.projectId,
+      projectName: erpProject.name,
+      itemName: purOrder.itemName,
+      category: purOrder.category,
+      quantity: purOrder.quantity,
+      unitPrice: purOrder.unitPrice,
+      amount: purOrder.amount,
+      taxRate: purOrder.taxRate,
+      orderDate: purOrder.orderDate,
+      acceptedQuantity: purOrder.acceptedQuantity,
+      acceptDate: purOrder.acceptDate,
+      status: purOrder.status,
+      remark: purOrder.remark,
+      createdAt: purOrder.createdAt,
+      acceptedAmount: sql<number | null>`(
+        SELECT SUM(ap.amount)
+          FROM erp_ap_bill ap
+         WHERE ap.source = 'purchase'
+           AND ap.source_ref LIKE 'po-accept:' || ${purOrder.code} || ':%'
+           AND ap.status <> 'voided'
+      )::float8`,
+    };
+  }
+
   private toOrderItem(row: PurOrderRow): PurOrderItem {
     return {
       id: row.id,
@@ -142,6 +196,7 @@ export class PurService {
       orderDate: row.orderDate,
       acceptedQuantity: row.acceptedQuantity ?? 0,
       acceptDate: row.acceptDate,
+      acceptedAmount: Number(row.acceptedAmount ?? 0),
       status: (row.status ?? 'pending') as PurOrderStatus,
       remark: row.remark,
       createdAt: row.createdAt.toISOString(),
@@ -230,7 +285,7 @@ export class PurService {
         departmentId: dto.departmentId,
         projectId: dto.projectId,
         supplierId: dto.supplierId,
-        amount: String(Math.round(dto.amount * 100) / 100),
+        amount: String(round2(dto.amount)),
         expectDate: dto.expectDate,
         status: 'pending',
         reason: dto.reason,
@@ -313,30 +368,7 @@ export class PurService {
       .from(purOrder)
       .where(where);
     const rows: PurOrderRow[] = await this.db
-      .select({
-        id: purOrder.id,
-        code: purOrder.code,
-        requestId: purOrder.requestId,
-        requestCode: purRequest.code,
-        contractId: purOrder.contractId,
-        contractName: erpContract.name,
-        supplierId: purOrder.supplierId,
-        supplierName: mdSupplier.name,
-        projectId: purOrder.projectId,
-        projectName: erpProject.name,
-        itemName: purOrder.itemName,
-        category: purOrder.category,
-        quantity: purOrder.quantity,
-        unitPrice: purOrder.unitPrice,
-        amount: purOrder.amount,
-        taxRate: purOrder.taxRate,
-        orderDate: purOrder.orderDate,
-        acceptedQuantity: purOrder.acceptedQuantity,
-        acceptDate: purOrder.acceptDate,
-        status: purOrder.status,
-        remark: purOrder.remark,
-        createdAt: purOrder.createdAt,
-      })
+      .select(this.orderSelect())
       .from(purOrder)
       .leftJoin(purRequest, eq(purOrder.requestId, purRequest.id))
       .leftJoin(erpContract, eq(purOrder.contractId, erpContract.id))
@@ -370,9 +402,8 @@ export class PurService {
       );
     }
 
-    // F4：金额按分取整，避免凭证借贷 1 分差
-    const amount =
-      Math.round(dto.quantity * dto.unitPrice * 100) / 100;
+    // F4：金额按分取整，避免凭证借贷 1 分差（round2 为全仓唯一取整实现）
+    const amount = round2(dto.quantity * dto.unitPrice);
     if (dto.taxRate != null && !isVatRate(dto.taxRate)) {
       throw new BadRequestException(
         `非法税率 ${dto.taxRate}，允许值为 0/1/3/6/9/13`
@@ -439,8 +470,14 @@ export class PurService {
             )
           );
         const orderedAmount = Number(orderedRows[0]?.total ?? 0);
-        const cumulative =
-          Math.round((orderedAmount + amount) * 100) / 100;
+        /*
+         * ⚠️ 统一走 `round2`（原为内联 `Math.round(x*100)/100`）。
+         * 这里是**合同额度闸门**：累计口径必须与合同/成本侧同源，否则
+         * "已下单 + 本次"与合同总额的比较会在半分位上分叉（同一组数在闸门处
+         * 判"未超额"、在凭证/成本处却算出超额 1 分）。
+         * 全仓另 5 处同类内联写法已统一迁移到 `round2`；本处与项目权重闸门是遗漏。
+         */
+        const cumulative = round2(orderedAmount + amount);
         if (cumulative > contractAmount + 0.001) {
           throw new BadRequestException(
             `采购订单金额超出合同额度：合同 ${contractRows[0].code} ` +
@@ -548,7 +585,7 @@ export class PurService {
       await assertPeriodOpen(this.db, acceptDate, '采购验收');
       const period = acceptDate.slice(0, 7);
       const unitPrice = Number(order.unitPrice ?? 0);
-      const amount = Math.round(dto.quantity * unitPrice * 100) / 100;
+      const amount = round2(dto.quantity * unitPrice);
       const supplierId = order.supplierId ?? '';
       const projectId = order.projectId;
       const category = order.category ?? 'service';
@@ -564,11 +601,43 @@ export class PurService {
         category === 'service' && projectId
           ? await generateBizCode(tx, erpProjectCost, erpProjectCost.code, 'PC')
           : null;
-      const astCode =
+      /*
+       * 一张采购订单只能有一张固定资产卡片
+       * （`uq_ast_asset_purchase_order`，`WHERE purchase_order_id IS NOT NULL`）。
+       *
+       * 因此分批验收时**不能**再插一张卡：原实现每次验收都无条件 INSERT，
+       * 第 2 次验收必然撞唯一索引 → 409「该采购订单已生成固定资产卡片」，
+       * 于是订单永远收不完（剩余数量每次都被挡回）。正确做法是先看本订单
+       * 是否已有卡片，有则把本次验收金额**累加**进去（金额口径见
+       * `pur-capitalize.ts`，已配单测）。
+       *
+       * 订单行在本事务开头已 `FOR UPDATE`，同一订单的验收是串行的，
+       * 因此这里读到的卡片不会被其它验收并发改动。
+       */
+      const capitalizedCard =
         category === 'equipment'
+          ? ((
+              await tx
+                .select({
+                  id: astAsset.id,
+                  originalValue: astAsset.originalValue,
+                  netValue: astAsset.netValue,
+                })
+                .from(astAsset)
+                .where(eq(astAsset.purchaseOrderId, order.id))
+                .limit(1)
+            )[0] ?? null)
+          : null;
+      const astCode =
+        category === 'equipment' && !capitalizedCard
           ? await generateBizCode(tx, astAsset, astAsset.code, 'AST')
           : null;
-      capitalizeAsset = Boolean(astCode);
+      // 资本化口径由「类别」决定（决定凭证走 1601 还是费用），与是否新建卡片无关
+      capitalizeAsset = category === 'equipment';
+      const capitalizedValues = accumulateCapitalizedValue(
+        capitalizedCard,
+        amount
+      );
 
       const newAccepted = accepted + dto.quantity;
       const fullyAccepted = newAccepted >= quantity;
@@ -610,22 +679,34 @@ export class PurService {
         });
       }
 
-      if (astCode) {
-        await tx.insert(astAsset).values({
-          code: astCode,
-          name: order.itemName,
-          category: 'other',
-          originalValue: String(amount),
-          residualValue: '0',
-          netValue: String(amount),
-          departmentId: null,
-          projectId,
-          purchaseOrderId: order.id,
-          purchaseDate: acceptDate,
-          usefulMonths: 36,
-          status: 'in_use',
-          remark: `采购订单${order.code}验收入库`,
-        });
+      if (category === 'equipment') {
+        // 已有卡片 → 累计；没有 → 建卡。两者都保持「一张订单一张卡」的不变式。
+        if (capitalizedCard && astCode === null) {
+          await tx
+            .update(astAsset)
+            .set({
+              originalValue: String(capitalizedValues.originalValue),
+              netValue: String(capitalizedValues.netValue),
+              updatedAt: new Date(),
+            })
+            .where(eq(astAsset.id, capitalizedCard.id));
+        } else if (astCode) {
+          await tx.insert(astAsset).values({
+            code: astCode,
+            name: order.itemName,
+            category: 'other',
+            originalValue: String(capitalizedValues.originalValue),
+            residualValue: '0',
+            netValue: String(capitalizedValues.netValue),
+            departmentId: null,
+            projectId,
+            purchaseOrderId: order.id,
+            purchaseDate: acceptDate,
+            usefulMonths: 36,
+            status: 'in_use',
+            remark: `采购订单${order.code}验收入库`,
+          });
+        }
       }
     });
 
@@ -691,30 +772,7 @@ export class PurService {
 
   private async getOrderById(id: string): Promise<PurOrderItem> {
     const rows: PurOrderRow[] = await this.db
-      .select({
-        id: purOrder.id,
-        code: purOrder.code,
-        requestId: purOrder.requestId,
-        requestCode: purRequest.code,
-        contractId: purOrder.contractId,
-        contractName: erpContract.name,
-        supplierId: purOrder.supplierId,
-        supplierName: mdSupplier.name,
-        projectId: purOrder.projectId,
-        projectName: erpProject.name,
-        itemName: purOrder.itemName,
-        category: purOrder.category,
-        quantity: purOrder.quantity,
-        unitPrice: purOrder.unitPrice,
-        amount: purOrder.amount,
-        taxRate: purOrder.taxRate,
-        orderDate: purOrder.orderDate,
-        acceptedQuantity: purOrder.acceptedQuantity,
-        acceptDate: purOrder.acceptDate,
-        status: purOrder.status,
-        remark: purOrder.remark,
-        createdAt: purOrder.createdAt,
-      })
+      .select(this.orderSelect())
       .from(purOrder)
       .leftJoin(purRequest, eq(purOrder.requestId, purRequest.id))
       .leftJoin(erpContract, eq(purOrder.contractId, erpContract.id))

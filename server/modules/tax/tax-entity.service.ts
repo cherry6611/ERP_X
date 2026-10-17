@@ -20,6 +20,33 @@ import {
 
 const USCC_PATTERN = /^[0-9A-Za-z]{15}$|^[0-9A-Za-z]{18}$|^[0-9A-Za-z]{20}$/;
 
+/**
+ * §4.7(e)：把 `citSmallMicro` 的布尔三态映射为库里的 `1 / 0 / NULL`。
+ *
+ * ## 为什么要抽成函数（三个状态、四条分支，写成内联三元必然出错）
+ *
+ * | 入参 `dto` | 库里 `existing` | 结果 | 含义 |
+ * |---|---|---|---|
+ * | `undefined` | `null` | `null` | 未传 + 原本未确认 |
+ * | `undefined` | `1` | `1` | 未传 + 原本享受 |
+ * | `undefined` | `0` | `0` | 未传 + 原本不享受 |
+ * | `null` | 任意 | `null` | **显式清空**回未确认 |
+ * | `true` | 任意 | `1` | 确认享受 |
+ * | `false` | 任意 | `0` | 确认不享受 |
+ *
+ * 关键在于区分"未传"与"显式清空"：`dto.citSmallMicro ?? existing` 会把
+ * 两者混为一谈 —— 一旦误标为小微就再也改不回"未确认"，那是**持续的少缴**。
+ * 这与 `vatFilingCycle` / `urbanMaintRate` 是同一处陷阱（本仓已踩过一次）。
+ */
+function resolveCitSmallMicroPatch(
+  dtoValue: boolean | null | undefined,
+  existingValue: boolean | null
+): boolean | null {
+  if (dtoValue === undefined) return existingValue ?? null;
+  if (dtoValue === null) return null;
+  return dtoValue;
+}
+
 export interface TaxEntityItem {
   id: string;
   code: string;
@@ -30,6 +57,12 @@ export interface TaxEntityItem {
   defaultInputRate: number;
   /** 城建税率（百分数）；null = 未配置，附加税计提会拒绝出数 */
   urbanMaintRate: number | null;
+  /** T9：增值税申报周期（小规模免征额度判定的必要要件）；null = 未声明 */
+  vatFilingCycle: 'monthly' | 'quarterly' | null;
+  /** T9：是否启用免征额度判定（false = 放弃免税权，一律不免征） */
+  vatExemptionEnabled: boolean;
+  /** §4.7(e)：企业所得税小型微利资格；null = 未确认（按不享受处理） */
+  citSmallMicro: boolean | null;
   invoiceTitle: string | null;
   invoiceAddress: string | null;
   invoicePhone: string | null;
@@ -48,6 +81,9 @@ export interface TaxEntityInput {
   defaultOutputRate: number;
   defaultInputRate: number;
   urbanMaintRate?: number | null;
+  vatFilingCycle?: 'monthly' | 'quarterly' | null;
+  vatExemptionEnabled?: boolean;
+  citSmallMicro?: boolean | null;
   invoiceTitle?: string | null;
   invoiceAddress?: string | null;
   invoicePhone?: string | null;
@@ -116,6 +152,32 @@ export class TaxEntityService {
             ? null
             : Number(existing.urbanMaintRate)
           : dto.urbanMaintRate,
+      // T9：与 urbanMaintRate 同理 —— null 是有效值（未声明申报周期），
+      // 必须用 `=== undefined` 判断"未传"，否则显式清空会被当成未传而清不掉。
+      vatFilingCycle:
+        dto.vatFilingCycle === undefined
+          ? ((existing.vatFilingCycle ?? null) as 'monthly' | 'quarterly' | null)
+          : dto.vatFilingCycle,
+      vatExemptionEnabled:
+        dto.vatExemptionEnabled === undefined
+          ? existing.vatExemptionEnabled !== 0
+          : dto.vatExemptionEnabled,
+      /*
+       * §4.7(e)：企业所得税小型微利资格。
+       *
+       * 三态语义必须完整保留，因此判断"未传"用 `=== undefined`：
+       *   · `undefined`（未传）→ 保留原值
+       *   · `null`（**显式清空**）→ 回到"未确认"（按不享受处理）
+       *   · `true` / `false` → 明确资格
+       *
+       * 若写成 `dto.citSmallMicro ?? existing`，则"显式清空"会被当成未传
+       * 而永远清不掉 —— 一旦误标为小微就再也改不回未确认，那是**持续的少缴**。
+       * （与 vatFilingCycle / urbanMaintRate 同一处陷阱，本仓已踩过一次。）
+       */
+      citSmallMicro: resolveCitSmallMicroPatch(
+        dto.citSmallMicro,
+        existing.citSmallMicro
+      ),
       invoiceTitle:
         dto.invoiceTitle === undefined ? existing.invoiceTitle : dto.invoiceTitle,
       invoiceAddress:
@@ -240,12 +302,30 @@ export class TaxEntityService {
     }
     // 城建税率与库约束 chk_tax_entity_urban_maint_rate 保持同一口径。
     // 入参层已校验，这里是服务层兼底：任何绕过 DTO 的调用（如脚本、内部服务）也被拦住。
+    //
+    // §4.7 (g)：**只接受法定档位 {1, 5, 7}**，不接受"区间内的任意值"。
+    // 原校验是 `> 0 && <= 100`，于是把 7% 写成小数 `0.07` 会被当成 0.07% 接受
+    // → 附加税少缴 99%，而金额小到不像错误、账面上根本看不出来。
     if (dto.urbanMaintRate !== null && dto.urbanMaintRate !== undefined) {
-      if (!(dto.urbanMaintRate > 0 && dto.urbanMaintRate <= 100)) {
+      if (![1, 5, 7].includes(dto.urbanMaintRate)) {
         throw new BadRequestException(
-          '城建税率须大于 0 且不超过 100（百分数，如 7 表示 7%）'
+          '城建税率只能是 7（市区）、5（县镇）或 1（其他）；' +
+            '请填百分数而非小数（7% 填 7，不是 0.07）'
         );
       }
+    }
+    // T9：申报周期只能是两个已知取值。
+    // 库层有 CHECK 约束，这里做服务层兼底 —— 让脚本/内部调用也拿不到非法值：
+    // 非法值会让免征判定静默失效（落回"不减免"），使用者看不到任何报错。
+    if (
+      dto.vatFilingCycle !== null &&
+      dto.vatFilingCycle !== undefined &&
+      dto.vatFilingCycle !== 'monthly' &&
+      dto.vatFilingCycle !== 'quarterly'
+    ) {
+      throw new BadRequestException(
+        '增值税申报周期仅支持 monthly（按月）或 quarterly（按季）'
+      );
     }
   }
 
@@ -262,6 +342,10 @@ export class TaxEntityService {
         dto.urbanMaintRate === null || dto.urbanMaintRate === undefined
           ? null
           : String(dto.urbanMaintRate),
+      vatFilingCycle: dto.vatFilingCycle ?? null,
+      // §4.7(e)：三态（true / false / NULL）。NULL 表示「未确认」，按不享受处理。
+      citSmallMicro: dto.citSmallMicro ?? null,
+      vatExemptionEnabled: dto.vatExemptionEnabled === false ? 0 : 1,
       invoiceTitle: dto.invoiceTitle ?? null,
       invoiceAddress: dto.invoiceAddress ?? null,
       invoicePhone: dto.invoicePhone ?? null,
@@ -293,6 +377,20 @@ export class TaxEntityService {
         row.urbanMaintRate === null || row.urbanMaintRate === undefined
           ? null
           : Number(row.urbanMaintRate),
+      vatFilingCycle: (row.vatFilingCycle ?? null) as
+        | 'monthly'
+        | 'quarterly'
+        | null,
+      vatExemptionEnabled: row.vatExemptionEnabled !== 0,
+      /*
+       * §4.7(e)：1 → true（享受 5%）、0 → false（25%）、
+       * NULL → null（**未确认**，前端显示「未确认」而不是「否」）。
+       *
+       * 三种取值必须在界面上可区分：把 NULL 显示成「否」会让使用者
+       * 以为"已经确认过不符合"，从而不去补录 —— 而实际是"从未确认"，
+       * 按偏严口径多缴着税。
+       */
+      citSmallMicro: row.citSmallMicro ?? null,
       invoiceTitle: row.invoiceTitle,
       invoiceAddress: row.invoiceAddress,
       invoicePhone: row.invoicePhone,

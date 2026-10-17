@@ -16,6 +16,7 @@ import {
   hrDepartment,
 } from '@server/database/schema';
 import { generateBizCode } from '@server/common/utils/biz-code';
+import { round2 } from '@server/common/utils/number';
 import type {
   AssetChangeAction,
   AssetChangeItem,
@@ -94,9 +95,6 @@ interface AssetChangeRow {
   createdAt: Date;
 }
 
-function round2(value: number): number {
-  return Math.round(value * 100) / 100;
-}
 
 @Injectable()
 export class AssetService {

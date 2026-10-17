@@ -12,6 +12,7 @@ import { and, asc, eq, sql } from 'drizzle-orm';
 import { erpProjectRevenue, finBudget, finExpenseApply, finExpenseClaim } from '@server/database/schema';
 import { unwrapRows } from '@server/common/utils/rows';
 import { DictService } from '@server/modules/system-config/dict.service';
+import { round2 } from '@server/common/utils/number';
 import {
   DEFAULT_FORECAST_THRESHOLD,
   DEFAULT_RATIO_TOLERANCE,
@@ -29,9 +30,6 @@ import type {
   FullBudgetOverview,
 } from '@shared/api.interface';
 
-function round2(value: number): number {
-  return Math.round(value * 100) / 100;
-}
 
 function toNumber(value: string | number | null | undefined): number {
   if (value === null || value === undefined) return 0;

@@ -13,6 +13,7 @@ import {
   hrDepartment,
   purOrder,
 } from '@server/database/schema';
+import { round2 } from '@server/common/utils/number';
 import type {
   BudgetCommitmentSummary,
   BudgetCommitmentSummaryRow,
@@ -75,10 +76,6 @@ interface ClaimRow {
   amount: string | null;
   expenseDate: string | null;
   status: string | null;
-}
-
-function round2(value: number): number {
-  return Math.round(value * 100) / 100;
 }
 
 function toNumber(value: string | number | null | undefined): number {

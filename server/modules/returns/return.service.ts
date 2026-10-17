@@ -12,10 +12,13 @@ import {
 } from '@server/platform';
 import { and, count, desc, eq, inArray, sql } from 'drizzle-orm';
 import {
+  erpApBill,
   erpContract,
   erpProject,
   erpProjectCost,
   erpProjectRevenue,
+  finVoucher,
+  finVoucherLine,
   mdCustomer,
   mdSupplier,
   purOrder,
@@ -38,6 +41,16 @@ import {
   type ReturnStatus,
 } from '@server/common/tax/return-rules';
 import { VoucherHookService } from '@server/modules/voucher/voucher-hook.service';
+// P0-D：销售退货同步登记红字发票（负数发票），让增值税底稿的销项口径随之冲减
+import { InvoiceService } from '@server/modules/finance/invoice.service';
+import { ACCOUNT_ADMIN_EXPENSE, ACCOUNT_AP, ACCOUNT_VAT_INPUT } from '@server/common/tax/account-codes';
+import { round2 } from '@server/common/utils/number';
+import {
+  DEFAULT_SALES_RETURN_TAX_RATE,
+  checkReturnAmount,
+  salesReturnTaxSplit,
+  toNumber,
+} from './sales-return-rules';
 import type {
   CreatePurchaseReturnDto,
   CreateSalesReturnDto,
@@ -63,7 +76,9 @@ import type {
  *
  * ## 凭证口径（需财务确认，见 `server/common/tax/return-rules.ts`）
  *
- * - 采购退货：借 2202 应付账款（含税）/ 贷 1403 原材料（净额）+ 贷 222102 进项税额
+ * - 采购退货：借 2202 应付账款（含税）/ 贷 {原采购净额科目}（净额）+ 贷 222102 进项税额。
+ *   净额科目与原采购入账科目镜像（T-S4）：费用化 6602、设备资本化 1601，见
+ *   `resolvePurchaseNetAccount`；查不到原凭证时回落 6602 并 warn。
  * - 销售退货：借 6001 主营业务收入（净额）+ 借 222101 销项税额 / 贷 1122 应收账款（含税）
  * - 销售退货**不自动红冲成本**（商品是否回库可用需业务判定）
  *
@@ -72,15 +87,6 @@ import type {
  * - `uq_pur_return_voucher_ref` / `uq_sales_return_voucher_ref`：一单只能出一张红字凭证。
  */
 
-function round2(value: number): number {
-  return Math.round(value * 100) / 100;
-}
-
-function toNumber(value: string | number | null | undefined): number {
-  if (value === null || value === undefined) return 0;
-  const parsed = typeof value === 'number' ? value : Number(value);
-  return Number.isFinite(parsed) ? parsed : 0;
-}
 
 function periodOf(date: string): string {
   return date.slice(0, 7);
@@ -92,7 +98,9 @@ export class ReturnService {
 
   constructor(
     @Inject(DRIZZLE_DATABASE) private readonly db: PostgresJsDatabase,
-    private readonly voucherHookService: VoucherHookService
+    private readonly voucherHookService: VoucherHookService,
+    // P0-D：红字发票登记（增值税申报口径必须与账务同步冲减）
+    private readonly invoiceService: InvoiceService
   ) {}
 
   /* ========== 可退数量 ========== */
@@ -370,7 +378,19 @@ export class ReturnService {
       patch.status = 'void';
     } else if (action === 'complete') {
       // 红字凭证：失败进补偿队列，业务状态照常推进
-      const lines = purchaseReturnLines(current.netAmount, current.taxAmount);
+      // T-S4：退货冲减的净额科目必须与原采购入账科目镜像——
+      // 费用化采购借方是 6602、设备资本化是 1601，一律贷 1403 会造成
+      // 「费用只借不冲 + 库存变负数」的双重错配。
+      const netAccountCode = await this.resolvePurchaseNetAccount(current.apBillId);
+      if (!netAccountCode) {
+        this.logger.warn(
+          `采购退货 ${current.code} 未反查到原采购凭证净额科目` +
+            `（apBillId=${current.apBillId ?? 'null'}），回落 ${ACCOUNT_ADMIN_EXPENSE} 管理费用，请人工核对`
+        );
+      }
+      const lines = purchaseReturnLines(current.netAmount, current.taxAmount, {
+        netAccountCode: netAccountCode ?? ACCOUNT_ADMIN_EXPENSE,
+      });
       if (!isBalanced(lines)) {
         throw new BadRequestException(
           `退货分录借贷不平（借 ${lines.reduce((s, l) => s + (l.debit ?? 0), 0)} / ` +
@@ -405,6 +425,62 @@ export class ReturnService {
       `采购退货 ${current.code} ${current.status}→${action} by=${operator}`
     );
     return this.getPurchaseReturn(current.id);
+  }
+
+  /**
+   * T-S4：反查原采购入账的**净额借方科目**（退货贷方必须与它镜像）。
+   *
+   * 链路：`pur_return.ap_bill_id` → `erp_ap_bill.code` →
+   * 凭证（`source_type='ap'` 且 `source_ref='ap:{code}'`，采购验收/应付登记的
+   * 幂等键）→ 借方行中排除 2202 应付与 222102 进项税后的净额科目。
+   *
+   * 为什么必须反查凭证而不是推判定：采购验收按是否建卡分叉——
+   * `inputIssueLines` 借方 6602（费用化）、`inputCapitalizeLines` 借方 1601
+   * （设备资本化），`pur_order` 表上没有标记位，只有凭证是权威记录。
+   *
+   * 返回 null 的两种情形：① 退货单未关联应付单（手工建单）；
+   * ② 原凭证尚未生成（失败进了补偿队列）。由调用方回落默认科目并 warn。
+   */
+  private async resolvePurchaseNetAccount(
+    apBillId: string | null
+  ): Promise<string | null> {
+    if (!apBillId) return null;
+    const billRows = await this.db
+      .select({ code: erpApBill.code })
+      .from(erpApBill)
+      .where(eq(erpApBill.id, apBillId))
+      .limit(1);
+    const apCode = billRows[0]?.code;
+    if (!apCode) return null;
+    const voucherRows = await this.db
+      .select({ id: finVoucher.id })
+      .from(finVoucher)
+      .where(
+        and(
+          eq(finVoucher.sourceType, 'ap'),
+          eq(finVoucher.sourceRef, `ap:${apCode}`)
+        )
+      )
+      .orderBy(desc(finVoucher.createdAt))
+      .limit(1);
+    const voucherId = voucherRows[0]?.id;
+    if (!voucherId) return null;
+    const lineRows = await this.db
+      .select({
+        accountCode: finVoucherLine.accountCode,
+        debit: finVoucherLine.debit,
+      })
+      .from(finVoucherLine)
+      .where(eq(finVoucherLine.voucherId, voucherId));
+    // 净额借方行 = 有发生额、且既不是应付（2202，退货借方冲它）
+    // 也不是进项税（222102，退货单独贷方冲它）的借方行
+    const netLine = lineRows.find(
+      (line) =>
+        Number(line.debit ?? 0) > 0 &&
+        line.accountCode !== ACCOUNT_AP &&
+        line.accountCode !== ACCOUNT_VAT_INPUT
+    );
+    return netLine?.accountCode ?? null;
   }
 
   /* ========== 销售退货 ========== */
@@ -536,20 +612,29 @@ export class ReturnService {
       );
     const returnedAmount = round2(toNumber(returnedRows[0]?.total));
     const revenueAmount = round2(toNumber(revenue.amount));
-    const amount = round2(dto.amount);
-    if (amount <= 0) {
-      throw new BadRequestException('退货金额必须大于 0');
-    }
-    if (amount + returnedAmount > revenueAmount) {
-      throw new BadRequestException(
-        `退货金额 ${amount} 超过可退金额 ${round2(revenueAmount - returnedAmount)}` +
-          `（收入确认 ${revenueAmount}，已退 ${returnedAmount}）`
-      );
-    }
-    // 税率优先取入参，缺省沿用 6%（与收入确认默认税率一致）
-    const taxRate = dto.taxRate ?? 6;
-    const netAmount = round2((amount * 100) / (100 + taxRate));
-    const taxAmount = round2(amount - netAmount);
+    /*
+     * §5.9：累计可退额度闸门与价税分离已抽到 `./sales-return-rules`
+     * （纯函数 + 23 条断言）。价税分离改走权威 `splitTax` —— 原先这里自己写了一遍
+     * `round2(amount*100/(100+rate))`，实测与权威口径在 50 组上结果相同，
+     * 所以是**消除副本**而不是纠错。
+     */
+    const amountCheck = checkReturnAmount({
+      amount: dto.amount,
+      revenueAmount,
+      alreadyReturnedAmount: returnedAmount,
+    });
+    if (!amountCheck.ok) throw new BadRequestException(amountCheck.message);
+    const amount = amountCheck.amount;
+    /*
+     * ⚠️ 落库的 `taxRate` 必须是**实际用到的那个值**（缺省 6%），不能存 null ——
+     * 否则退货单上显示"税率未指定"，而净/税额是按 6% 算出来的，二者对不上。
+     * 所以这里显式再取一次默认（与 `salesReturnTaxSplit` 用的是同一个常量）。
+     */
+    const taxRate = dto.taxRate ?? DEFAULT_SALES_RETURN_TAX_RATE;
+    const { netAmount, taxAmount } = salesReturnTaxSplit({
+      amount,
+      taxRate,
+    });
 
     const code = await generateBizCode(
       this.db,
@@ -648,11 +733,59 @@ export class ReturnService {
           current.returnDate
         );
       }
+      /*
+       * P0-D（T4）：**同步登记红字发票**。
+       *
+       * 原先退货只生成红字凭证（借 6001 / 借 222101 / 贷 1122，分录方向正确），
+       * 而增值税底稿的销项 **100% 来自 `erp_invoice` 台账**
+       * （只取 `direction='sales' AND status='issued'`）。于是：
+       *   · **申报口径不冲减** → 多缴增值税；
+       *   · **账表永久差异** → 底稿每月必然报 `output_mismatch`，
+       *     长期噪声把真实异常淹没（告警疲劳）。
+       *
+       * 红字发票用**负数**金额登记，底稿的 `sum()` 天然把它算作冲减，
+       * 不需要在底稿里为退货写任何特例分支。
+       *
+       * 幂等：`sourceRef` 与凭证共用同一 `sales-return:<单号>`，
+       * `createRedLetterInvoice` 内部按该键查重（且有部分唯一索引兜底），
+       * 因此 `complete` 被重试不会重复冲减。
+       */
+      let redLetterInvoiceId: string | null = null;
+      try {
+        const detail = await this.getSalesReturn(current.id);
+        const invoice = await this.invoiceService.createRedLetterInvoice({
+          direction: 'sales',
+          amount: detail.amount,
+          // 税率与 `salesReturnLines(current.netAmount, current.taxAmount)` 同源：
+          // 红字发票的销项税额必须与红字凭证的 222101 金额一致，否则"票账"又对不上。
+          // `SalesReturnItem.taxRate` 类型上可空（历史兼容），库里 `tax_rate` 是
+          // notNull，因此这里的 `?? 0` 只是类型收窄，不会改变实际取值。
+          taxRate: current.taxRate ?? 0,
+          sourceRef,
+          invoiceDate: current.returnDate,
+          contractId: detail.contractId ?? null,
+          projectId: detail.projectId ?? null,
+          remark: `销售退货红字发票（冲减 ${detail.revenueCode ?? current.code}）`,
+        });
+        redLetterInvoiceId = invoice.id;
+      } catch (error: unknown) {
+        // 红字发票登记失败**不阻断退货完成**：凭证已出、货已退，业务不应被卡住。
+        // 但必须留痕 —— 这是"账表差异"的来源，靠日志与底稿差异项双重暴露。
+        this.logger.error(
+          `销售退货 ${current.code} 红字发票登记失败：${
+            error instanceof Error ? error.message : String(error)
+          }`
+        );
+      }
       patch.status = 'completed';
       patch.completedAt = now;
       patch.voucherRef = voucherResult === 'created' ? sourceRef : null;
       patch.disposalType = disposal;
       patch.costAmount = String(costAmount);
+      // 红字发票 ID 落库：前端与对账需要从退货单直接跳到那张负数发票。
+      // 该字段原本就存在（`SalesReturnItem.redInvoiceId`）却从未被写入 ——
+      // 这也是"退货不开红字发票"这个缺口留下的痕迹。
+      if (redLetterInvoiceId) patch.redInvoiceId = redLetterInvoiceId;
     }
     if (dto.remark) patch.remark = dto.remark;
 
@@ -716,7 +849,9 @@ export class ReturnService {
     const totalCost = Number(costRows[0]?.total ?? 0);
     if (netRevenue <= 0 || totalCost <= 0) return 0;
     const share = Math.min(1, row.netAmount / netRevenue);
-    return Math.round(totalCost * share * 100) / 100;
+    // 统一走 round2：本地 `Math.round(x*100)/100` 对负数量（红冲）取整不对称，
+    // 会导致「原单 + 红冲」成本合计差 1 分（见 shared/number.ts 口径说明）。
+    return round2(totalCost * share);
   }
 
   /* ========== 台账 ========== */

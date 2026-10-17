@@ -31,10 +31,8 @@
  */
 
 import { TAX_RATE_DICTIONARY } from '@shared/tax';
+import { round2 } from '@server/common/utils/number';
 
-function round2(value: number): number {
-  return Math.round(value * 100) / 100;
-}
 
 function toNumber(value: number | string | null | undefined): number {
   if (value === null || value === undefined) return 0;

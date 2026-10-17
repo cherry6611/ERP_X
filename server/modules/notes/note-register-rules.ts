@@ -1,3 +1,4 @@
+import { round2 } from '@server/common/utils/number';
 /**
  * D-02：票据备查簿深化的规则内核。
  *
@@ -23,9 +24,6 @@ import {
   type NoteStatus,
 } from '@server/common/tax/note-rules';
 
-function round2(value: number): number {
-  return Math.round(value * 100) / 100;
-}
 
 function toNumber(value: number | string | null | undefined): number {
   if (value === null || value === undefined) return 0;

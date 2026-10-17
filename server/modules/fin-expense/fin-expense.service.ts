@@ -10,7 +10,7 @@ import {
   DRIZZLE_DATABASE,
   type PostgresJsDatabase,
 } from '@server/platform';
-import { and, asc, count, eq, inArray, or, sql, sum } from 'drizzle-orm';
+import { and, asc, count, eq, inArray, ne, or, sql, sum } from 'drizzle-orm';
 import {
   erpApBill,
   erpProject,
@@ -25,11 +25,11 @@ import { VoucherHookService } from '@server/modules/voucher/voucher-hook.service
 import {
   budgetMatchesDoc,
   docPeriodOf,
-  sumMatchedRecords,
   type BudgetDims,
   type DocDims,
   type ExpenseRecordDims,
 } from '../fin-budget/fin-budget.service';
+import { computeBudgetCheck } from './budget-check';
 import { todayInShanghai } from '@server/common/utils/biz-date';
 import type {
   CreateExpenseApplyDto,
@@ -44,7 +44,13 @@ import type {
 } from '@shared/api.interface';
 
 const APPLY_ACTIONS: readonly ExpenseApplyAction[] = ['approve', 'reject', 'close'];
-const CLAIM_ACTIONS: readonly ExpenseClaimAction[] = ['approve', 'reject'];
+const CLAIM_ACTIONS: readonly ExpenseClaimAction[] = [
+  'approve',
+  'reject',
+  // B12：补齐出口 —— 原实现 approved 是死胡同
+  'pay',
+  'void',
+];
 
 /* 申请状态机：pending → approved/rejected；approved → closed */
 const APPLY_TRANSITIONS: Record<string, Record<string, ExpenseApplyStatus>> = {
@@ -133,31 +139,12 @@ export class FinExpenseService {
     const matchedRows = budgetRows.filter((b: BudgetDims) =>
       budgetMatchesDoc(b, doc)
     );
-    const matched: BudgetDims[] = matchedRows.map(
-      (b: BudgetDims) => ({
-        departmentId: b.departmentId,
-        projectId: b.projectId,
-        expenseCategory: b.expenseCategory,
-        period: b.period,
-      })
-    );
 
-    if (matched.length === 0) {
-      return {
-        hasBudget: false,
-        budgetAmount: 0,
-        executed: 0,
-        occupied: 0,
-        exceeded: false,
-      };
-    }
-
-    const budgetAmount = matchedRows.reduce(
-      (total: number, b: { budgetAmount: string | null }) =>
-        total + Number(b.budgetAmount ?? 0),
-      0
-    );
-
+    /*
+     * ⚠️ 顺序要求：必须先判"无匹配预算"（直接用 budgetRows 的长度），
+     * 再查申请/报销去算占用 —— 否则无预算部门会白跑两次全表查询。
+     * 这里消费 `computeBudgetCheck` 的纯计算部分，查询仍在本方法内。
+     */
     const [applyRows, claimRows] = await Promise.all([
       this.db
         .select({
@@ -193,47 +180,37 @@ export class FinExpenseService {
         ),
     ]);
 
-    const occupiedApplies: ExpenseRecordDims[] = applyRows.map((r) => ({
+    /*
+     * §5.9：闸门计算（占用/已执行/超额判据 + 提示文案）已抽到 `./budget-check`
+     * （纯函数 + 16 条断言）。本方法只负责查数据并把维度映射成该模块的入参。
+     */
+    const toRecord = (
+      r: {
+        id: string;
+        departmentId: string | null;
+        projectId: string | null;
+        expenseCategory: string | null;
+        amount: string | null;
+      },
+      period: string,
+    ): ExpenseRecordDims => ({
       id: r.id,
       departmentId: r.departmentId,
       projectId: r.projectId,
       expenseCategory: r.expenseCategory,
       amount: r.amount,
-      period: docPeriodOf(r.expectDate),
-    }));
-    const occupiedClaims: ExpenseRecordDims[] = claimRows
-      .filter((r) => r.status === 'pending' || r.status === 'escalated')
-      .map((r) => ({
-        id: r.id,
-        departmentId: r.departmentId,
-        projectId: r.projectId,
-        expenseCategory: r.expenseCategory,
-        amount: r.amount,
-        period: docPeriodOf(r.expenseDate),
-      }));
-    const executedClaims: ExpenseRecordDims[] = claimRows
-      .filter((r) => r.status === 'approved')
-      .map((r) => ({
-        id: r.id,
-        departmentId: r.departmentId,
-        projectId: r.projectId,
-        expenseCategory: r.expenseCategory,
-        amount: r.amount,
-        period: docPeriodOf(r.expenseDate),
-      }));
+      period,
+    });
 
-    const occupied =
-      sumMatchedRecords(occupiedApplies, matched) +
-      sumMatchedRecords(occupiedClaims, matched);
-    const executed = sumMatchedRecords(executedClaims, matched);
-
-    return {
-      hasBudget: true,
-      budgetAmount,
-      executed,
-      occupied,
-      exceeded: executed + occupied + doc.amount > budgetAmount,
-    };
+    return computeBudgetCheck({
+      matchedBudgets: matchedRows,
+      applies: applyRows.map((r) => toRecord(r, docPeriodOf(r.expectDate))),
+      claims: claimRows.map((r) => ({
+        ...toRecord(r, docPeriodOf(r.expenseDate)),
+        status: r.status as 'pending' | 'escalated' | 'approved',
+      })),
+      docAmount: doc.amount,
+    });
   }
 
   /** 项目基线：Σ erp_project_cost.amount + 本次 ≤ erp_project.budget */
@@ -641,6 +618,31 @@ export class FinExpenseService {
     return this.getClaimById(inserted[0].id);
   }
 
+  /**
+   * 报销单动作（B12，§7.2）。
+   *
+   * ## 状态机（本轮补齐出口）
+   *
+   * ```
+   *   pending / escalated ──approve──▶ approved ──pay──▶ paid（终态）
+   *          │                             │
+   *          ├──reject──▶ rejected         └──void──▶ voided（终态）
+   * ```
+   *
+   * 原实现只有 `approve` / `reject`，于是：
+   *   · `approved` 是**死胡同** —— 误批准的报销单无法撤销，
+   *     只能去作废它生成的应付单，而作废应付单**不会**同步报销单状态，
+   *     两者从此不一致（报销台账显示"已批准"、应付台账显示"已作废"）；
+   *   · "这笔报销到底付了没有"在报销台账里查不到，必须去应付台账反查。
+   *
+   * ## 各动作的前置条件（不是形式校验）
+   *
+   * · `pay`：须为 `approved`，且**其应付单已 paid** —— 否则是在账上
+   *   标记"已付"而钱还没出，比不标记更糟。
+   * · `void`：须为 `approved`，且**其应付单未支付**（`paidAmount = 0`）。
+   *   已付款的报销作废涉及资金追回，不是系统能单方面决定的事。
+   *   作废同时**作废对应的应付单**，保持两边一致。
+   */
   async claimAction(
     id: string,
     action: ExpenseClaimAction
@@ -668,6 +670,96 @@ export class FinExpenseService {
     if (rows.length === 0) throw new NotFoundException('报销单不存在');
     const claim = rows[0];
     const current = claim.status ?? 'pending';
+
+    /* ── B12：pay / void 走独立分支（前置状态是 approved，不是 pending）── */
+    if (action === 'pay' || action === 'void') {
+      if (current !== 'approved') {
+        throw new BadRequestException(
+          `仅已批准的报销单可${action === 'pay' ? '标记支付' : '作废'}（当前状态 ${current}）`
+        );
+      }
+      const apRows = await this.db
+        .select({
+          id: erpApBill.id,
+          code: erpApBill.code,
+          status: erpApBill.status,
+          paidAmount: erpApBill.paidAmount,
+        })
+        .from(erpApBill)
+        .where(eq(erpApBill.sourceRef, `expense:${claim.code}`))
+        .limit(1);
+      const ap = apRows[0];
+
+      if (action === 'pay') {
+        /*
+         * 前置条件：应付单必须已付款。
+         *
+         * 反过来（报销单标记已付但应付单还是 pending）会在账上产生
+         * "报销已付、应付未付"的矛盾，月末对账时两边都不对。
+         * 这里不做"顺带把应付单也标记已付"—— 付款动作属于出纳，
+         * 必须由付款审批流程驱动，不能在报销单上一步到位。
+         */
+        if (!ap) {
+          throw new BadRequestException(
+            '未找到该报销单对应的应付单，无法标记支付；请先确认应付单是否已生成'
+          );
+        }
+        if (ap.status !== 'paid') {
+          throw new BadRequestException(
+            `对应的应付单 ${ap.code} 尚未支付（状态 ${ap.status ?? 'pending'}、` +
+              `已付 ${Number(ap.paidAmount ?? 0)}）；请先在「财务 → 应付」完成付款后再标记`
+          );
+        }
+        const updated = await this.db
+          .update(finExpenseClaim)
+          .set({ status: 'paid', updatedAt: new Date() })
+          .where(
+            and(eq(finExpenseClaim.id, id), eq(finExpenseClaim.status, 'approved'))
+          )
+          .returning({ id: finExpenseClaim.id });
+        if (updated.length === 0) {
+          throw new ConflictException('该报销单状态已变更，请刷新后重试');
+        }
+        return this.getClaimById(id);
+      }
+
+      // action === 'void'
+      if (ap && Number(ap.paidAmount ?? 0) > 0) {
+        throw new BadRequestException(
+          `对应的应付单 ${ap.code} 已有付款金额 ${Number(ap.paidAmount ?? 0)}，` +
+            `不能作废报销单；已付款的作废涉及资金追回，请先处理付款`
+        );
+      }
+      /*
+       * 作废必须**同时作废应付单**（同事务）。
+       *
+       * 只改报销单会出现"报销已作废、应付还挂着" —— 现金流预测按应付单算流出，
+       * 于是这笔已经取消的钱**仍会占用未来的资金计划**。
+       * 反过来（只作废应付单）则会让报销台账与应付台账不一致。
+       * 两者必须一起变，这也是`source_ref` 这个关联键存在的意义。
+       */
+      await this.db.transaction(async (tx) => {
+        const updated = await tx
+          .update(finExpenseClaim)
+          .set({ status: 'voided', updatedAt: new Date() })
+          .where(
+            and(eq(finExpenseClaim.id, id), eq(finExpenseClaim.status, 'approved'))
+          )
+          .returning({ id: finExpenseClaim.id });
+        if (updated.length === 0) {
+          throw new ConflictException('该报销单状态已变更，请刷新后重试');
+        }
+        if (ap) {
+          await tx
+            .update(erpApBill)
+            .set({ status: 'voided', updatedAt: new Date() })
+            .where(and(eq(erpApBill.id, ap.id), ne(erpApBill.status, 'voided')));
+        }
+      });
+      return this.getClaimById(id);
+    }
+
+    /* ── 原有分支：approve / reject（前置状态是 pending / escalated）── */
     if (current !== 'pending' && current !== 'escalated') {
       throw new BadRequestException(
         `非法的状态流转：${current} 状态不允许执行 ${action} 操作`

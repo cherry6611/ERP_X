@@ -128,21 +128,36 @@ export class CostsController {
 
   @Get()
   async listCosts(
+    @Req() req: Request,
     @Query('projectId') projectId?: string,
     @Query('costType') costType?: string
   ): Promise<CostItem[]> {
-    return this.costsService.listCosts(projectId, costType);
+    return this.costsService.listCosts(
+      projectId,
+      costType,
+      actorFromRequest(req)
+    );
   }
 
+  /**
+   * B10（§6.5.2）：**三个聚合接口此前漏传 actor**。
+   *
+   * `listCosts` 早已正确注入行级过滤，而这三个方法的签名里根本没有 actor 参数 ——
+   * 于是当 `sys_data_scope` 为 `cost` 资源配置了收窄时，**明细被过滤、汇总仍全量**：
+   * 既可越权读取，又直接暴露了被隐藏明细的金额（正是 `AGENTS.md:47` 禁止的
+   * "只在 UI 隐藏"）。此处补齐 actor，与 `listCosts` 同口径。
+   */
   @Get('summary')
   async costSummary(
+    @Req() req: Request,
     @Query('projectId') projectId?: string
   ): Promise<CostTypeSummary[]> {
-    return this.costsService.costSummary(projectId);
+    return this.costsService.costSummary(projectId, actorFromRequest(req));
   }
 
   @Get('dimension-summary')
   async dimensionSummary(
+    @Req() req: Request,
     @Query('dimension') dimension?: string,
     @Query('projectId') projectId?: string
   ): Promise<CostDimensionSummary[]> {
@@ -151,7 +166,11 @@ export class CostsController {
     )
       ? ((dimension ?? 'costType') as CostDimension)
       : 'costType';
-    return this.costsService.dimensionSummary(dim, projectId);
+    return this.costsService.dimensionSummary(
+      dim,
+      projectId,
+      actorFromRequest(req)
+    );
   }
 
   @CanCapability('projects_write')
@@ -170,9 +189,10 @@ export class CostsController {
 
   @Get('timesheets')
   async listTimesheets(
+    @Req() req: Request,
     @Query('projectId') projectId?: string
   ): Promise<Timesheet[]> {
-    return this.costsService.listTimesheets(projectId);
+    return this.costsService.listTimesheets(projectId, actorFromRequest(req));
   }
 
   @Post('timesheets')

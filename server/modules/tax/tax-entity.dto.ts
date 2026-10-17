@@ -1,11 +1,10 @@
 import {
+  IsBoolean,
   IsIn,
   IsNotEmpty,
   IsNumber,
   IsOptional,
-  IsPositive,
   IsString,
-  Max,
   MaxLength,
   Min,
   ValidateIf,
@@ -63,9 +62,46 @@ export class CreateTaxEntityDto {
   @IsOptional()
   @ValidateIf((_, v) => v !== null)
   @IsNumber({ maxDecimalPlaces: 2 })
-  @IsPositive({ message: '城建税率必须大于 0（百分数，如 7 表示 7%）' })
-  @Max(100, { message: '城建税率不得大于 100（百分数口径）' })
+  @IsIn([1, 5, 7], {
+    message:
+      '城建税率只能是 7（市区）、5（县镇）或 1（其他）；请填百分数而非小数（7% 填 7，不是 0.07）',
+  })
   urbanMaintRate?: number | null;
+
+  /**
+   * T9：增值税申报周期（小规模免征额度判定的必要要件）。
+   *
+   * 可选：未声明时底稿不做免征判定（按偏严口径不减免，不会少缴），
+   * 并在差异区提示补录。**不允许**默认成 monthly —— 在季报主体上按月判定
+   * 会在「季度合计 > 30 万但单月都不超 10 万」时错误免征 → 少缴。
+   */
+  @IsOptional()
+  @ValidateIf((_, v) => v !== null)
+  @IsIn(['monthly', 'quarterly'], {
+    message: '增值税申报周期仅支持 monthly（按月）/ quarterly（按季）',
+  })
+  vatFilingCycle?: 'monthly' | 'quarterly' | null;
+
+  /** T9：是否启用免征额度判定；传 false 表示放弃免税权（一律不免征） */
+  @IsOptional()
+  @IsBoolean()
+  vatExemptionEnabled?: boolean;
+
+  /**
+   * §4.7(e)：企业所得税「小型微利企业」资格。
+   *
+   * 三态：`true` 确认享受（5% 实际税负）/ `false` 确认不享受（25%）/
+   * `null` 显式清空回「未确认」。省略该字段表示"不改动"。
+   *
+   * `@ValidateIf((_, v) => v !== null)` 是必须的：不加它，`@IsBoolean()`
+   * 会把显式的 `null` 判为非法 —— 而 `null` 恰恰是"清空回未确认"的合法表达，
+   * 少了它使用者就**无法把误标的小微资格改回去**（只能一直享受 5%，即持续少缴）。
+   * 同一写法见本文件的 `vatFilingCycle`。
+   */
+  @IsOptional()
+  @ValidateIf((_, value) => value !== null)
+  @IsBoolean()
+  citSmallMicro?: boolean | null;
 
   @IsOptional()
   @ValidateIf((_, v) => v !== null)
@@ -135,9 +171,46 @@ export class UpdateTaxEntityDto {
   @IsOptional()
   @ValidateIf((_, v) => v !== null)
   @IsNumber({ maxDecimalPlaces: 2 })
-  @IsPositive({ message: '城建税率必须大于 0（百分数，如 7 表示 7%）' })
-  @Max(100, { message: '城建税率不得大于 100（百分数口径）' })
+  @IsIn([1, 5, 7], {
+    message:
+      '城建税率只能是 7（市区）、5（县镇）或 1（其他）；请填百分数而非小数（7% 填 7，不是 0.07）',
+  })
   urbanMaintRate?: number | null;
+
+  /**
+   * T9：增值税申报周期（小规模免征额度判定的必要要件）。
+   *
+   * 可选：未声明时底稿不做免征判定（按偏严口径不减免，不会少缴），
+   * 并在差异区提示补录。**不允许**默认成 monthly —— 在季报主体上按月判定
+   * 会在「季度合计 > 30 万但单月都不超 10 万」时错误免征 → 少缴。
+   */
+  @IsOptional()
+  @ValidateIf((_, v) => v !== null)
+  @IsIn(['monthly', 'quarterly'], {
+    message: '增值税申报周期仅支持 monthly（按月）/ quarterly（按季）',
+  })
+  vatFilingCycle?: 'monthly' | 'quarterly' | null;
+
+  /** T9：是否启用免征额度判定；传 false 表示放弃免税权（一律不免征） */
+  @IsOptional()
+  @IsBoolean()
+  vatExemptionEnabled?: boolean;
+
+  /**
+   * §4.7(e)：企业所得税「小型微利企业」资格。
+   *
+   * 三态：`true` 确认享受（5% 实际税负）/ `false` 确认不享受（25%）/
+   * `null` 显式清空回「未确认」。省略该字段表示"不改动"。
+   *
+   * `@ValidateIf((_, v) => v !== null)` 是必须的：不加它，`@IsBoolean()`
+   * 会把显式的 `null` 判为非法 —— 而 `null` 恰恰是"清空回未确认"的合法表达，
+   * 少了它使用者就**无法把误标的小微资格改回去**（只能一直享受 5%，即持续少缴）。
+   * 同一写法见本文件的 `vatFilingCycle`。
+   */
+  @IsOptional()
+  @ValidateIf((_, value) => value !== null)
+  @IsBoolean()
+  citSmallMicro?: boolean | null;
 
   @IsOptional()
   @ValidateIf((_, v) => v !== null)

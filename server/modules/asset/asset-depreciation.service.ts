@@ -17,6 +17,8 @@ import {
 } from '@server/database/schema';
 import { generateBizCode } from '@server/common/utils/biz-code';
 import { VoucherHookService } from '@server/modules/voucher/voucher-hook.service';
+import { round2 } from '@server/common/utils/number';
+import { computeDepreciation } from './depreciation-math';
 import type {
   AssetDepreciationItem,
   DepreciatePeriodDto,
@@ -28,9 +30,6 @@ const PERIOD_PATTERN = /^\d{4}-(0[1-9]|1[0-2])$/;
 
 const DEPRECIABLE_STATUSES = ['in_use', 'idle', 'repair'];
 
-function round2(value: number): number {
-  return Math.round(value * 100) / 100;
-}
 
 /** 单个资产净值不足等可跳过场景：回滚该资产折旧插入并继续处理其余资产 */
 class DepreciationSkipError extends Error {
@@ -168,21 +167,22 @@ export class AssetDepreciationService {
     let adminDepreciation = 0;
     for (const asset of assets) {
       if (doneThisPeriod.has(asset.id)) continue;
-      const usefulMonths = asset.usefulMonths ?? 36;
       const done = doneTotal.get(asset.id) ?? 0;
-      if (done >= usefulMonths) continue;
 
-      const originalValue = Number(asset.originalValue ?? 0);
-      const residualValue = Number(asset.residualValue ?? 0);
-      const netValue = Number(asset.netValue ?? 0);
-      const remaining = round2(netValue - residualValue);
-      if (remaining < 0.01) continue;
-
-      const depreciableBase = round2(originalValue - residualValue);
-      let amount = round2(depreciableBase / usefulMonths);
-      const isLastMonth = done + 1 >= usefulMonths;
-      if (isLastMonth || amount > remaining) amount = remaining;
-      if (amount < 0.01) continue;
+      /*
+       * §5.9 + 覆盖率：折旧**计算**已抽到 `./depreciation-math`（纯函数，15 条断言）。
+       * 本处只负责取参数与落库 —— 尾差吸收、残值下限、不足 1 分不提这些判据
+       * 都在那个模块里，且逐条有测试（原先内联在这里，无法单测）。
+       */
+      const decision = computeDepreciation({
+        originalValue: Number(asset.originalValue ?? 0),
+        residualValue: Number(asset.residualValue ?? 0),
+        netValue: Number(asset.netValue ?? 0),
+        usefulMonths: asset.usefulMonths,
+        donePeriods: done,
+      });
+      if (decision.kind === 'skip') continue;
+      const amount = decision.amount;
 
       const amountStr = amount.toFixed(2);
       const isGpu = asset.category === 'server_gpu';

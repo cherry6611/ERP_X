@@ -1,16 +1,17 @@
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Inject,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import {
   DRIZZLE_DATABASE,
   type PostgresJsDatabase,
 } from '@server/platform';
-import { and, asc, desc, eq, inArray, lte, or, sql, type SQL } from 'drizzle-orm';
-import { Logger } from '@nestjs/common';
+import { and, asc, desc, eq, inArray, lte, ne, or, sql, type SQL } from 'drizzle-orm';
 import {
   erpContract,
   erpCostAllocation,
@@ -24,13 +25,17 @@ import {
   mdSupplier,
 } from '@server/database/schema';
 import { generateBizCode } from '@server/common/utils/biz-code';
+import { extractPostgresErrorCode } from '@server/common/utils/postgres-error';
 // D-07：复用 D-03 的最大余数法分摊引擎（保证 Σ share === amount）
 import { allocateAmount } from '@server/modules/finance-reports/aux-combination-rules';
 import { VoucherHookService } from '@server/modules/voucher/voucher-hook.service';
 import { costConfirmLines } from '@server/common/tax/posting';
 import { todayInShanghai, monthInShanghai } from '@server/common/utils/biz-date';
+import { assertPeriodOpen } from '@server/common/utils/period-guard';
 import { ActorAccessService } from '@server/common/auth/actor-access.service';
+import { DataScopeService } from '@server/common/auth/data-scope.service';
 import type { RequestActor } from '@server/common/auth/actor';
+import { round2 } from '@server/common/utils/number';
 import {
   buildRedflushSourceRef,
   isRedflushSourceRef,
@@ -67,9 +72,6 @@ const COST_TYPES: CostType[] = [
 const FLEX_EMPLOYMENT_TYPES = ['part_time', 'flex'];
 
 /** 金额四舍五入到分（与本仓其他地方口径一致） */
-function round2(value: number): number {
-  return Math.round(value * 100) / 100;
-}
 
 const COST_TYPE_LABELS: Record<string, string> = {
   labor: '人力成本',
@@ -92,16 +94,31 @@ export class CostsService {
   constructor(
     @Inject(DRIZZLE_DATABASE) private readonly db: PostgresJsDatabase,
     private readonly actorAccess: ActorAccessService,
-    private readonly voucherHookService: VoucherHookService
+    private readonly voucherHookService: VoucherHookService,
+    private readonly dataScope: DataScopeService
   ) {}
 
+  /**
+   * B-2：项目成本的可见范围（口径 = 项目）。
+   *
+   * 不传 `actor` 表示**系统内部调用**（如红冲后的回读），不注入过滤；
+   * HTTP 边界（`costs.controller`）必须传，否则项目级隔离对这个列表就不生效。
+   */
   async listCosts(
     projectId?: string,
-    costType?: string
+    costType?: string,
+    actor?: RequestActor
   ): Promise<CostItem[]> {
     const conditions: SQL[] = [];
     if (projectId) conditions.push(eq(erpProjectCost.projectId, projectId));
     if (costType) conditions.push(eq(erpProjectCost.costType, costType));
+    if (actor) {
+      const scope = await this.dataScope.conditionFor('cost', actor, {
+        primary: erpProjectCost.projectId,
+      });
+      // `undefined` = 未配置/全量；`1 = 0` = 空集（fail-closed），两者语义不同不能混用
+      if (scope) conditions.push(scope);
+    }
     const rows = await this.db
       .select({
         cost: erpProjectCost,
@@ -137,14 +154,48 @@ export class CostsService {
     }));
   }
 
+  /**
+   * B10（§6.5.2）：成本聚合的**行级可见范围**。
+   *
+   * `listCosts` 早已正确注入 `conditionFor('cost', actor, ...)`，但
+   * `costSummary` / `dimensionSummary` / `listTimesheets` 的**签名里根本没有
+   * actor 参数**（三个接口在 controller 里也没传）—— 于是当 `sys_data_scope`
+   * 为 `cost` 资源配置了 `self`/`dept`/`custom` 收窄时：
+   *
+   *   · **明细列表被过滤**（员工只看到自己的成本）；
+   *   · **汇总金额与工时仍返回全量**。
+   *
+   * 这既可越权读取，又直接暴露了被隐藏明细的金额 —— 正是 `AGENTS.md:47`
+   * 禁止的"只在 UI 隐藏"。
+   *
+   * ⚠️ 触发条件是"配置了 cost 的行级权限"，因此当前若未配置该资源，三者行为
+   * 一致、无实际差异 —— 属**"配置即踩坑"**的形态。但正因为它在配置那天才爆发，
+   * 更不能靠"现在没问题"来搪塞。
+   *
+   * 抽成共用方法的原因：三个入口必须**同一口径**，分别内联就是下一次分叉的起点
+   * （B5 期初现金那处遗漏正是这么来的）。
+   */
+  private async costScopeCondition(
+    actor?: RequestActor
+  ): Promise<SQL | undefined> {
+    if (!actor) return undefined;
+    return this.dataScope.conditionFor('cost', actor, {
+      primary: erpProject.id,
+    });
+  }
+
   /** 多维成本汇总：costType / department / contract / period */
   async dimensionSummary(
     dimension: CostDimension,
-    projectId?: string
+    projectId?: string,
+    actor?: RequestActor
   ): Promise<CostDimensionSummary[]> {
-    const where = projectId
-      ? eq(erpProjectCost.projectId, projectId)
-      : undefined;
+    const conditions: SQL[] = [];
+    if (projectId) conditions.push(eq(erpProjectCost.projectId, projectId));
+    const scope = await this.costScopeCondition(actor);
+    // `undefined` = 未配置/全量；`1 = 0` = 空集（fail-closed），两者语义不同不能混用
+    if (scope) conditions.push(scope);
+    const where = conditions.length > 0 ? and(...conditions) : undefined;
     if (dimension === 'costType') {
       const rows = await this.db
         .select({
@@ -221,14 +272,21 @@ export class CostsService {
     }));
   }
 
-  async costSummary(projectId?: string): Promise<CostTypeSummary[]> {
+  async costSummary(
+    projectId?: string,
+    actor?: RequestActor
+  ): Promise<CostTypeSummary[]> {
+    const conditions: SQL[] = [];
+    if (projectId) conditions.push(eq(erpProjectCost.projectId, projectId));
+    const scope = await this.costScopeCondition(actor);
+    if (scope) conditions.push(scope);
     const rows = await this.db
       .select({
         costType: erpProjectCost.costType,
         total: sql<number>`coalesce(sum(${erpProjectCost.amount}), 0)::float8`,
       })
       .from(erpProjectCost)
-      .where(projectId ? eq(erpProjectCost.projectId, projectId) : undefined)
+      .where(conditions.length > 0 ? and(...conditions) : undefined)
       .groupBy(erpProjectCost.costType);
     return rows
       .filter((row) => COST_TYPES.includes((row.costType ?? '') as CostType))
@@ -271,6 +329,21 @@ export class CostsService {
       'CST'
     );
     const occurredDate = dto.occurredDate ?? todayInShanghai();
+    // B4 / D-27：**成本登记的期间闸门**。
+    //
+    // 原实现整体缺这道校验（全仓 `assertPeriodOpen` 的 18 处引用里，成本模块 0 处），
+    // 于是产生**永久死信**：
+    //   ① 3 月已关账。6 月补录 3 月 20 日的成本 → 闸门缺失 → `erp_project_cost`
+    //      以 `period = '2026-03'` **成功落库**（已关账月份的账里凭空多出成本）；
+    //   ② 随后调 `generateVoucherDraft` → 凭证钩子期间已结账 → 返回 `failed`；
+    //   ③ 失败写入 `comp_voucher_job` 补偿队列；
+    //   ④ **重试每次撞同一道门** —— 期间永远是关的，最多 8 次后置 `dead`。
+    //      **凭证永远不会生成**，队列里留下永久 dead 记录，运维看到的是
+    //      "有业务无凭证"的悬空账。
+    //
+    // 修法：与 ar/ap/revenues 一致，**在业务写入之前**拒绝，而不是
+    // "先落库、后失败、进死信"。
+    await assertPeriodOpen(this.db, occurredDate, '登记成本');
     const rows = await this.db
       .insert(erpProjectCost)
       .values({
@@ -342,12 +415,20 @@ export class CostsService {
     };
   }
 
-  async listTimesheets(projectId?: string): Promise<Timesheet[]> {
+  async listTimesheets(
+    projectId?: string,
+    actor?: RequestActor
+  ): Promise<Timesheet[]> {
+    const conditions: SQL[] = [];
+    if (projectId) conditions.push(eq(erpTimesheet.projectId, projectId));
+    // B10：工时同样按项目归属过滤（与成本同一资源口径）
+    const scope = await this.costScopeCondition(actor);
+    if (scope) conditions.push(scope);
     const rows = await this.db
       .select({ sheet: erpTimesheet, projectName: erpProject.name })
       .from(erpTimesheet)
       .leftJoin(erpProject, eq(erpTimesheet.projectId, erpProject.id))
-      .where(projectId ? eq(erpTimesheet.projectId, projectId) : undefined)
+      .where(conditions.length > 0 ? and(...conditions) : undefined)
       .orderBy(desc(erpTimesheet.createdAt));
     return rows.map((row) => ({
       id: row.sheet.id,
@@ -375,7 +456,16 @@ export class CostsService {
       .from(erpProject)
       .where(eq(erpProject.id, dto.projectId));
     if (project.length === 0) throw new NotFoundException('项目不存在');
+    /*
+     * 工时上下界。> 24 显然是录入错误（把 8 输成 80），而它会直接让成本放大 10 倍；
+     * 库层有 `chk_timesheet_hours_range` 兜底，这里给可读提示。
+     */
     if (dto.hours <= 0) throw new BadRequestException('工时必须大于 0');
+    if (dto.hours > 24) {
+      throw new BadRequestException(
+        `一条工时不能超过 24 小时（当前 ${dto.hours}）—— 请确认是否把小时数填错了`
+      );
+    }
 
     const employeeSelect = {
       id: mdEmployee.id,
@@ -419,6 +509,48 @@ export class CostsService {
     const employeeId: string = employee.id;
     if (!roleName) {
       throw new BadRequestException('缺少角色，无法计算费率（请为员工配置岗位角色，或在登记时填写角色）');
+    }
+    // B4：登记工时同样受期间闸门约束。
+    //
+    // 工时**确认**时才落成本，但工作日期在**登记**时就确定了：
+    // 允许往已关账期间登记工时，等于为后面的"确认即死信"埋好了引信。
+    // 因此这里按 `workDate` 校验 —— 与成本落库时的 `period` 同源。
+    await assertPeriodOpen(this.db, dto.workDate, '登记工时');
+    /*
+     * B8：**同人 + 同项目 + 同日查重**。
+     *
+     * 原先完全没有查重，也没有库层唯一约束，于是"连点两次提交"或"网络重试"
+     * 会产生两条完全相同的工时，两条都会被确认，**各生成一笔成本与一张凭证**
+     * —— 成本翻倍，而事后从 `erp_project_cost` 看不出来（两条的 source_ref
+     * 不同，看起来就是两次真实工作）。
+     *
+     * 库层已加部分唯一索引（`uq_erp_timesheet_employee_project_date`，
+     * 排除 confirmed），这里先查一次是为了给出**可理解的中文提示**并指出
+     * 那条已有记录的单号 —— 直接吃库层的 23505 只会得到一句
+     * "记录已存在，请勿重复提交"，使用者不知道该怎么办。
+     *
+     * 为什么也拦 `submitted`：已提交但未确认的工时同样没算过钱，
+     * 允许它重复就只是把问题推迟到确认那一步。
+     */
+    const duplicated = await this.db
+      .select({ code: erpTimesheet.code, status: erpTimesheet.status })
+      .from(erpTimesheet)
+      .where(
+        and(
+          eq(erpTimesheet.employeeId, employeeId),
+          eq(erpTimesheet.projectId, dto.projectId),
+          eq(erpTimesheet.workDate, dto.workDate),
+          ne(erpTimesheet.status, 'confirmed')
+        )
+      )
+      .limit(1);
+    if (duplicated.length > 0) {
+      throw new ConflictException(
+        `${employeeName} 在 ${dto.workDate} 已对该项目登记过工时` +
+          `（${duplicated[0].code}，状态 ${duplicated[0].status ?? 'draft'}）。` +
+          `同一天同一项目的多条工时会在「确认」时各自生成一笔成本与凭证，导致成本翻倍；` +
+          `请改为修改已有记录的工时数，或先将其驳回/确认后再登记`
+      );
     }
     const code = await generateBizCode(
       this.db,
@@ -494,6 +626,13 @@ export class CostsService {
         .set({ status: 'draft', updatedAt: new Date() })
         .where(eq(erpTimesheet.id, id));
     } else {
+      // B4：**确认工时**是成本真正落库的那一步，期间闸门必须在这里。
+      //
+      // 历史数据里可能存在"在闸门缺失时期登记进已关账期间"的待确认工时，
+      // 因此在确认入口再拦一次（登记侧已拦，但旧数据绕过不了这一步）。
+      // 拦在业务写入之前 —— 否则成本落库成功、凭证永久失败，补偿队列堆死信。
+      const workDateForGuard = sheet.workDate ?? todayInShanghai();
+      await assertPeriodOpen(this.db, workDateForGuard, '确认工时生成成本');
       const costCode = await generateBizCode(
         this.db,
         erpProjectCost,
@@ -726,6 +865,9 @@ export class CostsService {
     if (!COST_TYPES.includes(dto.costType)) {
       throw new BadRequestException('非法的成本类型');
     }
+    // B4：分摊落库写入 `period = dto.period`，因此按该期间校验期间闸门。
+    // 与成本登记同因：闸门缺失会让分摊落进已关账期间、凭证永久失败进死信。
+    await assertPeriodOpen(this.db, dto.period, '成本分摊');
     let departmentId: string | null = null;
     if (project[0].deptName) {
       const dept = await this.db
@@ -848,6 +990,8 @@ export class CostsService {
         );
       }
     }
+    // B4：批量分摊与单目标分摊同因，期间闸门按 `dto.period` 校验。
+    await assertPeriodOpen(this.db, dto.period, '成本分摊');
 
     // ① 分摊计算（纯函数，事务外）
     const allocation = allocateAmount({
@@ -1027,6 +1171,13 @@ export class CostsService {
     const voucherDate =
       source.occurredDate ??
       (source.period ? `${source.period}-01` : todayInShanghai());
+    // B4：**成本红冲也必须有期间闸门**。
+    //
+    // 红冲跟随原成本的期间（`source.period`），而不是"今天" —— 这一点本身是对的
+    // （红冲要冲在同一个期间才能抵掉原分录），但正因为如此，一旦原成本落在
+    // 已关账期间，红冲就会写进那个期间且凭证必然失败：错误无法被纠正，
+    // 只能先把期间反结账。这里在写入前明确拒绝并给出可执行的指引。
+    await assertPeriodOpen(this.db, voucherDate, '成本红冲');
     let insertedId = '';
     try {
       await this.db.transaction(async (tx) => {
@@ -1054,7 +1205,7 @@ export class CostsService {
           .where(eq(erpProjectCost.id, source.id));
       });
     } catch (error) {
-      if (this.extractPostgresErrorCode(error) === '23505') {
+      if (extractPostgresErrorCode(error) === '23505') {
         throw new BadRequestException(
           `成本 ${source.code} 已红冲，请勿重复操作`
         );
@@ -1089,14 +1240,4 @@ export class CostsService {
     return found;
   }
 
-  private extractPostgresErrorCode(error: unknown): string | undefined {
-    let current: unknown = error;
-    for (let depth = 0; depth < 4 && current; depth += 1) {
-      if (typeof current !== 'object') break;
-      const { code, cause } = current as { code?: unknown; cause?: unknown };
-      if (typeof code === 'string') return code;
-      current = cause;
-    }
-    return undefined;
-  }
 }

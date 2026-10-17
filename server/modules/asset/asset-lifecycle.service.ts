@@ -27,6 +27,11 @@ import {
   assetImpairmentLines,
 } from '@server/common/tax/posting';
 import { VoucherHookService } from '@server/modules/voucher/voucher-hook.service';
+import { round2 } from '@server/common/utils/number';
+import {
+  netBookValueOf,
+  toNumber,
+} from './asset-book-value';
 import type {
   AssetDisposalItem,
   AssetImpairmentItem,
@@ -61,15 +66,6 @@ const DISPOSABLE_STATUSES = ['in_use', 'idle', 'repair'];
 const IMPAIRABLE_STATUSES = ['in_use', 'idle', 'repair'];
 const DISPOSAL_TYPES = ['sale', 'scrap', 'donate'] as const;
 
-function round2(value: number): number {
-  return Math.round(value * 100) / 100;
-}
-
-function toNumber(value: string | number | null | undefined): number {
-  if (value === null || value === undefined) return 0;
-  const parsed = typeof value === 'number' ? value : Number(value);
-  return Number.isFinite(parsed) ? parsed : 0;
-}
 
 /** 业务月末（业务时区概念上的当月最后一天，仅用于凭证日期） */
 function periodEndDate(period: string): string {
@@ -170,10 +166,11 @@ export class AssetLifecycleService {
     accumulatedDepreciation: number,
     impairment: number
   ): number {
-    const original = toNumber(asset.originalValue);
-    return round2(
-      Math.max(original - accumulatedDepreciation - impairment, 0)
-    );
+    return netBookValueOf({
+      originalValue: asset.originalValue,
+      accumulatedDepreciation,
+      accumulatedImpairment: impairment,
+    });
   }
 
   /* ========== D-08 ③：减值测试 ========== */
@@ -423,21 +420,25 @@ export class AssetLifecycleService {
     const accumulatedImpairment = await this.totalImpairment(params.assetId);
     const accumulated = await this.totalDepreciation(params.assetId);
     const original = round2(toNumber(asset.originalValue));
-    const netBookValue = round2(
-      Math.max(original - accumulated - accumulatedImpairment, 0)
-    );
-    const income = round2(Math.max(params.disposalIncome ?? 0, 0));
+    /* 净值口径唯一：见 ./asset-book-value（三处调用必须同源） */
+    const netBookValue = netBookValueOf({
+      originalValue: original,
+      accumulatedDepreciation: accumulated,
+      accumulatedImpairment,
+    });
+    const netIncome = round2(Math.max(params.disposalIncome ?? 0, 0));
     const rate = params.taxRate ?? 0;
-    // 销项税按含税收入倒算，与 shared/tax.splitTax 口径一致
-    const taxAmount =
-      income > 0 && rate > 0
-        ? round2(Math.round(((income * rate) / (100 + rate)) * 100) / 100)
-        : 0;
+    // 口径（以 UI 标签 "处置收入（不含税）" 为准，勿改）：
+    //   · 传入/落库的 `disposalIncome` 是**不含税净额**；
+    //   · 销项税 = 净额 × 税率 / 100（不在净额内部倒算，否则会少提税）；
+    //   · 银行实收（价税合计）= 净额 + 销项税。
+    // `assetDisposalLines` 需要的正是「不含税收入 + 销项税」这一对，直接透传即可。
+    const taxAmount = netIncome > 0 && rate > 0 ? round2((netIncome * rate) / 100) : 0;
     const { lines, gainLoss } = assetDisposalLines({
       originalValue: original,
       accumulatedDepreciation: accumulated,
       impairmentProvision: accumulatedImpairment,
-      disposalIncome: income,
+      disposalIncome: netIncome,
       outputTax: taxAmount,
       disposalType: params.disposalType,
     });
@@ -562,12 +563,14 @@ export class AssetLifecycleService {
     }
 
     const accumulatedImpairment = await this.totalImpairment(disposal.assetId);
+    // 同 previewDisposal：落库的 disposalIncome 与 taxAmount 均为不含税净额/由其算出的税额，
+    // 直接透传（两者已是「不含税收入 + 销项税」这一对）。
     const { lines, gainLoss } = assetDisposalLines({
       originalValue: toNumber(disposal.originalValue),
       accumulatedDepreciation: toNumber(disposal.accumulatedDepreciation),
       impairmentProvision: accumulatedImpairment,
-      disposalIncome: toNumber(disposal.disposalIncome),
-      outputTax: toNumber(disposal.taxAmount),
+      disposalIncome: round2(toNumber(disposal.disposalIncome)),
+      outputTax: round2(toNumber(disposal.taxAmount)),
       disposalType: (disposal.disposalType ?? 'scrap') as
         | 'sale'
         | 'scrap'
@@ -817,9 +820,11 @@ export class AssetLifecycleService {
       accumulatedDepreciation: accumulated,
       accumulatedImpairment,
       residualValue: round2(toNumber(asset.residualValue)),
-      netBookValue: round2(
-        Math.max(original - accumulated - accumulatedImpairment, 0)
-      ),
+      netBookValue: netBookValueOf({
+        originalValue: original,
+        accumulatedDepreciation: accumulated,
+        accumulatedImpairment,
+      }),
       purchaseOrderId: asset.purchaseOrderId,
       departmentName: await this.departmentName(asset.departmentId),
       projectName: await this.projectName(asset.projectId),
