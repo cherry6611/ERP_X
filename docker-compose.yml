@@ -55,6 +55,8 @@ services:
       LLM_MODEL: ${LLM_MODEL:-}
       LOG_DIR: ${LOG_DIR:-/app/logs}
       APP_BASE_URL: ${APP_BASE_URL:-}
+      # 仅本地 HTTP 演示可设 false；生产 HTTPS 必须留空（默认 Secure）。
+      COOKIE_SECURE: ${COOKIE_SECURE:-}
       ENABLE_SCHEDULER: ${ENABLE_SCHEDULER:-true}
       # 直接暴露 3000 时必须为 0，否则 X-Forwarded-For 可伪造；
       # Nginx/SLB 前置时在宿主 .env 显式设 TRUST_PROXY_HOPS=1。

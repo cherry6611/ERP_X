@@ -461,6 +461,14 @@ export class AuthController {
   }
 
   private secureFlag(): string {
+    /*
+     * 本地 Docker 演示/联调可能直接走 HTTP（127.0.0.1 或局域网 IP），
+     * 浏览器不会把 Secure Cookie 回传到非 HTTPS 源，表现为“登录 201 后 /me 401”。
+     * 仅允许显式 `COOKIE_SECURE=false` 覆盖；生产不要设置该项。
+     */
+    const override = (process.env.COOKIE_SECURE ?? '').toLowerCase();
+    if (override === 'false') return '';
+    if (override === 'true') return '; Secure';
     const base = (process.env.APP_BASE_URL ?? '').toLowerCase();
     // 修复：原判断为 `NODE_ENV === 'production'`，NODE_ENV 写成 'prod'/留空时
     // 会把带会话 token 的 Cookie 以**非 Secure** 下发（明文网络可窃取）。
