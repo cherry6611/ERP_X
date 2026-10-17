@@ -649,7 +649,25 @@ async function main() {
     const lastRound = perAccept[perAccept.length - 1];
     record(
       '服务类订单分批验收 3 次（每次 1 件）全部成功',
-      perAccept.length === qty && perAccept.every((r) => r.wrote > 0 && !r.http.length),
+      /*
+       * ⚠️ 2026-10-19：**429（限流）不算失败**。
+       *
+       * 连续多轮跑走查会把全局限速打满，验收请求被 429 拦下后由前端重试，
+       * 数据侧仍然正确（实测 `wrote=1 / accepted=1,2,3 / ap=1,2,3` 全部到位），
+       * 但 `http` 日志里留了 429 —— 原断言 `!r.http.length` 于是把
+       * **"我跑得太快"记成了"功能坏了"**。
+       *
+       * 判据改为：**不出现 429 以外的 ≥400**。真正的功能失败会是 400/409/500，
+       * 那类仍然会被抓到；429 只说明需要放慢，不能当作产品缺陷。
+       */
+      perAccept.length === qty &&
+        /*
+         * ⚠️ `r.http` 是**对象数组** `[{ status, url }]`（详情里打印的 `[429]`
+         * 是 `.map((h) => h.status)` 之后的样子）。我第一版写成 `Number(s) === 429`
+         * —— 对对象取 Number 得 `NaN`，条件恒假，于是"改完仍然失败"。
+         * 正确写法是取 `h.status`。
+         */
+        perAccept.every((r) => r.wrote > 0 && r.http.every((h) => Number(h.status) === 429)),
       `各轮=${JSON.stringify(perAccept.map((r) => ({ round: r.round, wrote: r.wrote, accepted: r.accepted, ap: r.apCount, http: r.http.map((h) => h.status) })))}`,
     );
     const poFinal = await sql`SELECT accepted_quantity, status, accept_date FROM pur_order WHERE id = ${po.id}`;
@@ -1119,6 +1137,24 @@ async function main() {
     /* 2.3 变更/转移：调拨必须能填目标 */
     // ⚠️ 「发起变更」是**资产台账**表格的**行内**按钮（asset-columns.tsx），
     //    不在「变更审批」Tab 上 —— 在变更审批 Tab 上找它是找不到的。
+    /*
+     * ⚠️ 2026-10-19：调拨要求 `targetDepartmentId / targetProjectId` 至少一个，
+     * 而「目标部门」下拉的选项来自 `hr_department`。库里若没有部门，
+     * 下拉就是空的 → 选不到 → 服务端拒（`调拨必须至少指定目标部门或目标项目`），
+     * 断言会把"环境没有主数据"记成"功能坏了"。
+     *
+     * 本脚本必须**自给自足**：没有部门就自建一个 `[API_TEST]` 夹具部门，
+     * 并在收尾的清理段里按引用情况删除（与 `walk-hr-costs` 同一做法）。
+     */
+    let createdDept = null;
+    const existingDept = (await sql`SELECT id, name FROM hr_department ORDER BY code LIMIT 1`)[0];
+    if (!existingDept) {
+      createdDept = (await sql`
+        INSERT INTO hr_department (code, name)
+        VALUES (${`APIDPT${String(Date.now()).slice(-12)}`}, ${`${TAG} 调拨目标部门`})
+        RETURNING id, name`)[0];
+      console.log(`  （库里无部门，已自建夹具部门 ${createdDept.name}）`);
+    }
     await page.goto(`${APP}/asset`, { settleMs: 2400 });
     await sleep(1400);
     const beforeChange = (await sql`SELECT count(*)::int AS n FROM ast_change`)[0].n;
@@ -1339,8 +1375,17 @@ async function main() {
        * 但**不再吞掉信息**。
        */
       const discStepRate = await fillByLabel(page, '贴现率', String(rate)).catch((e) => `err:${String(e?.message ?? e).slice(0, 40)}`);
-      const discStepDate = await setDateField(page, '贴现日', today()).catch((e) => `err:${String(e?.message ?? e).slice(0, 40)}`);
-      const discStepPreview = await clickButton(page, '试算', { settleMs: 1700 }).catch(() => 'no-btn');
+      /*
+       * ⚠️ 2026-10-19 读源码后修正两处（此前是**猜的控件类型**，所以必然失败）：
+       *
+       * `client/src/pages/notes/components/NoteActionDialog.tsx`：
+       *   · L177-182：贴现日是普通 `<Input id="note-discount-date" type="date">`，
+       *     **不是**日历 DateField —— 所以 `setDateField`（点 trigger + 找 `[data-day]`）
+       *     必然 `day-not-found`。改用 `fillByLabel`（本就支持 INPUT，走原生 setter + input/change）。
+       *   · L186-192：试算按钮的**真实文案是「试算贴现息与分录」**，不是「试算」。
+       */
+      const discStepDate = await fillByLabel(page, '贴现日', today()).catch((e) => `err:${String(e?.message ?? e).slice(0, 40)}`);
+      const discStepPreview = await clickButton(page, '试算贴现息与分录', { settleMs: 1700 }).catch(() => 'no-btn');
       const prevText = ((await dialogInfo(page))?.text ?? '').replace(/\s+/g, ' ');
       // 「贴现息」在弹窗文案里出现两次（"试算贴现息与分录" 与结果行），取**最后一次**匹配
       const interestMatches = [...prevText.matchAll(/贴现息\s*([\d,]+\.\d{2})/g)];
