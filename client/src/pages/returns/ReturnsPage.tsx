@@ -6,56 +6,41 @@ import {
   Dialog,
   DialogContent,
   DialogDescription,
-  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from '@client/src/components/ui/dialog';
-import { Input } from '@client/src/components/ui/input';
-import { Label } from '@client/src/components/ui/label';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@client/src/components/ui/select';
 import DataBoundary from '@client/src/components/erp/DataBoundary';
 import StatCard from '@client/src/components/erp/StatCard';
 import { useAsyncData } from '@client/src/hooks/useAsyncData';
 import * as returnsApi from '@client/src/api/returns';
 import * as purApi from '@client/src/api/pur';
 import { getApiErrorMessage } from '@client/src/utils/api-error-message';
+import {
+  RETURN_ACTION_LABELS,
+  RETURN_STATUS_LABELS,
+  STATUS_VARIANTS,
+} from '@client/src/utils/biz-labels';
+import { Badge } from '@client/src/components/ui/badge';
 import { cn } from '@client/src/lib/utils';
+import { money } from './components/returns-format';
+import PurchaseReturnCreateDialog from './components/PurchaseReturnCreateDialog';
 import type {
   PurchaseReturnItem,
   ReturnAction,
   ReturnRegisterResult,
-  ReturnableQuantityResult,
   SalesReturnItem,
 } from '@shared/api.interface';
 
-const STATUS_LABELS: Record<string, string> = {
-  draft: '草稿',
-  submitted: '待审批',
-  approved: '已批准',
-  completed: '已完成',
-  void: '已作废',
-};
-
-const STATUS_TONE: Record<string, string> = {
-  draft: 'bg-slate-100 text-slate-700',
-  submitted: 'bg-amber-100 text-amber-800',
-  approved: 'bg-sky-100 text-sky-700',
-  completed: 'bg-emerald-100 text-emerald-700',
-  void: 'bg-rose-100 text-rose-700',
-};
-
-function money(value: number): string {
-  return value.toLocaleString('zh-CN', {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  });
-}
+/*
+ * F7（§5.8）：状态标签与色表**不再内联**。
+ *
+ * 标签改为走 `biz-labels.ts` 的 `RETURN_STATUS_LABELS`（字典优先、常量兜底）：
+ * 原先这份字面量意味着业务方在「设置 → 字典」改了文案，本页**不生效** ——
+ * 那正是 B-05 要消除的问题。
+ *
+ * 色表改为用语义 `Badge` variant（`STATUS_VARIANTS`）：原先的
+ * `bg-emerald-100` 这类固定色阶**不跟随主题**（没有 `dark:` 变体），
+ */
 
 /** 各状态允许的动作（与后端状态机同源；后端仍会二次校验） */
 function allowedActions(status: string): ReturnAction[] {
@@ -94,17 +79,6 @@ const ReturnsPage: React.FC = () => {
     'restock',
   );
 
-  // 采购退货建单表单
-  const [orderId, setOrderId] = useState('');
-  const [returnable, setReturnable] = useState<ReturnableQuantityResult | null>(
-    null,
-  );
-  const [returnQuantity, setReturnQuantity] = useState('');
-  const [returnDate, setReturnDate] = useState(
-    new Date().toISOString().slice(0, 10),
-  );
-  const [reason, setReason] = useState('');
-
   const { data: register, reload: reloadRegister } =
     useAsyncData<ReturnRegisterResult>(() => returnsApi.getReturnRegister(), []);
   const {
@@ -132,61 +106,6 @@ const ReturnsPage: React.FC = () => {
     reloadPurchases();
     reloadSales();
     reloadRegister();
-  };
-
-  const loadReturnable = async (id: string) => {
-    setOrderId(id);
-    setReturnable(null);
-    if (!id) return;
-    try {
-      const info = await returnsApi.getPurchaseReturnable(id);
-      setReturnable(info);
-      if (info.notAccepted) {
-        toast.warning(
-          `订单 ${info.orderCode} 尚未验收，无可退数量（退货基准是已验收数量）`,
-        );
-      }
-    } catch (err) {
-      toast.error(getApiErrorMessage(err, '查询可退数量失败'));
-    }
-  };
-
-  const submitCreate = async () => {
-    if (!orderId) {
-      toast.error('请先选择采购订单');
-      return;
-    }
-    const quantity = Number(returnQuantity);
-    if (!Number.isInteger(quantity) || quantity <= 0) {
-      toast.error('退货数量必须为大于 0 的整数');
-      return;
-    }
-    if (returnable && quantity > returnable.returnableQuantity) {
-      toast.error(
-        `退货数量超过可退数量 ${returnable.returnableQuantity}（已验收 ${returnable.acceptedQuantity}，已退 ${returnable.returnedQuantity}）`,
-      );
-      return;
-    }
-    setBusy(true);
-    try {
-      await returnsApi.createPurchaseReturn({
-        orderId,
-        returnDate,
-        returnQuantity: quantity,
-        reason: reason || undefined,
-      });
-      toast.success('采购退货单已创建（草稿），提交审批后才生效');
-      setCreateOpen(false);
-      setOrderId('');
-      setReturnable(null);
-      setReturnQuantity('');
-      setReason('');
-      reloadAll();
-    } catch (err) {
-      toast.error(getApiErrorMessage(err, '建单失败'));
-    } finally {
-      setBusy(false);
-    }
   };
 
   const runAction = async (
@@ -304,14 +223,9 @@ const ReturnsPage: React.FC = () => {
                         {money(row.netAmount)} / {money(row.taxAmount)}
                       </td>
                       <td className="p-2">
-                        <span
-                          className={cn(
-                            'rounded px-1.5 py-0.5 text-xs',
-                            STATUS_TONE[row.status],
-                          )}
-                        >
-                          {STATUS_LABELS[row.status]}
-                        </span>
+                        <Badge variant={STATUS_VARIANTS[row.status] ?? 'secondary'}>
+                          {RETURN_STATUS_LABELS[row.status] ?? row.status}
+                        </Badge>
                         {row.status === 'completed' && !row.voucherRef && (
                           <div className="text-xs text-amber-600">
                             凭证待补录
@@ -332,7 +246,7 @@ const ReturnsPage: React.FC = () => {
                                   'purchase',
                                   row.id,
                                   action,
-                                  STATUS_LABELS[row.status] ?? '',
+                                  RETURN_ACTION_LABELS[action],
                                 )
                               }
                             >
@@ -391,14 +305,9 @@ const ReturnsPage: React.FC = () => {
                         {money(row.netAmount)} / {money(row.taxAmount)}
                       </td>
                       <td className="p-2">
-                        <span
-                          className={cn(
-                            'rounded px-1.5 py-0.5 text-xs',
-                            STATUS_TONE[row.status],
-                          )}
-                        >
-                          {STATUS_LABELS[row.status]}
-                        </span>
+                        <Badge variant={STATUS_VARIANTS[row.status] ?? 'secondary'}>
+                          {RETURN_STATUS_LABELS[row.status] ?? row.status}
+                        </Badge>
                       </td>
                       <td className="p-2">
                         <div className="flex flex-wrap gap-1">
@@ -424,7 +333,7 @@ const ReturnsPage: React.FC = () => {
                                   'sales',
                                   row.id,
                                   action,
-                                  STATUS_LABELS[row.status] ?? '',
+                                  RETURN_ACTION_LABELS[action],
                                 );
                               }}
                             >
@@ -524,103 +433,19 @@ const ReturnsPage: React.FC = () => {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={createOpen} onOpenChange={setCreateOpen}>
-        <DialogContent className="max-w-2xl">
-          <DialogHeader>
-            <DialogTitle>新建采购退货</DialogTitle>
-            <DialogDescription>
-              可退数量 = 已验收 − 已退。未验收的货不可退（应向供应商催货或取消订单）。
-            </DialogDescription>
-          </DialogHeader>
-          <div className="grid gap-4">
-            <div className="grid gap-2">
-              <Label htmlFor="return-order">采购订单</Label>
-              <Select value={orderId} onValueChange={loadReturnable}>
-                <SelectTrigger id="return-order">
-                  <SelectValue placeholder="选择采购订单" />
-                </SelectTrigger>
-                <SelectContent>
-                  {orderOptions.map((order) => (
-                    <SelectItem key={order.id} value={order.id}>
-                      {order.code} {order.itemName}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-
-            {returnable && (
-              <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
-                <StatCard
-                  label="已验收"
-                  value={String(returnable.acceptedQuantity)}
-                />
-                <StatCard
-                  label="已退"
-                  value={String(returnable.returnedQuantity)}
-                />
-                <StatCard
-                  label="可退"
-                  value={String(returnable.returnableQuantity)}
-                  tone={returnable.returnableQuantity > 0 ? 'success' : 'warning'}
-                />
-                <StatCard
-                  label="含税单价 / 税率"
-                  value={`${money(returnable.unitPrice)} / ${returnable.taxRate}%`}
-                />
-              </div>
-            )}
-
-            <div className="grid grid-cols-2 gap-4">
-              <div className="grid gap-2">
-                <Label htmlFor="return-qty">退货数量</Label>
-                <Input
-                  id="return-qty"
-                  inputMode="numeric"
-                  value={returnQuantity}
-                  placeholder="0"
-                  onChange={(event) => setReturnQuantity(event.target.value)}
-                />
-              </div>
-              <div className="grid gap-2">
-                <Label htmlFor="return-date">退货日期</Label>
-                <Input
-                  id="return-date"
-                  type="date"
-                  value={returnDate}
-                  onChange={(event) => setReturnDate(event.target.value)}
-                />
-              </div>
-            </div>
-
-            <div className="grid gap-2">
-              <Label htmlFor="return-reason">退货原因</Label>
-              <Input
-                id="return-reason"
-                value={reason}
-                onChange={(event) => setReason(event.target.value)}
-              />
-            </div>
-
-            <p className="text-xs text-muted-foreground">
-              批准并「完成」后才生成红字凭证：借 2202 应付账款（含税）/
-              贷 1403 原材料（净额）+ 贷 222102 进项税额。
-            </p>
-          </div>
-          <DialogFooter>
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => setCreateOpen(false)}
-            >
-              取消
-            </Button>
-            <Button type="button" disabled={busy} onClick={submitCreate}>
-              {busy ? '创建中…' : '创建退货单'}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      {/*
+        §5.9 / F8：新建采购退货弹窗（表单 state、loadReturnable、submitCreate 与
+        JSX）整体搬到 ./components/PurchaseReturnCreateDialog。这里**无条件挂载**：
+        它的 5 个 useState 原先是页面组件的常驻 state，条件挂载会让表单随开关重建。
+      */}
+      <PurchaseReturnCreateDialog
+        open={createOpen}
+        onOpenChange={setCreateOpen}
+        orderOptions={orderOptions}
+        busy={busy}
+        setBusy={setBusy}
+        reloadAll={reloadAll}
+      />
     </PageShell>
   );
 };

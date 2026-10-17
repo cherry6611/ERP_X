@@ -1,5 +1,4 @@
 import { axiosForBackend } from '@client/src/platform/request';
-import { ensureNotForbidden } from '@client/src/utils/api-error';
 import type {
   AssetChangeAction,
   AssetChangeItem,
@@ -42,7 +41,6 @@ export async function createAsset(dto: CreateAssetDto): Promise<AssetItem> {
     '/api/asset/assets',
     dto,
   );
-  ensureNotForbidden(resp);
   return resp.data;
 }
 
@@ -82,7 +80,6 @@ export async function changeAction(
   const resp = await axiosForBackend.post<AssetChangeItem>(
     `/api/asset/changes/${id}/actions/${action}`,
   );
-  ensureNotForbidden(resp);
   return resp.data;
 }
 
@@ -105,7 +102,6 @@ export async function depreciate(
     '/api/asset/depreciate',
     dto,
   );
-  ensureNotForbidden(resp);
   return resp.data;
 }
 
@@ -162,7 +158,6 @@ export async function createImpairment(
     '/api/asset/impairments',
     dto,
   );
-  ensureNotForbidden(resp);
   return resp.data;
 }
 
@@ -170,7 +165,6 @@ export async function deleteImpairment(id: string): Promise<{ ok: true }> {
   const resp = await axiosForBackend.post<{ ok: true }>(
     `/api/asset/impairments/${id}/delete`,
   );
-  ensureNotForbidden(resp);
   return resp.data;
 }
 
@@ -207,7 +201,6 @@ export async function createDisposal(
     '/api/asset/disposals',
     dto,
   );
-  ensureNotForbidden(resp);
   return resp.data;
 }
 
@@ -218,6 +211,5 @@ export async function disposalAction(
   const resp = await axiosForBackend.post<AssetDisposalItem>(
     `/api/asset/disposals/${id}/actions/${action}`,
   );
-  ensureNotForbidden(resp);
   return resp.data;
 }

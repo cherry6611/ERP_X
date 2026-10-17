@@ -1,5 +1,4 @@
 import { axiosForBackend } from '@client/src/platform/request';
-import { ensureNotForbidden } from '@client/src/utils/api-error';
 import type {
   CostAllocation,
   CostDimension,
@@ -49,7 +48,6 @@ export async function createCost(dto: CreateCostDto): Promise<CostItem> {
 
 export async function redFlushCost(id: string): Promise<CostItem> {
   const resp = await axiosForBackend.post<CostItem>(`/api/costs/${id}/red-flush`);
-  ensureNotForbidden(resp);
   return resp.data;
 }
 
@@ -79,7 +77,6 @@ export async function listLaborRates(): Promise<LaborRate[]> {
 
 export async function createLaborRate(dto: CreateLaborRateDto): Promise<LaborRate> {
   const resp = await axiosForBackend.post<LaborRate>('/api/costs/labor-rates', dto);
-  ensureNotForbidden(resp);
   return resp.data;
 }
 

@@ -70,7 +70,12 @@ function EmptyTitle({ className, ...props }: React.ComponentProps<"div">) {
 
 function EmptyDescription({ className, ...props }: React.ComponentProps<"p">) {
   return (
-    <div
+    /*
+     * 渲染为 `<p>`：Props 类型原本就声明为 `ComponentProps<"p">`，但实现渲染的是
+     * `<div>`，类型与实现不一致；而且调用方常把它放进 `<p>` 语境里，
+     * 会触发 React 的 "div cannot be a descendant of p" 非法嵌套告警。
+     */
+    <p
       data-slot="empty-description"
       className={cn(
         "text-muted-foreground [&>a:hover]:text-primary text-sm/relaxed [&>a]:underline [&>a]:underline-offset-4",

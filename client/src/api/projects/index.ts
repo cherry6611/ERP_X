@@ -1,5 +1,4 @@
 import { axiosForBackend } from '@client/src/platform/request';
-import { ensureNotForbidden } from '@client/src/utils/api-error';
 import type {
   AcceptDeliverableDto,
   CreateDeliverableDto,
@@ -34,7 +33,6 @@ export async function listProjects(params?: ProjectListParams): Promise<Project[
 
 export async function createProject(dto: CreateProjectDto): Promise<Project> {
   const resp = await axiosForBackend.post<Project>('/api/projects', dto);
-  ensureNotForbidden(resp);
   return resp.data;
 }
 
@@ -55,7 +53,6 @@ export async function getProjectChain(id: string): Promise<ProjectChainOverview>
 
 export async function updateProject(id: string, dto: UpdateProjectDto): Promise<Project> {
   const resp = await axiosForBackend.patch<Project>(`/api/projects/${id}`, dto);
-  ensureNotForbidden(resp);
   return resp.data;
 }
 
@@ -68,7 +65,6 @@ export async function changeProjectStatus(
     action,
     ...closeDto,
   });
-  ensureNotForbidden(resp);
   return resp.data;
 }
 
@@ -80,7 +76,6 @@ export async function addProjectMilestone(
     `/api/projects/${projectId}/milestones`,
     dto,
   );
-  ensureNotForbidden(resp);
   return resp.data;
 }
 
@@ -98,7 +93,6 @@ export async function updateProjectMilestone(
     `/api/projects/milestones/${milestoneId}`,
     dto,
   );
-  ensureNotForbidden(resp);
   return resp.data;
 }
 
@@ -117,7 +111,6 @@ export async function approveProjectChange(
   const resp = await axiosForBackend.post<ProjectChange>(`/api/projects/changes/${changeId}/approve`, {
     action,
   });
-  ensureNotForbidden(resp);
   return resp.data;
 }
 
@@ -129,7 +122,6 @@ export async function createDeliverable(
     `/api/projects/${projectId}/deliverables`,
     dto,
   );
-  ensureNotForbidden(resp);
   return resp.data;
 }
 
@@ -141,7 +133,6 @@ export async function updateDeliverable(
     `/api/projects/deliverables/${id}`,
     dto,
   );
-  ensureNotForbidden(resp);
   return resp.data;
 }
 
@@ -149,7 +140,6 @@ export async function submitDeliverable(id: string): Promise<DeliverableItem> {
   const resp = await axiosForBackend.post<DeliverableItem>(
     `/api/projects/deliverables/${id}/submit`,
   );
-  ensureNotForbidden(resp);
   return resp.data;
 }
 
@@ -161,7 +151,6 @@ export async function acceptDeliverable(
     `/api/projects/deliverables/${id}/accept`,
     dto,
   );
-  ensureNotForbidden(resp);
   return resp.data;
 }
 
@@ -173,7 +162,6 @@ export async function returnDeliverable(
     `/api/projects/deliverables/${id}/return`,
     dto,
   );
-  ensureNotForbidden(resp);
   return resp.data;
 }
 
@@ -185,7 +173,6 @@ export async function createProjectRevenue(
     `/api/projects/${projectId}/revenues`,
     dto,
   );
-  ensureNotForbidden(resp);
   return resp.data;
 }
 
@@ -204,20 +191,17 @@ export async function createMinutes(
     `/api/projects/${projectId}/minutes`,
     dto,
   );
-  ensureNotForbidden(resp);
   return resp.data;
 }
 
 export async function deleteMinutes(id: string): Promise<void> {
   const resp = await axiosForBackend.delete(`/api/projects/minutes/${id}`);
-  ensureNotForbidden(resp);
 }
 
 export async function syncProjectDrive(projectId: string): Promise<ProjectDriveSyncResult> {
   const resp = await axiosForBackend.post<ProjectDriveSyncResult>(
     `/api/projects/${projectId}/sync-drive`,
   );
-  ensureNotForbidden(resp);
   return resp.data;
 }
 

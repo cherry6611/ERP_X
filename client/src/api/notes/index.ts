@@ -1,5 +1,4 @@
 import { axiosForBackend } from '@client/src/platform/request';
-import { ensureNotForbidden } from '@client/src/utils/api-error';
 import type {
   CreateNoteDto,
   NoteAction,
@@ -37,6 +36,8 @@ export async function getNoteDictionaries(): Promise<{
     target: NoteStatus;
     requiresCounterparty: boolean;
     requiresRate: boolean;
+    /** 该动作允许的前置状态（后端 `NOTE_TRANSITIONS[action]`），前端据此显隐按钮 */
+    allowedFrom: NoteStatus[];
   }>;
 }> {
   const resp = await axiosForBackend.get<{
@@ -48,6 +49,7 @@ export async function getNoteDictionaries(): Promise<{
       target: NoteStatus;
       requiresCounterparty: boolean;
       requiresRate: boolean;
+      allowedFrom: NoteStatus[];
     }>;
   }>('/api/notes/dictionaries');
   return resp.data;
@@ -117,7 +119,6 @@ export async function previewNoteDiscount(
 
 export async function createNote(dto: CreateNoteDto): Promise<NoteItem> {
   const resp = await axiosForBackend.post<NoteItem>('/api/notes', dto);
-  ensureNotForbidden(resp);
   return resp.data;
 }
 
@@ -129,7 +130,6 @@ export async function noteAction(
     `/api/notes/${id}/actions`,
     dto,
   );
-  ensureNotForbidden(resp);
   return resp.data;
 }
 

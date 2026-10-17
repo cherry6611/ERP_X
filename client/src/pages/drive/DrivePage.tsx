@@ -60,6 +60,19 @@ function formatTime(unixSeconds: string | null): string {
 const DrivePage: React.FC = () => {
   const [path, setPath] = useState<PathSegment[]>([]);
   const [currentToken, setCurrentToken] = useState<string>('');
+  /**
+   * 「根目录 Token 未配置」与「文件夹为空」必须分开。
+   *
+   * ⚠️ 原实现把两者都落到 `return []`，页面于是显示
+   * **「当前文件夹为空」** —— 一个**说谎的空态**：管理员没配
+   * `FEISHU_ROOT_FOLDER_TOKEN` 时，用户看到的是"这个目录里没有文件"，
+   * 于是去问业务"文件是不是被删了"，而不是去配环境变量。
+   * 更糟的是顶部的「新建文件夹 / 新建文档」此时是**可点的**
+   * （`path.length === 1`），点下去只会拿到 400「缺少父文件夹」。
+   *
+   * 现在把"未配置"作为独立状态渲染引导文案，并禁用写操作按钮。
+   */
+  const [rootMissing, setRootMissing] = useState(false);
   const [folderDialogOpen, setFolderDialogOpen] = useState(false);
   const [docDialogOpen, setDocDialogOpen] = useState(false);
   const [renameTarget, setRenameTarget] = useState<DriveItem | null>(null);
@@ -77,6 +90,12 @@ const DrivePage: React.FC = () => {
       if (!token) {
         const root = await fetchDriveRoot();
         token = root.folderToken;
+        if (!token) {
+          setRootMissing(true);
+          setPath([]);
+          return [];
+        }
+        setRootMissing(false);
         setPath([{ token, name: '根目录' }]);
       }
       if (!token) return [];
@@ -222,7 +241,7 @@ const DrivePage: React.FC = () => {
           <CanRole roles={['admin', 'drive_editor']}>
             <Button
               variant="outline"
-              disabled={path.length === 0}
+              disabled={path.length === 0 || rootMissing}
               onClick={() => setFolderDialogOpen(true)}
             >
               <FolderPlus className="mr-2 h-4 w-4" aria-hidden />
@@ -230,7 +249,7 @@ const DrivePage: React.FC = () => {
             </Button>
             <Button
               variant="outline"
-              disabled={path.length === 0}
+              disabled={path.length === 0 || rootMissing}
               onClick={() => setDocDialogOpen(true)}
             >
               <FilePlus2 className="mr-2 h-4 w-4" aria-hidden />
@@ -265,6 +284,20 @@ const DrivePage: React.FC = () => {
       {error ? (
         <div className="rounded-md border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive">
           加载失败：{error}
+        </div>
+      ) : rootMissing ? (
+        <div className="rounded-md border border-warning/40 bg-warning/15 p-4 text-sm">
+          <p className="font-medium text-warning">飞书云空间根目录尚未配置</p>
+          <p className="mt-2 text-warning">
+            请管理员在「设置 → 外观与集成 → 飞书云空间 / 知识库」中填写
+            <span className="mx-1 font-mono">云空间根目录 Token</span>
+            （或在环境变量中配置
+            <code className="mx-1 rounded bg-muted px-1">FEISHU_ROOT_FOLDER_TOKEN</code>），
+            保存后回到本页点「刷新」即可浏览目录。
+          </p>
+          <p className="mt-2 text-xs text-muted-foreground">
+            配置完成前不影响其他业务模块使用；新建文件夹 / 新建文档已暂时禁用。
+          </p>
         </div>
       ) : (
         <Table

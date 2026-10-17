@@ -141,4 +141,15 @@ export class ChatService {
   }
 }
 
-export { getAssetsUrl } from './env';
+/*
+ * `getAssetsUrl` 从 `./static-assets` 再导出（**不是** `./env`）。
+ *
+ * 原先这里写的是 `export { getAssetsUrl } from './env'`，而 `env.ts` 里
+ * `getEnv()` 用了 `import.meta.env.MODE` —— 这行再导出把 `import.meta`
+ * 传染给了整条 barrel，使**任何间接 import `UserDisplay` 的纯逻辑模块
+ * 都无法被 jest 加载**（`tsconfig.test.json` 是 CommonJS，`import.meta`
+ * 只在 es2020+ 合法，报 TS1343）。§5.9 / F8 的拆分中这条链实际挡下过工作。
+ *
+ * ⚠️ 不要改回 `./env`。`env.ts` 里那个 `getEnv()` 全仓 0 调用方。
+ */
+export { getAssetsUrl } from './static-assets';

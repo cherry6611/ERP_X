@@ -1,5 +1,4 @@
 import { axiosForBackend } from '@client/src/platform/request';
-import { ensureNotForbidden } from '@client/src/utils/api-error';
 import type {
   CreateExpenseApplyDto,
   CreateExpenseClaimDto,
@@ -40,7 +39,6 @@ export async function applyAction(
   const resp = await axiosForBackend.post<ExpenseApplyItem>(
     `/api/fin-expense/applies/${id}/actions/${action}`,
   );
-  ensureNotForbidden(resp);
   return resp.data;
 }
 
@@ -73,6 +71,5 @@ export async function claimAction(
   const resp = await axiosForBackend.post<ExpenseClaimItem>(
     `/api/fin-expense/claims/${id}/actions/${action}`,
   );
-  ensureNotForbidden(resp);
   return resp.data;
 }

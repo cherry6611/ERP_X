@@ -62,11 +62,11 @@ line(DIM, 'preflight', `DATABASE_URL = ${process.env.DATABASE_URL.replace(/\/\/[
 const isWindows = process.platform === 'win32';
 
 /** Windows 下 npx/npm 是 .cmd 批处理，必须经 shell 执行 */
-function launch(name, color, command, args) {
+function launch(name, color, command, args, envOverride) {
   const child = spawn(command, args, {
     cwd: ROOT,
     shell: isWindows, // Unix 下不使用 shell，保证信号可直达子进程
-    env: { ...process.env, NODE_ENV: 'development', FORCE_COLOR: '1' },
+    env: envOverride ?? { ...process.env, NODE_ENV: 'development', FORCE_COLOR: '1' },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
 
@@ -101,8 +101,16 @@ function launch(name, color, command, args) {
 
 const children = [];
 
+// 长会话（watch + 反复请求）下 Nest 进程堆会持续增长，默认 ~4GB 上限
+// 曾因 OOM 崩溃（FATAL ERROR: Ineffective mark-compacts near heap limit）。
+// 为 server 子进程提升堆上限，client（vite）保持默认即可。
+const serverEnv = {
+  ...process.env,
+  NODE_OPTIONS: `${process.env.NODE_OPTIONS ?? ''} --max-old-space-size=8192`.trim(),
+};
+
 children.push(
-  launch('server', CYAN, isWindows ? 'npx.cmd' : 'npx', ['nest', 'start', '--watch'])
+  launch('server', CYAN, isWindows ? 'npx.cmd' : 'npx', ['nest', 'start', '--watch'], serverEnv)
 );
 children.push(
   launch('client', GREEN, isWindows ? 'npx.cmd' : 'npx', ['vite', '--config', 'vite.config.ts'])

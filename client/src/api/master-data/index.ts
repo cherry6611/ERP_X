@@ -1,5 +1,4 @@
 import { axiosForBackend } from '@client/src/platform/request';
-import { ensureNotForbidden } from '@client/src/utils/api-error';
 import type {
   Customer,
   CustomerContact,
@@ -43,13 +42,11 @@ export async function listCustomersPaged(
 
 export async function createCustomer(dto: CreateCustomerDto): Promise<Customer> {
   const resp = await axiosForBackend.post<Customer>('/api/master-data/customers', dto);
-  ensureNotForbidden(resp);
   return resp.data;
 }
 
 export async function updateCustomer(id: string, dto: UpdateCustomerDto): Promise<Customer> {
   const resp = await axiosForBackend.patch<Customer>(`/api/master-data/customers/${id}`, dto);
-  ensureNotForbidden(resp);
   return resp.data;
 }
 
@@ -61,7 +58,6 @@ export async function setCustomerStatus(
     `/api/master-data/customers/${id}/status`,
     { status }
   );
-  ensureNotForbidden(resp);
   return resp.data;
 }
 
@@ -77,7 +73,6 @@ export async function createContact(customerId: string, dto: CreateContactDto): 
     `/api/master-data/customers/${customerId}/contacts`,
     dto,
   );
-  ensureNotForbidden(resp);
   return resp.data;
 }
 
@@ -86,13 +81,11 @@ export async function updateContact(contactId: string, dto: Partial<CreateContac
     `/api/master-data/contacts/${contactId}`,
     dto,
   );
-  ensureNotForbidden(resp);
   return resp.data;
 }
 
 export async function deleteContact(contactId: string): Promise<void> {
   const resp = await axiosForBackend.delete(`/api/master-data/contacts/${contactId}`);
-  ensureNotForbidden(resp);
 }
 
 export async function getCredit(customerId: string): Promise<CreditSummary> {
@@ -116,7 +109,6 @@ export async function listSuppliers(keyword?: string): Promise<Supplier[]> {
 
 export async function createSupplier(dto: CreateSupplierDto): Promise<Supplier> {
   const resp = await axiosForBackend.post<Supplier>('/api/master-data/suppliers', dto);
-  ensureNotForbidden(resp);
   return resp.data;
 }
 
@@ -159,7 +151,6 @@ export async function toggleTaxEntityStatus(id: string): Promise<TaxEntity> {
 
 export async function updateSupplier(id: string, dto: UpdateSupplierDto): Promise<Supplier> {
   const resp = await axiosForBackend.patch<Supplier>(`/api/master-data/suppliers/${id}`, dto);
-  ensureNotForbidden(resp);
   return resp.data;
 }
 
@@ -171,6 +162,5 @@ export async function setSupplierStatus(
     `/api/master-data/suppliers/${id}/status`,
     { status }
   );
-  ensureNotForbidden(resp);
   return resp.data;
 }

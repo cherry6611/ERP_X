@@ -1,5 +1,4 @@
 import { axiosForBackend } from '@client/src/platform/request';
-import { ensureNotForbidden } from '@client/src/utils/api-error';
 import type {
   AddTrainingAttendeesDto,
   AppraisalAction,
@@ -52,13 +51,11 @@ export async function listDepartments(): Promise<Department[]> {
 
 export async function createDepartment(dto: CreateDepartmentDto): Promise<Department> {
   const resp = await axiosForBackend.post<Department>('/api/hr/departments', dto);
-  ensureNotForbidden(resp);
   return resp.data;
 }
 
 export async function updateDepartment(id: string, dto: UpdateDepartmentDto): Promise<Department> {
   const resp = await axiosForBackend.patch<Department>(`/api/hr/departments/${id}`, dto);
-  ensureNotForbidden(resp);
   return resp.data;
 }
 
@@ -69,13 +66,11 @@ export async function listPositions(): Promise<Position[]> {
 
 export async function createPosition(dto: CreatePositionDto): Promise<Position> {
   const resp = await axiosForBackend.post<Position>('/api/hr/positions', dto);
-  ensureNotForbidden(resp);
   return resp.data;
 }
 
 export async function updatePosition(id: string, dto: UpdatePositionDto): Promise<Position> {
   const resp = await axiosForBackend.patch<Position>(`/api/hr/positions/${id}`, dto);
-  ensureNotForbidden(resp);
   return resp.data;
 }
 
@@ -88,13 +83,11 @@ export async function listEmployees(keyword?: string): Promise<Employee[]> {
 
 export async function createEmployee(dto: CreateEmployeeDto): Promise<Employee> {
   const resp = await axiosForBackend.post<Employee>('/api/hr/employees', dto);
-  ensureNotForbidden(resp);
   return resp.data;
 }
 
 export async function updateEmployee(id: string, dto: UpdateEmployeeDto): Promise<Employee> {
   const resp = await axiosForBackend.patch<Employee>(`/api/hr/employees/${id}`, dto);
-  ensureNotForbidden(resp);
   return resp.data;
 }
 
@@ -106,7 +99,6 @@ export async function setEmployeeStatus(
     `/api/hr/employees/${id}/status`,
     { status }
   );
-  ensureNotForbidden(resp);
   return resp.data;
 }
 
@@ -145,7 +137,6 @@ export async function listLeaveBalances(year?: string): Promise<LeaveBalance[]> 
 
 export async function setLeaveBalance(dto: SetLeaveBalanceDto): Promise<LeaveBalance> {
   const resp = await axiosForBackend.post<LeaveBalance>('/api/hr/leave-balances', dto);
-  ensureNotForbidden(resp);
   return resp.data;
 }
 
@@ -174,7 +165,6 @@ export async function leaveRequestAction(
   const resp = await axiosForBackend.post<LeaveRequest>(`/api/hr/leave-requests/${id}/actions`, {
     action,
   });
-  ensureNotForbidden(resp);
   return resp.data;
 }
 
@@ -217,7 +207,6 @@ export async function listPayrolls(period?: string, status?: string): Promise<Pa
 
 export async function createPayroll(dto: CreatePayrollDto): Promise<PayrollItem> {
   const resp = await axiosForBackend.post<PayrollItem>('/api/hr/payrolls', dto);
-  ensureNotForbidden(resp);
   return resp.data;
 }
 
@@ -225,7 +214,6 @@ export async function payrollAction(id: string, action: PayrollAction): Promise<
   const resp = await axiosForBackend.post<PayrollItem>(`/api/hr/payrolls/${id}/actions`, {
     action,
   });
-  ensureNotForbidden(resp);
   return resp.data;
 }
 
@@ -327,7 +315,6 @@ export async function createAttendanceAmendment(
   dto: CreateAttendanceAmendmentDto,
 ): Promise<AttendanceAmendment> {
   const resp = await axiosForBackend.post<AttendanceAmendment>('/api/hr/attendance-amendments', dto);
-  ensureNotForbidden(resp);
   return resp.data;
 }
 
@@ -339,7 +326,6 @@ export async function attendanceAmendmentAction(
     `/api/hr/attendance-amendments/${id}/actions`,
     { action },
   );
-  ensureNotForbidden(resp);
   return resp.data;
 }
 
@@ -349,7 +335,6 @@ export async function initLeaveBalances(year: string): Promise<InitLeaveBalances
     '/api/hr/leave-balances/init',
     dto,
   );
-  ensureNotForbidden(resp);
   return resp.data;
 }
 
@@ -358,7 +343,6 @@ export async function offboardEmployee(
   dto: OffboardEmployeeDto,
 ): Promise<OffboardResult> {
   const resp = await axiosForBackend.post<OffboardResult>(`/api/hr/employees/${id}/offboard`, dto);
-  ensureNotForbidden(resp);
   return resp.data;
 }
 

@@ -1,5 +1,4 @@
 import { axiosForBackend } from '@client/src/platform/request';
-import { ensureNotForbidden } from '@client/src/utils/api-error';
 import type {
   CreatePurchaseReturnDto,
   CreateSalesReturnDto,
@@ -64,7 +63,6 @@ export async function createPurchaseReturn(
     '/api/returns/purchase',
     dto,
   );
-  ensureNotForbidden(resp);
   return resp.data;
 }
 
@@ -77,7 +75,6 @@ export async function purchaseReturnAction(
     `/api/returns/purchase/${id}/actions`,
     { action, remark },
   );
-  ensureNotForbidden(resp);
   return resp.data;
 }
 
@@ -98,7 +95,6 @@ export async function createSalesReturn(
     '/api/returns/sales',
     dto,
   );
-  ensureNotForbidden(resp);
   return resp.data;
 }
 
@@ -112,7 +108,6 @@ export async function salesReturnAction(
     `/api/returns/sales/${id}/actions`,
     { action, remark, disposalType },
   );
-  ensureNotForbidden(resp);
   return resp.data;
 }
 

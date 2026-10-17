@@ -45,7 +45,28 @@ const FormField = <
 const useFormField = () => {
   const fieldContext = React.useContext(FormFieldContext)
   const itemContext = React.useContext(FormItemContext)
-  const { getFieldState } = useFormContext()
+  /*
+   * ⚠️ 这里**必须**先判空再解构。
+   *
+   * 原实现直接 `const { getFieldState } = useFormContext()`，当某个控件被放进
+   * `<FormItem>`（`FormItemContext` 有 id）却没有上层 `<Form>` 时，
+   * `useFormContext()` 返回 null，报出一句与真实原因无关的
+   * `Cannot destructure property 'getFieldState' of 'useFormContext(...)' as it is null.`
+   * —— 走查实测这条错误会让**整个页面被错误边界接管**（点「员工离职」即白屏），
+   * 而从文案完全看不出是"少了 Form 包裹"。
+   *
+   * 改为显式报错，点名组件与缺失的 Provider，排查时间从"翻半天"降到一眼。
+   */
+  const formContext = useFormContext()
+  if (!formContext) {
+    throw new Error(
+      "useFormField 需要上层 <Form {...form}> 提供 FormProvider：" +
+        "请把控件放进 <Form>…<FormField>…<FormItem> 结构内；" +
+        "若确实没有 react-hook-form（如只用 useState 的弹窗），" +
+        "请给控件传 aria-labelledby 指向 <Label id>，不要套 <FormControl>。",
+    )
+  }
+  const { getFieldState } = formContext
   const formState = useFormState({ name: fieldContext.name })
   const fieldState = getFieldState(fieldContext.name, formState)
 
@@ -72,6 +93,8 @@ type FormItemContextValue = {
 const FormItemContext = React.createContext<FormItemContextValue>(
   {} as FormItemContextValue
 )
+
+export { FormItemContext }
 
 function FormItem({ className, ...props }: React.ComponentProps<"div">) {
   const id = React.useId()

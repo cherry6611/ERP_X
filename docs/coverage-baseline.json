@@ -1,0 +1,9 @@
+{
+  "businessFiles": 88,
+  "businessLines": 44776,
+  "uncoveredFiles": 64,
+  "uncoveredLines": 28796,
+  "uncoveredRatio": 0.6431,
+  "generatedAt": "2026-10-16T09:07:10.332Z",
+  "note": "覆盖率棘轮基线（§2.4）：uncoveredRatio（未覆盖业务代码占比）只允许下降。补了测试后用 `node ./scripts/coverage-honesty.mjs --update` 刷新 —— 必须由人显式执行，自动更新等于没有棘轮。2026-10-16 修正：棘轮量由 uncoveredLines（绝对行数）改为 uncoveredRatio（占比）——绝对行数会随业务代码规模变化，\"新增被测代码\"会被误判为倒退。"
+}

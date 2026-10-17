@@ -23,7 +23,10 @@ export type UseSearchDepartmentsOptions = {
 };
 
 /**
- * 搜索部门的 hook
+ * 搜索部门的 hook。
+ *
+ * @deprecated 全仓**零调用方**（F5 复核：定义 1 处、引用 0 处）。
+ * 新代码不要用；若确认无外部消费可连同 `departmentQueries` 整体删除。
  */
 export function useSearchDepartments(options: UseSearchDepartmentsOptions) {
   const { query, pageSize = 100, enabled = true } = options;
@@ -35,7 +38,9 @@ export function useSearchDepartments(options: UseSearchDepartmentsOptions) {
 }
 
 /**
- * 清除部门缓存
+ * 清除部门缓存。
+ *
+ * @deprecated 零调用方（随 `useSearchDepartments` 一并成为死代码）。
  */
 export function clearDepartmentCache(queryClient: QueryClient): void {
   queryClient.invalidateQueries({ queryKey: departmentQueries.all() });

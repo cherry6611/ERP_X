@@ -1,5 +1,4 @@
 import { axiosForBackend } from '@client/src/platform/request';
-import { ensureNotForbidden } from '@client/src/utils/api-error';
 import type {
   CreateDatasetDto,
   CreateGrantDto,
@@ -37,7 +36,6 @@ export async function createDataset(dto: CreateDatasetDto): Promise<DatasetItem>
     '/api/data-asset/datasets',
     dto,
   );
-  ensureNotForbidden(resp);
   return resp.data;
 }
 
@@ -49,7 +47,6 @@ export async function updateDataset(
     `/api/data-asset/datasets/${id}`,
     dto,
   );
-  ensureNotForbidden(resp);
   return resp.data;
 }
 
@@ -60,7 +57,6 @@ export async function datasetAction(
   const resp = await axiosForBackend.post<DatasetItem>(
     `/api/data-asset/datasets/${id}/actions/${action}`,
   );
-  ensureNotForbidden(resp);
   return resp.data;
 }
 
@@ -81,7 +77,6 @@ export async function createGrant(dto: CreateGrantDto): Promise<GrantItem> {
     '/api/data-asset/grants',
     dto,
   );
-  ensureNotForbidden(resp);
   return resp.data;
 }
 
@@ -89,7 +84,6 @@ export async function expireGrant(id: string): Promise<GrantItem> {
   const resp = await axiosForBackend.post<GrantItem>(
     `/api/data-asset/grants/${id}/actions/expire`,
   );
-  ensureNotForbidden(resp);
   return resp.data;
 }
 
@@ -128,7 +122,6 @@ export async function upsertDatasetField(
     `/api/data-asset/datasets/${datasetId}/fields`,
     dto,
   );
-  ensureNotForbidden(resp);
   return resp.data;
 }
 
@@ -139,7 +132,6 @@ export async function deleteDatasetField(
   const resp = await axiosForBackend.post<{ ok: true }>(
     `/api/data-asset/datasets/${datasetId}/fields/${encodeURIComponent(columnName)}/delete`,
   );
-  ensureNotForbidden(resp);
   return resp.data;
 }
 
@@ -162,7 +154,6 @@ export async function revokeGrant(
     `/api/data-asset/grants/${id}/actions/revoke`,
     dto,
   );
-  ensureNotForbidden(resp);
   return resp.data;
 }
 

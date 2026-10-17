@@ -1,7 +1,11 @@
 import type { ReactNode } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { ShieldAlert } from 'lucide-react';
-import { NAV_CAPABILITY, hasCapability, hasWriteCapability, type Capability } from '@shared/rbac';
+import {
+  hasCapability,
+  resolveRouteCapability,
+  type Capability,
+} from '@shared/rbac';
 import { Button } from '@client/src/components/ui/button';
 import { useAuth } from '@client/src/platform/auth';
 import { withBasePath } from '@client/src/utils/base-path';
@@ -50,11 +54,20 @@ export function RequireCapability({
     );
   }
 
-  const required = capability ?? NAV_CAPABILITY[location.pathname];
-  if (!required || hasCapability(user.roles, required)) {
+  // B-13 修复：原实现是 `NAV_CAPABILITY[location.pathname]` 精确匹配，
+  // 且查不到就 `return children`（**fail-open**）。而 NAV_CAPABILITY 只登记了一级入口，
+  // 于是 `/projects/new`、`/contracts/:id`、`/finance/reports`、`/notes`、`/returns`
+  // 等**全部**命中不到 → 任何登录用户手输 URL 或从列表点进详情即可打开，
+  // 页面还正常渲染（不报错不提示），属于"看起来正常"的越权。
+  //
+  // 现在改为最长前缀解析 + **fail-closed**：解析不出所需能力时拒绝并说明原因，
+  // 而不是放行。显式传入 `capability` 的调用点不受影响。
+  const required = capability ?? resolveRouteCapability(location.pathname);
+  if (required && hasCapability(user.roles, required)) {
     return <>{children}</>;
   }
 
+  const unregistered = !required;
   return (
     <div className="flex min-h-[50vh] flex-col items-center justify-center gap-4 p-6 text-center">
       <span className="flex size-14 items-center justify-center rounded-2xl bg-destructive/10 text-destructive">
@@ -65,10 +78,24 @@ export function RequireCapability({
         <p className="text-sm text-muted-foreground">
           当前账号角色：{(user.roles ?? []).join('、') || '未分配角色'}
           <br />
-          该页面需要能力：<code className="rounded bg-muted px-1">{required}</code>
+          {unregistered ? (
+            <>
+              该页面未登记所需能力（<code className="rounded bg-muted px-1">
+                {location.pathname}
+              </code>
+              ），已按安全默认拒绝访问。
+            </>
+          ) : (
+            <>
+              该页面需要能力：
+              <code className="rounded bg-muted px-1">{required}</code>
+            </>
+          )}
         </p>
         <p className="text-sm text-muted-foreground">
-          如需访问，请联系管理员在「设置 → 用户与角色」中分配对应角色。
+          {unregistered
+            ? '这是配置缺失而非您账号的问题，请联系管理员为该路由登记能力码。'
+            : '如需访问，请联系管理员在「设置 → 用户与角色」中分配对应角色。'}
         </p>
       </div>
       <Button variant="outline" size="sm" asChild>

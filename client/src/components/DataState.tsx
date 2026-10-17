@@ -88,7 +88,17 @@ export function DataState({
   }
   if (empty) {
     return (
-      <Empty className="py-12">
+      /*
+       * 尺寸修复：`Empty` 基类带 `flex-1` + `md:p-12`，当它的父容器是
+       * `flex flex-col` 且还有剩余高度时（年结状态/留痕、看板通知中心等），
+       * 空态会被**拉伸到几百像素高**，在一屏信息密集的后台里就是一大片空白 ——
+       * 截图走查里最显眼的观感问题之一。
+       *
+       * 这里用 `flex-none` 取消拉伸（空态应按内容高度自适应，而不是撑满容器），
+       * 并把内边距收到 24px。`Empty` 基类的 `md:p-12` 在同一层叠上下文里会赢过
+       * 普通 `p-6`（实测 computed padding 仍是 48px），故用 `!p-6` 强制生效。
+       */
+      <Empty className="flex-none gap-3 border-dashed !p-6">
         <EmptyHeader>
           <EmptyMedia variant="icon">
             <span className="flex size-12 items-center justify-center rounded-xl bg-primary/10 text-primary shadow-brand">

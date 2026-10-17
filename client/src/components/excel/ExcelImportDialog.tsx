@@ -262,6 +262,20 @@ export function ExcelImportDialog<TDto>(props: ExcelImportDialogProps<TDto>) {
               </Button>
             </div>
             <div className="max-h-80 overflow-y-auto rounded-md border">
+              {/*
+                §5.5（F4）：**此处有意保留 shadcn `<Table>`**，与 `AGENTS.md` 的
+                例外清单一致（打印件 / Excel 导入预览）。
+
+                判据是"这张表需要分页/排序/固定列/空态钩子吗"——导入预览都不需要：
+                · 它是**一次性校验视图**：行数由用户刚选的文件决定，通常几十行，
+                  不需要分页；用户看完就点"确认导入"，不会在这里翻页浏览；
+                · 列是**动态的**（由文件的表头推导），antd 的 `TableColumnsType`
+                  在动态列 + 单元格级错误高亮（每个单元格独立红框与错误提示）下
+                  会明显更啰嗦，而这里没有收益；
+                · 它自带 `max-h-80 overflow-y-auto` 的滚动容器，不需要 antd 的
+                  `scroll.x`（列数由模板固定，不会溢出）。
+                换成 antd 属于"为了统一而统一"，会让这段校验渲染代码变复杂。
+              */}
               <Table>
                 <TableHeader>
                   <TableRow>
@@ -291,7 +305,7 @@ export function ExcelImportDialog<TDto>(props: ExcelImportDialogProps<TDto>) {
                     </TableRow>
                   ) : (
                     displayRows.map((row: ImportRowState<TDto>, index: number) => (
-                      <TableRow key={index}>
+                      <TableRow key={row.key}>
                         <TableCell>{index + 1}</TableCell>
                         {columns.map((col: ExcelImportColumnDef) => (
                           <TableCell key={col.header}>{row.raw[col.header] ?? ''}</TableCell>

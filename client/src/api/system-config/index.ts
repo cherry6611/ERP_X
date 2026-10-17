@@ -1,5 +1,4 @@
 import { axiosForBackend } from '@client/src/platform/request';
-import { ensureNotForbidden } from '@client/src/utils/api-error';
 import type {
   CodeRuleItem,
   DictionaryItem,
@@ -28,7 +27,6 @@ export async function listDictionary(dictType?: string): Promise<DictionaryItem[
 
 export async function upsertDictionary(dto: UpsertDictionaryDto): Promise<DictionaryItem> {
   const resp = await axiosForBackend.post<DictionaryItem>('/api/system/dictionary', dto);
-  ensureNotForbidden(resp);
   return resp.data;
 }
 
@@ -39,7 +37,6 @@ export async function deleteDictionary(
   const resp = await axiosForBackend.post<{ ok: true }>(
     `/api/system/dictionary/${encodeURIComponent(dictType)}/${encodeURIComponent(dictKey)}/delete`,
   );
-  ensureNotForbidden(resp);
   return resp.data;
 }
 
@@ -56,7 +53,6 @@ export async function updateParam(
     `/api/system/params/${encodeURIComponent(paramKey)}`,
     { paramValue },
   );
-  ensureNotForbidden(resp);
   return resp.data;
 }
 
@@ -80,7 +76,6 @@ export async function updateRetentionPolicy(
     `/api/system/retention-policies/${encodeURIComponent(dataType)}`,
     dto,
   );
-  ensureNotForbidden(resp);
   return resp.data;
 }
 

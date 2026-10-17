@@ -1,5 +1,4 @@
 import { axiosForBackend } from '@client/src/platform/request';
-import { ensureNotForbidden } from '@client/src/utils/api-error';
 import type {
   AgingBucket,
   ApItem,
@@ -44,7 +43,6 @@ export async function listArs(customerId?: string, status?: string): Promise<ArI
 
 export async function createAr(dto: CreateArDto): Promise<ArItem> {
   const resp = await axiosForBackend.post<ArItem>('/api/finance/ars', dto);
-  ensureNotForbidden(resp);
   return resp.data;
 }
 
@@ -57,7 +55,6 @@ export async function listReceipts(customerId?: string): Promise<ReceiptItem[]> 
 
 export async function createReceipt(dto: CreateReceiptDto): Promise<ReceiptItem> {
   const resp = await axiosForBackend.post<ReceiptItem>('/api/finance/receipts', dto);
-  ensureNotForbidden(resp);
   return resp.data;
 }
 
@@ -65,13 +62,11 @@ export async function voidReceipt(id: string): Promise<ReceiptItem> {
   const resp = await axiosForBackend.post<ReceiptItem>(
     `/api/finance/receipts/${id}/void`
   );
-  ensureNotForbidden(resp);
   return resp.data;
 }
 
 export async function arWriteoff(dto: ArWriteoffDto): Promise<ArItem> {
   const resp = await axiosForBackend.post<ArItem>('/api/finance/ar-writeoffs', dto);
-  ensureNotForbidden(resp);
   return resp.data;
 }
 
@@ -89,7 +84,6 @@ export async function listAps(supplierId?: string, status?: string): Promise<ApI
 
 export async function createAp(dto: CreateApDto): Promise<ApItem> {
   const resp = await axiosForBackend.post<ApItem>('/api/finance/aps', dto);
-  ensureNotForbidden(resp);
   return resp.data;
 }
 
@@ -102,7 +96,6 @@ export async function listPayments(apId?: string): Promise<PaymentItem[]> {
 
 export async function createPayment(dto: CreatePaymentDto): Promise<PaymentItem> {
   const resp = await axiosForBackend.post<PaymentItem>('/api/finance/payments', dto);
-  ensureNotForbidden(resp);
   return resp.data;
 }
 
@@ -110,7 +103,6 @@ export async function approvePayment(id: string, action: PaymentAction): Promise
   const resp = await axiosForBackend.post<PaymentItem>(`/api/finance/payments/${id}/approve`, {
     action,
   });
-  ensureNotForbidden(resp);
   return resp.data;
 }
 
@@ -118,13 +110,11 @@ export async function voidPayment(id: string): Promise<PaymentItem> {
   const resp = await axiosForBackend.post<PaymentItem>(
     `/api/finance/payments/${id}/void`
   );
-  ensureNotForbidden(resp);
   return resp.data;
 }
 
 export async function apWriteoff(dto: ApWriteoffDto): Promise<ApItem> {
   const resp = await axiosForBackend.post<ApItem>('/api/finance/ap-writeoffs', dto);
-  ensureNotForbidden(resp);
   return resp.data;
 }
 
@@ -140,7 +130,6 @@ export async function listInvoices(
 
 export async function createInvoice(dto: CreateInvoiceDto): Promise<InvoiceItem> {
   const resp = await axiosForBackend.post<InvoiceItem>('/api/finance/invoices', dto);
-  ensureNotForbidden(resp);
   return resp.data;
 }
 
@@ -162,7 +151,6 @@ export async function updateInvoice(id: string, dto: UpdateInvoiceDto): Promise<
     `/api/finance/invoices/${id}`,
     dto,
   );
-  ensureNotForbidden(resp);
   return resp.data;
 }
 
@@ -170,7 +158,6 @@ export async function voidInvoice(id: string): Promise<InvoiceItem> {
   const resp = await axiosForBackend.post<InvoiceItem>(
     `/api/finance/invoices/${id}/void`,
   );
-  ensureNotForbidden(resp);
   return resp.data;
 }
 
@@ -181,7 +168,6 @@ export async function verifyInvoice(id: string): Promise<InvoiceVerifyResult> {
   const resp = await axiosForBackend.post<InvoiceVerifyResult>(
     `/api/finance/invoices/${id}/verify`,
   );
-  ensureNotForbidden(resp);
   return resp.data;
 }
 
@@ -194,7 +180,6 @@ export async function batchVerifyInvoice(
     '/api/finance/invoices/batch-verify',
     dto,
   );
-  ensureNotForbidden(resp);
   return resp.data;
 }
 
@@ -209,7 +194,6 @@ export async function certifyInvoice(
     `/api/finance/invoices/${id}/certify`,
     dto,
   );
-  ensureNotForbidden(resp);
   return resp.data;
 }
 
@@ -220,7 +204,6 @@ export async function getInvoiceVerifyStatus(
   const resp = await axiosForBackend.get<InvoiceVerifyStatusView>(
     `/api/finance/invoices/${id}/verify-status`,
   );
-  ensureNotForbidden(resp);
   return resp.data;
 }
 
@@ -243,7 +226,6 @@ export async function generateVendorSettlement(
     '/api/finance/vendor-settlement/generate',
     dto,
   );
-  ensureNotForbidden(resp);
   return resp.data;
 }
 
@@ -255,7 +237,6 @@ export async function reverseArWriteoff(
     `/api/finance/ar-writeoffs/${id}/reverse`,
     { remark },
   );
-  ensureNotForbidden(resp);
   return resp.data;
 }
 
@@ -267,7 +248,6 @@ export async function reverseApWriteoff(
     `/api/finance/ap-writeoffs/${id}/reverse`,
     { remark },
   );
-  ensureNotForbidden(resp);
   return resp.data;
 }
 
@@ -333,7 +313,6 @@ export async function unbindPurchaseAp(invoiceId: string) {
   const resp = await axiosForBackend.post(
     `/api/finance/reconciliation/purchase-ap/${invoiceId}/unbind`,
   );
-  ensureNotForbidden(resp);
   return resp.data;
 }
 
@@ -342,7 +321,6 @@ export async function bindPurchaseAp(invoiceId: string, apId: string) {
     `/api/finance/reconciliation/purchase-ap/${invoiceId}/bind`,
     { apId },
   );
-  ensureNotForbidden(resp);
   return resp.data;
 }
 

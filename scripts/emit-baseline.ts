@@ -84,9 +84,50 @@ for (const value of Object.values(schema)) {
   }
 }
 
+/**
+ * S2（§6.7.1）：基线迁移的两条 `CREATE TYPE` 必须是**幂等**的。
+ *
+ * ## 原缺陷
+ *
+ * 原模板里写死了：
+ * ```sql
+ * CREATE TYPE user_profile AS (user_id varchar, user_name varchar);
+ * CREATE TYPE file_attachment AS (bucket_id varchar, file_path varchar);
+ * ```
+ * PostgreSQL **没有 `CREATE TYPE IF NOT EXISTS`**，而这两条也不在
+ * `DO $$ ... EXCEPTION WHEN duplicate_object` 块里 —— 它们是**全链唯一的
+ * 非幂等 DDL**（全量扫描 123 个 CREATE TABLE / 157 个 ADD COLUMN /
+ * 78 个 ADD CONSTRAINT / 51 个 INSERT / 4 个 CREATE TRIGGER 全部有守卫）。
+ *
+ * 风险场景真实：从 dump 恢复的库、或迁移账本被清理后重跑 ——
+ * 单个迁移单事务（`db-migrate.mjs`）会整体回滚且不登记，**其后所有迁移
+ * 全部不执行**，而 CI 的 `migrate:dryrun` 永远跑在空 pglite 上，看不见它。
+ *
+ * ## 为什么必须同时改模板
+ *
+ * `emit-baseline.ts` 把这两行**写死在模板字符串里**：只改
+ * `0000_baseline.sql` 会被 `npm run db:generate` 原样覆盖回去。
+ * 因此修法必须落在模板本身。
+ *
+ * ## 顺带解决问题
+ *
+ * 用 `DO $$ ... EXCEPTION WHEN duplicate_object THEN NULL` 包住 ——
+ * 这也是本仓其它迁移统一采用的幂等写法（见 `migrate-dryrun.mjs` 的 capability
+ * 探测：pglite 0.3.x 支持 plpgsql DO 块，真实 PG 更不在话下）。
+ */
+const IDEMPOTENT_TYPES = `DO $$ BEGIN
+  CREATE TYPE user_profile AS (user_id varchar, user_name varchar);
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+DO $$ BEGIN
+  CREATE TYPE file_attachment AS (bucket_id varchar, file_path varchar);
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;`;
+
 const sql = `-- 独立部署基线。由 scripts/emit-baseline.ts 根据 schema.ts 生成。
-CREATE TYPE user_profile AS (user_id varchar, user_name varchar);
-CREATE TYPE file_attachment AS (bucket_id varchar, file_path varchar);
+-- ⚠️ 本文件由生成器覆写：不要手工编辑（改了会在下次 db:generate 时丢失）。
+-- requires: （无）迁移链起点
+${IDEMPOTENT_TYPES}
 
 ${tables.join('\n\n')}
 

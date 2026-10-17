@@ -124,7 +124,14 @@ export default function LoginPage() {
             )}
           </span>
           <div>
-            <p className="text-[22px] font-semibold leading-tight">{brandName}</p>
+            {/*
+              ⚠️ 字号对齐 `PageShell` 的规范值 `text-2xl tracking-tight`。
+              原来是 `text-[22px] leading-tight` —— 与全站页面标题差 2px，
+              且"规范可 grep 验证"这件事会失效（按 `text-2xl` 搜会得出
+              "没有一个页面符合规范"的错误结论，见 `PageShell.tsx` 里 P2-4 的同一段论证）。
+              登录页是使用者的第一屏，更该与内页一致。
+            */}
+            <p className="text-2xl font-semibold tracking-tight">{brandName}</p>
             <p className="text-sm text-primary-foreground/80">数据服务一体化</p>
           </div>
         </div>
@@ -142,7 +149,8 @@ export default function LoginPage() {
             <p className="text-sm font-medium text-muted-foreground md:hidden">
               {brandName}
             </p>
-            <h1 className="text-[22px] font-semibold leading-tight">
+            {/* 同上：与 `PageShell` 的页面标题同字号（`text-2xl tracking-tight`） */}
+            <h1 className="text-2xl font-semibold tracking-tight">
               {bindInvite ? '绑定飞书' : '登录'}
             </h1>
             <p className="mt-1 text-sm text-muted-foreground">

@@ -1,5 +1,4 @@
 import { axiosForBackend } from '@client/src/platform/request';
-import { ensureNotForbidden } from '@client/src/utils/api-error';
 import type {
   BudgetCommitmentSummary,
   BudgetForecastResult,
@@ -29,7 +28,6 @@ export async function createBudget(dto: CreateBudgetDto): Promise<BudgetItem> {
     '/api/fin-budget/budgets',
     dto,
   );
-  ensureNotForbidden(resp);
   return resp.data;
 }
 
@@ -41,7 +39,6 @@ export async function updateBudget(
     `/api/fin-budget/budgets/${id}`,
     dto,
   );
-  ensureNotForbidden(resp);
   return resp.data;
 }
 

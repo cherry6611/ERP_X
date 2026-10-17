@@ -1,5 +1,4 @@
 import { axiosForBackend } from '@client/src/platform/request';
-import { ensureNotForbidden } from '@client/src/utils/api-error';
 import type {
   AccountItem,
   CreateAccountDto,
@@ -9,6 +8,7 @@ import type {
   ListVoucherParams,
   PagedResult,
   PeriodStatus,
+  UnassignedEntityCheckResult,
   VoucherAction,
   VoucherItem,
 } from '@shared/api.interface';
@@ -33,7 +33,6 @@ export async function listAccounts(
 
 export async function createAccount(dto: CreateAccountDto): Promise<AccountItem> {
   const resp = await axiosForBackend.post<AccountItem>('/api/voucher/accounts', dto);
-  ensureNotForbidden(resp);
   return resp.data;
 }
 
@@ -59,7 +58,6 @@ export async function listVouchers(
 
 export async function createVoucher(dto: CreateVoucherDto): Promise<VoucherItem> {
   const resp = await axiosForBackend.post<VoucherItem>('/api/voucher/vouchers', dto);
-  ensureNotForbidden(resp);
   return resp.data;
 }
 
@@ -70,7 +68,6 @@ export async function voucherAction(
   const resp = await axiosForBackend.post<VoucherItem>(
     `/api/voucher/vouchers/${id}/actions/${action}`,
   );
-  ensureNotForbidden(resp);
   return resp.data;
 }
 
@@ -81,11 +78,32 @@ export async function listPeriods(): Promise<PeriodStatus[]> {
   return resp.data;
 }
 
+/**
+ * B-1 / REQ-BE-01：凭证主体归属自检。
+ *
+ * 未归属纳税主体的凭证**不会出现在任何主体的报表里**，必须由界面显式提示。
+ * 不传 `period` 时返回全量缺口（跨期间）。
+ */
+export async function checkUnassignedEntity(params: {
+  period?: string;
+  sourceType?: string;
+} = {}): Promise<UnassignedEntityCheckResult> {
+  const resp = await axiosForBackend.get<UnassignedEntityCheckResult>(
+    '/api/voucher/unassigned-entity',
+    {
+      params: {
+        ...(params.period ? { period: params.period } : {}),
+        ...(params.sourceType ? { sourceType: params.sourceType } : {}),
+      },
+    },
+  );
+  return resp.data;
+}
+
 export async function closePeriod(period: string): Promise<PeriodStatus> {
   const resp = await axiosForBackend.post<PeriodStatus>(
     `/api/voucher/periods/${period}/close`,
   );
-  ensureNotForbidden(resp);
   return resp.data;
 }
 
@@ -97,7 +115,6 @@ export async function unclosePeriod(
     `/api/voucher/periods/${period}/unclose`,
     { remark },
   );
-  ensureNotForbidden(resp);
   return resp.data;
 }
 
@@ -115,6 +132,5 @@ export async function setAccountStatus(
     `/api/voucher/accounts/${encodeURIComponent(code)}/status`,
     dto,
   );
-  ensureNotForbidden(resp);
   return resp.data;
 }

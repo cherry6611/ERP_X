@@ -1,5 +1,4 @@
 import { axiosForBackend } from '@client/src/platform/request';
-import { ensureNotForbidden } from '@client/src/utils/api-error';
 import type {
   AcceptPurOrderDto,
   CreatePurOrderDto,
@@ -42,7 +41,6 @@ export async function requestAction(
   const resp = await axiosForBackend.post<PurRequestItem>(
     `/api/pur/requests/${id}/actions/${action}`,
   );
-  ensureNotForbidden(resp);
   return resp.data;
 }
 
@@ -65,7 +63,6 @@ export async function createOrder(
     '/api/pur/orders',
     dto,
   );
-  ensureNotForbidden(resp);
   return resp.data;
 }
 
@@ -77,7 +74,6 @@ export async function acceptOrder(
     `/api/pur/orders/${id}/accept`,
     dto,
   );
-  ensureNotForbidden(resp);
   return resp.data;
 }
 
@@ -85,7 +81,6 @@ export async function cancelOrder(id: string): Promise<PurOrderItem> {
   const resp = await axiosForBackend.post<PurOrderItem>(
     `/api/pur/orders/${id}/actions/cancel`,
   );
-  ensureNotForbidden(resp);
   return resp.data;
 }
 

@@ -1,5 +1,4 @@
 import { axiosForBackend } from '@client/src/platform/request';
-import { ensureNotForbidden } from '@client/src/utils/api-error';
 import type {
   AdminAffairAction,
   AdminAffairItem,
@@ -39,7 +38,6 @@ export async function listAutomationConfig(): Promise<AutomationConfigItem[]> {
   const resp = await axiosForBackend.get<AutomationConfigItem[]>(
     '/api/admin/automation-config'
   );
-  ensureNotForbidden(resp);
   return resp.data;
 }
 
@@ -51,7 +49,6 @@ export async function updateAutomationConfig(
     `/api/admin/automation-config/${taskKey}`,
     { enabled }
   );
-  ensureNotForbidden(resp);
   return resp.data;
 }
 
@@ -102,7 +99,6 @@ export async function rentContractAction(
   const resp = await axiosForBackend.post<AdminRentContractItem>(
     `/api/admin/rent-contracts/${id}/actions/${action}`,
   );
-  ensureNotForbidden(resp);
   return resp.data;
 }
 
@@ -155,7 +151,6 @@ export async function adminBillAction(
     `/api/admin/bills/${id}/actions/${action}`,
     dto ?? {},
   );
-  ensureNotForbidden(resp);
   return resp.data;
 }
 
@@ -194,7 +189,6 @@ export async function updateAdminAsset(
 
 export async function deleteAdminAsset(id: string): Promise<void> {
   const resp = await axiosForBackend.delete(`/api/admin/assets/${id}`);
-  ensureNotForbidden(resp);
 }
 
 /* ========== 车辆/差旅事务 ========== */
@@ -237,11 +231,9 @@ export async function adminAffairAction(
   const resp = await axiosForBackend.post<AdminAffairItem>(
     `/api/admin/affairs/${id}/actions/${action}`,
   );
-  ensureNotForbidden(resp);
   return resp.data;
 }
 
 export async function deleteAdminAffair(id: string): Promise<void> {
   const resp = await axiosForBackend.delete(`/api/admin/affairs/${id}`);
-  ensureNotForbidden(resp);
 }

@@ -1,5 +1,4 @@
 import { axiosForBackend } from '@client/src/platform/request';
-import { ensureNotForbidden } from '@client/src/utils/api-error';
 import type {
   Contract,
   CreateLeadDto,
@@ -25,19 +24,16 @@ export async function listLeads(status?: string): Promise<Lead[]> {
 
 export async function createLead(dto: CreateLeadDto): Promise<Lead> {
   const resp = await axiosForBackend.post<Lead>('/api/crm/leads', dto);
-  ensureNotForbidden(resp);
   return resp.data;
 }
 
 export async function updateLead(id: string, dto: UpdateLeadDto): Promise<Lead> {
   const resp = await axiosForBackend.patch<Lead>(`/api/crm/leads/${id}`, dto);
-  ensureNotForbidden(resp);
   return resp.data;
 }
 
 export async function convertLead(id: string): Promise<Opportunity> {
   const resp = await axiosForBackend.post<Opportunity>(`/api/crm/leads/${id}/convert`);
-  ensureNotForbidden(resp);
   return resp.data;
 }
 
@@ -57,19 +53,16 @@ export async function getOpportunity(id: string): Promise<OpportunityDetail> {
 
 export async function createOpportunity(dto: CreateOpportunityDto): Promise<Opportunity> {
   const resp = await axiosForBackend.post<Opportunity>('/api/crm/opportunities', dto);
-  ensureNotForbidden(resp);
   return resp.data;
 }
 
 export async function updateOpportunity(id: string, dto: UpdateOpportunityDto): Promise<Opportunity> {
   const resp = await axiosForBackend.patch<Opportunity>(`/api/crm/opportunities/${id}`, dto);
-  ensureNotForbidden(resp);
   return resp.data;
 }
 
 export async function convertOpportunity(id: string): Promise<Contract> {
   const resp = await axiosForBackend.post<Contract>(`/api/crm/opportunities/${id}/convert`);
-  ensureNotForbidden(resp);
   return resp.data;
 }
 
@@ -87,7 +80,6 @@ export async function parseQuotationDoc(docUrl: string): Promise<ParsedQuotation
     '/api/crm/quotations/parse-doc',
     { docUrl },
   );
-  ensureNotForbidden(resp);
   return resp.data;
 }
 
@@ -98,7 +90,6 @@ export async function parseQuotationFile(file: File): Promise<ParsedQuotationDra
     '/api/crm/quotations/parse-file',
     form,
   );
-  ensureNotForbidden(resp);
   return resp.data;
 }
 
@@ -126,13 +117,11 @@ export async function previewFeishuBitable(
     '/api/crm/quotations/feishu-bitable/preview',
     { recordIds },
   );
-  ensureNotForbidden(resp);
   return resp.data;
 }
 
 export async function createQuotation(dto: CreateQuotationDto): Promise<Quotation> {
   const resp = await axiosForBackend.post<Quotation>('/api/crm/quotations', dto);
-  ensureNotForbidden(resp);
   return resp.data;
 }
 
@@ -146,36 +135,30 @@ export async function updateQuotation(
   dto: CreateQuotationDto,
 ): Promise<Quotation> {
   const resp = await axiosForBackend.patch<Quotation>(`/api/crm/quotations/${id}`, dto);
-  ensureNotForbidden(resp);
   return resp.data;
 }
 
 export async function submitQuotation(id: string): Promise<Quotation> {
   const resp = await axiosForBackend.post<Quotation>(`/api/crm/quotations/${id}/submit`);
-  ensureNotForbidden(resp);
   return resp.data;
 }
 
 export async function approveQuotation(id: string): Promise<Quotation> {
   const resp = await axiosForBackend.post<Quotation>(`/api/crm/quotations/${id}/approve`);
-  ensureNotForbidden(resp);
   return resp.data;
 }
 
 export async function rejectQuotation(id: string): Promise<Quotation> {
   const resp = await axiosForBackend.post<Quotation>(`/api/crm/quotations/${id}/reject`);
-  ensureNotForbidden(resp);
   return resp.data;
 }
 
 export async function voidQuotation(id: string): Promise<Quotation> {
   const resp = await axiosForBackend.post<Quotation>(`/api/crm/quotations/${id}/void`);
-  ensureNotForbidden(resp);
   return resp.data;
 }
 
 export async function convertQuotation(id: string): Promise<Contract> {
   const resp = await axiosForBackend.post<Contract>(`/api/crm/quotations/${id}/convert`);
-  ensureNotForbidden(resp);
   return resp.data;
 }

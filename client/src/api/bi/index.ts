@@ -1,5 +1,4 @@
 import { axiosForBackend } from '@client/src/platform/request';
-import { ensureNotForbidden } from '@client/src/utils/api-error';
 import type {
   AlertsResult,
   BiAlertSubscriptionItem,
@@ -95,7 +94,6 @@ export async function upsertAlertSubscription(
     '/api/bi/alert-subscriptions',
     dto,
   );
-  ensureNotForbidden(resp);
   return resp.data;
 }
 
@@ -105,6 +103,5 @@ export async function removeAlertSubscription(
   const resp = await axiosForBackend.post<{ ok: true }>(
     `/api/bi/alert-subscriptions/${id}/delete`,
   );
-  ensureNotForbidden(resp);
   return resp.data;
 }

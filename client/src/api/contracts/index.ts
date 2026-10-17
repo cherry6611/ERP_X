@@ -1,5 +1,4 @@
 import { axiosForBackend } from '@client/src/platform/request';
-import { ensureNotForbidden } from '@client/src/utils/api-error';
 import type {
   BillableSummary,
   Calloff,
@@ -41,7 +40,6 @@ export async function listContractsPaged(
 
 export async function createContract(dto: CreateContractDto): Promise<Contract> {
   const resp = await axiosForBackend.post<Contract>('/api/contracts', dto);
-  ensureNotForbidden(resp);
   return resp.data;
 }
 
@@ -57,7 +55,6 @@ export async function getBillable(id: string): Promise<BillableSummary> {
 
 export async function updateContract(id: string, dto: UpdateContractDto): Promise<Contract> {
   const resp = await axiosForBackend.patch<Contract>(`/api/contracts/${id}`, dto);
-  ensureNotForbidden(resp);
   return resp.data;
 }
 
@@ -66,7 +63,6 @@ export async function changeContractStatus(
   action: ContractStatusAction,
 ): Promise<Contract> {
   const resp = await axiosForBackend.post<Contract>(`/api/contracts/${id}/status`, { action });
-  ensureNotForbidden(resp);
   return resp.data;
 }
 
@@ -78,7 +74,6 @@ export async function addMilestone(
     `/api/contracts/${contractId}/milestones`,
     dto,
   );
-  ensureNotForbidden(resp);
   return resp.data;
 }
 
@@ -90,7 +85,6 @@ export async function updateMilestone(
     `/api/contracts/milestones/${milestoneId}`,
     dto,
   );
-  ensureNotForbidden(resp);
   return resp.data;
 }
 
@@ -102,7 +96,6 @@ export async function createVersion(
     `/api/contracts/${contractId}/changes`,
     dto,
   );
-  ensureNotForbidden(resp);
   return resp.data;
 }
 
@@ -129,7 +122,6 @@ export async function createContractItem(
     `/api/contracts/${contractId}/items`,
     dto
   );
-  ensureNotForbidden(resp);
   return resp.data;
 }
 
@@ -148,12 +140,10 @@ export async function importQuotationItems(
     `/api/contracts/${contractId}/items/import-quotation`,
     { quotationId }
   );
-  ensureNotForbidden(resp);
   return resp.data;
 }
 
 export async function createCalloff(contractId: string, dto: CreateCalloffDto): Promise<Calloff> {
   const resp = await axiosForBackend.post<Calloff>(`/api/contracts/${contractId}/calloffs`, dto);
-  ensureNotForbidden(resp);
   return resp.data;
 }

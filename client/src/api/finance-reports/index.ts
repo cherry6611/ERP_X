@@ -1,5 +1,4 @@
 import { axiosForBackend } from '@client/src/platform/request';
-import { ensureNotForbidden } from '@client/src/utils/api-error';
 import type {
   AccountBalanceSheet,
   AuxAllocationArgs,
@@ -203,7 +202,6 @@ export async function carryForward(
     '/api/finance/year-end/carry-forward',
     buildArgs(args),
   );
-  ensureNotForbidden(resp);
   return resp.data;
 }
 
@@ -218,7 +216,6 @@ export async function reverseYearEnd(
       taxEntityId: args.taxEntityId,
     },
   );
-  ensureNotForbidden(resp);
   return resp.data;
 }
 
@@ -261,7 +258,6 @@ export async function confirmVatDeclaration(
     '/api/finance/tax-declaration/confirm',
     dto,
   );
-  ensureNotForbidden(resp);
   return resp.data;
 }
 
