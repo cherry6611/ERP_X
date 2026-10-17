@@ -175,7 +175,8 @@
     "check:audit-immutability": "node ./scripts/check-audit-immutability.mjs",
     "type:check:specs": "tsc --noEmit --project tsconfig.spec-server.json",
     "check:typecheck-coverage": "node ./scripts/audit-typecheck-coverage.mjs",
-    "preflight": "node ./scripts/preflight.mjs"
+    "preflight": "node ./scripts/preflight.mjs",
+    "drill:backup": "node ./scripts/drill-backup-restore.mjs"
   },
   "version": "2.4.0"
 }

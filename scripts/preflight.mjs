@@ -229,7 +229,11 @@ function checkSecretGuard() {
 /* ────────── 人工步骤（不假装检查过） ────────── */
 function humanSteps() {
   add('WARN', '【人工】生产密钥注入', 'JWT_SECRET ≥32 字符、SECRET_ENC_KEY ≥16，且**不得**用 .env 样例值');
-  add('WARN', '【人工】数据库备份演练', 'pg_dump 全库 + 恢复演练（见 docs/RUNBOOK.md），记录文件名与校验和');
+  add(
+    'WARN',
+    '【须执行】数据库备份演练',
+    '已脚本化：`npm run drill:backup`（pg_dump → 临时库 pg_restore → 逐表行数比对 → 自动 DROP）。上线前**必须在本机跑通一次并留档**（文件名+sha256）。',
+  );
   add('WARN', '【人工】反代与 trust proxy', 'Nginx 后需设 TRUST_PROXY_HOPS，否则全局限速会把全体用户一起封');
   add('WARN', '【人工】飞书回调地址', 'FEISHU_REDIRECT_URI 须与 APP_BASE_URL / 浏览器三者一致，且与飞书开放平台逐字符相同');
   add('WARN', '【人工】主数据录入', '迁移不种子部门/客户/供应商，需管理员在设置页录入');
