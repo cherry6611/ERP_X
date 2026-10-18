@@ -1,11 +1,12 @@
 import { FormEvent, useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { Eye, EyeOff, Layers, Loader2 } from 'lucide-react';
+import { Eye, EyeOff, Loader2 } from 'lucide-react';
 import { Button } from '@client/src/components/ui/button';
 import { Input } from '@client/src/components/ui/input';
 import { Label } from '@client/src/components/ui/label';
 import { settingsApi } from '@client/src/api';
 import PasswordExpiredForm from './components/PasswordExpiredForm';
+import LoginBrandPanel from './components/LoginBrandPanel';
 import { withBasePath } from '@client/src/utils/base-path';
 
 /**
@@ -262,51 +263,8 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="grid min-h-screen bg-[#f5f6f8] md:grid-cols-[minmax(360px,42%)_1fr]">
-      <section className="relative hidden flex-col justify-between overflow-hidden bg-[#1f2f52] p-10 text-primary-foreground md:flex">
-        <div
-          className="pointer-events-none absolute inset-0 opacity-40"
-          style={{ boxShadow: 'inset 0 0 120px rgba(255,255,255,.12)' }}
-          aria-hidden="true"
-        />
-        <div className="relative flex items-center gap-3">
-          <span className="flex size-10 items-center justify-center overflow-hidden rounded-xl bg-primary-foreground/15 shadow-brand">
-            {logoUrl ? (
-              <img src={logoUrl} alt="" className="size-10 object-contain" />
-            ) : (
-              <Layers className="size-5" aria-hidden="true" />
-            )}
-          </span>
-          <div>
-            {/*
-              ⚠️ 字号对齐 `PageShell` 的规范值 `text-2xl tracking-tight`。
-              原来是 `text-[22px] leading-tight` —— 与全站页面标题差 2px，
-              且"规范可 grep 验证"这件事会失效（按 `text-2xl` 搜会得出
-              "没有一个页面符合规范"的错误结论，见 `PageShell.tsx` 里 P2-4 的同一段论证）。
-              登录页是使用者的第一屏，更该与内页一致。
-            */}
-            <p className="text-2xl font-semibold tracking-tight">{brandName}</p>
-            <p className="text-sm text-primary-foreground/80">数据服务一体化</p>
-          </div>
-        </div>
-        <div className="relative max-w-sm space-y-5">
-          <div className="space-y-3">
-            <h2 className="text-[32px] font-semibold leading-[1.25] tracking-tight">
-              经营数据
-              <br />
-              一处看清
-            </h2>
-            <p className="text-sm leading-6 text-primary-foreground/80">
-              合同、项目、成本与回款在同一套账上运转，少一次对表，多一次判断。
-            </p>
-          </div>
-          <div className="space-y-2 border-t border-primary-foreground/15 pt-5 text-[12px] text-primary-foreground/75">
-            <p>· 项目健康与预算执行同屏</p>
-            <p>· 收入、成本、回款一条链</p>
-            <p>· 关键操作全程留痕</p>
-          </div>
-        </div>
-      </section>
+    <div className="grid min-h-screen bg-background md:grid-cols-[minmax(360px,42%)_1fr]">
+      <LoginBrandPanel brandName={brandName} logoUrl={logoUrl} />
       <div className="flex items-center justify-center p-8">
         <form
           className="w-full max-w-[400px] space-y-5 rounded-2xl border border-border/80 bg-card p-7"
@@ -510,6 +468,8 @@ export default function LoginPage() {
     </div>
   );
 }
+
+
 
 
 
