@@ -7,6 +7,7 @@ import { toast } from 'sonner';
 import { ArrowLeft } from 'lucide-react';
 import PageShell from '@client/src/components/PageShell';
 import AttachmentHint from '@client/src/components/attachments/AttachmentHint';
+import FieldHelp from '@client/src/components/erp/FieldHelp';
 import { Button } from '@client/src/components/ui/button';
 import {
   Form,
@@ -327,7 +328,7 @@ const InvoiceCreatePage: React.FC = () => {
                 name="taxRate"
                 render={({ field }) => (
                   <FormItem className="w-28">
-                    <FormLabel>税率 %</FormLabel>
+                    <div className="flex items-center gap-0.5"><FormLabel>税率 %</FormLabel><FieldHelp label="税率">按纳税主体默认档位带出，可选档位随主体类型变化。</FieldHelp></div>
                     <Select
                       value={String(field.value)}
                       onValueChange={(v) => field.onChange(Number(v))}
@@ -438,6 +439,7 @@ const InvoiceCreatePage: React.FC = () => {
 };
 
 export default InvoiceCreatePage;
+
 
 
 

@@ -5,6 +5,7 @@ import { useForm } from 'react-hook-form';
 import { toast } from 'sonner';
 import { Download, History, Plus, Upload } from 'lucide-react';
 import { Table } from 'antd';
+import ActionHelp from '@client/src/components/erp/ActionHelp';
 import { CanCapabilityWrite } from '@client/src/platform/auth';
 import PageShell from '@client/src/components/PageShell';
 import { DataState } from '@client/src/components/DataState';
@@ -242,6 +243,9 @@ const ContractsPage: React.FC = () => {
             <History className="h-4 w-4" />
             同步记录
           </Button>
+          <ActionHelp title="同步与同步记录">
+            同步会把合同写入飞书多维表格，已同步成功的记录自动跳过；同步记录可查看最近结果。
+          </ActionHelp>
         </>
       }
     >
@@ -485,3 +489,4 @@ const ContractsPage: React.FC = () => {
 };
 
 export default ContractsPage;
+

@@ -3,6 +3,7 @@ import { toast } from 'sonner';
 import { AlertTriangle, PlayCircle, RefreshCw } from 'lucide-react';
 import PageShell from '@client/src/components/PageShell';
 import FilterBar from '@client/src/components/erp/FilterBar';
+import ActionHelp from '@client/src/components/erp/ActionHelp';
 import PeriodSelect from '@client/src/components/erp/PeriodSelect';
 import { Button } from '@client/src/components/ui/button';
 import {
@@ -197,6 +198,9 @@ const YearEndPage: React.FC = () => {
             <PlayCircle className="size-4" />
             {carrying ? '结转中…' : '执行年结结转'}
           </Button>
+          <ActionHelp title="执行年结结转">
+            结转损益并关闭当前年度，执行后账务期间会锁定；反年结需要单独发起并填写原因。
+          </ActionHelp>
         </CanCapabilityWrite>
       }
     >
@@ -341,3 +345,4 @@ const YearEndPage: React.FC = () => {
 };
 
 export default YearEndPage;
+

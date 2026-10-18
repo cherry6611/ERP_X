@@ -2,6 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { toast } from 'sonner';
 import { AlertTriangle, CheckCircle2, Download, FileCheck2, RefreshCw, ShieldCheck } from 'lucide-react';
 import PageShell from '@client/src/components/PageShell';
+import ActionHelp from '@client/src/components/erp/ActionHelp';
 import TaxRiskPanel from './TaxRiskPanel';
 import VatLineTable from './components/VatLineTable';
 import VatHistorySection from './components/VatHistorySection';
@@ -184,7 +185,7 @@ const TaxDeclarationPage: React.FC = () => {
   return (
     <PageShell
       title="增值税申报"
-      description="发票台账口径与总账口径的销项/进项比对底稿，确认后留痕可追溯；含税务风险扫描"
+      description="发票与总账口径比对底稿，确认后留痕"
       actions={
         /*
          * 两个主操作都落在页头 `actions`：
@@ -229,6 +230,9 @@ const TaxDeclarationPage: React.FC = () => {
               {data?.status === 'confirmed' ? '底稿已确认' : '确认底稿'}
             </Button>
           </CanCapabilityWrite>
+          <ActionHelp title="扫描与确认底稿">
+            扫描只做风险检测，不改数据；确认底稿会留痕并锁定本期申报数据。确认前请先指定纳税主体。
+          </ActionHelp>
         </>
       }
     >
@@ -439,3 +443,4 @@ const TaxDeclarationPage: React.FC = () => {
 };
 
 export default TaxDeclarationPage;
+

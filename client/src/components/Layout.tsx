@@ -140,7 +140,7 @@ function LayoutFrame() {
       <aside
         className={cn(
           'flex shrink-0 flex-col border-r bg-sidebar',
-          collapsed ? 'w-[68px]' : 'w-[236px]',
+          collapsed ? 'w-[68px]' : 'w-[232px]',
         )}
       >
         <div className="flex h-[60px] items-center gap-2.5 border-b border-sidebar-border px-4">
@@ -388,6 +388,7 @@ const Layout = () => (
 );
 
 export default Layout;
+
 
 
 

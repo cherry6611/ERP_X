@@ -41,6 +41,7 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { useForm } from 'react-hook-form';
 import { toast } from 'sonner';
 import DateField from '@client/src/components/erp/DateField';
+import FieldHelp from '@client/src/components/erp/FieldHelp';
 import AttachmentHint from '@client/src/components/attachments/AttachmentHint';
 import { Button } from '@client/src/components/ui/button';
 import {
@@ -344,7 +345,7 @@ const ContractFormDialog: React.FC<ContractFormDialogProps> = ({
                   const rates = resolveRateOptions(entity);
                   return (
                     <FormItem className="w-36">
-                      <FormLabel>税率（%）</FormLabel>
+                      <div className="flex items-center gap-0.5"><FormLabel>税率（%）</FormLabel><FieldHelp label="税率">按纳税主体默认档位带出；小规模与一般纳税人的可选档位不同。</FieldHelp></div>
                       <Select
                         value={String(field.value)}
                         onValueChange={(value) => field.onChange(Number(value))}
@@ -492,3 +493,4 @@ const ContractFormDialog: React.FC<ContractFormDialogProps> = ({
 };
 
 export default ContractFormDialog;
+
