@@ -40,6 +40,7 @@ import InvoiceFormDialog from './components/InvoiceFormDialog';
 import InvoiceLinkDialog from './components/InvoiceLinkDialog';
 import InvoiceEditDialog from './components/InvoiceEditDialog';
 import { invoiceColumns } from './components/invoice-columns';
+import InvoiceQuickViewDrawer from './components/InvoiceQuickViewDrawer';
 
 /*
  * §5.9（F8）：本文件的**纯逻辑**已移到同目录 `./invoice-schemas`，
@@ -91,6 +92,7 @@ const InvoicesTab: React.FC = () => {
   const [linkArId, setLinkArId] = useState('');
   /** 编辑发票的目标；`null` 表示弹窗关闭（与 `linkTarget` 同一约定） */
   const [editTarget, setEditTarget] = useState<InvoiceItem | null>(null);
+  const [quickViewInvoice, setQuickViewInvoice] = useState<InvoiceItem | null>(null);
 
   const { data, loading, error, reload } = useAsyncData<InvoiceItem[]>(
     () =>
@@ -212,6 +214,7 @@ const InvoicesTab: React.FC = () => {
     handleVoid,
     handleVerify,
     handleCertify,
+    onQuickView: setQuickViewInvoice,
   });
 
   return (
@@ -308,9 +311,16 @@ const InvoicesTab: React.FC = () => {
         onSaved={reload}
       />
 
+      <InvoiceQuickViewDrawer
+        invoice={quickViewInvoice}
+        onOpenChange={(open) => {
+          if (!open) setQuickViewInvoice(null);
+        }}
+      />
     </div>
   );
 };
 
 export default InvoicesTab;
+
 

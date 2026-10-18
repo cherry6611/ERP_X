@@ -76,6 +76,8 @@ interface InvoiceColumnsArgs {
   handleVerify: (invoice: InvoiceItem) => Promise<void>;
   /** 勾选认证（`window.prompt` 输所属期），由父组件注入 */
   handleCertify: (invoice: InvoiceItem) => Promise<void>;
+  /** 快速查看抽屉 */
+  onQuickView: (invoice: InvoiceItem) => void;
 }
 
 export function invoiceColumns({
@@ -85,6 +87,7 @@ export function invoiceColumns({
   handleVoid,
   handleVerify,
   handleCertify,
+  onQuickView,
 }: InvoiceColumnsArgs): TableColumnsType<InvoiceItem> {
   const columns: TableColumnsType<InvoiceItem> = [
     { title: '申请编号', dataIndex: 'code', fixed: 'left', width: 150 },
@@ -198,10 +201,17 @@ export function invoiceColumns({
     {
       title: '操作',
       key: 'actions',
-      width: 220,
+      width: 260,
       fixed: 'right',
       render: (_: unknown, record: InvoiceItem) => (
         <div className="flex items-center gap-1">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => onQuickView(record)}
+          >
+            查看
+          </Button>
           <Button
             variant="ghost"
             size="sm"
@@ -274,3 +284,5 @@ export function invoiceColumns({
 
   return columns;
 }
+
+
