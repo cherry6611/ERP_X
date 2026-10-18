@@ -262,8 +262,8 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="grid min-h-screen bg-background md:grid-cols-2">
-      <section className="relative hidden flex-col justify-between overflow-hidden p-8 text-primary-foreground md:flex bg-glow">
+    <div className="grid min-h-screen bg-[#f5f6f8] md:grid-cols-[minmax(360px,42%)_1fr]">
+      <section className="relative hidden flex-col justify-between overflow-hidden bg-[#1f2f52] p-10 text-primary-foreground md:flex">
         <div
           className="pointer-events-none absolute inset-0 opacity-40"
           style={{ boxShadow: 'inset 0 0 120px rgba(255,255,255,.12)' }}
@@ -289,13 +289,27 @@ export default function LoginPage() {
             <p className="text-sm text-primary-foreground/80">数据服务一体化</p>
           </div>
         </div>
-        <p className="relative max-w-sm text-sm leading-6 text-primary-foreground/85">
-          合同、项目、财务与人力在同一套账上运转。
-        </p>
+        <div className="relative max-w-sm space-y-5">
+          <div className="space-y-3">
+            <h2 className="text-[32px] font-semibold leading-[1.25] tracking-tight">
+              经营数据
+              <br />
+              一处看清
+            </h2>
+            <p className="text-sm leading-6 text-primary-foreground/80">
+              合同、项目、成本与回款在同一套账上运转，少一次对表，多一次判断。
+            </p>
+          </div>
+          <div className="space-y-2 border-t border-primary-foreground/15 pt-5 text-[12px] text-primary-foreground/75">
+            <p>· 项目健康与预算执行同屏</p>
+            <p>· 收入、成本、回款一条链</p>
+            <p>· 关键操作全程留痕</p>
+          </div>
+        </div>
       </section>
-      <div className="flex items-center justify-center p-6">
+      <div className="flex items-center justify-center p-8">
         <form
-          className="w-full max-w-sm space-y-4 rounded-xl border bg-card p-6 shadow-card"
+          className="w-full max-w-[400px] space-y-5 rounded-2xl border border-border/80 bg-card p-7"
           onSubmit={onSubmit}
           aria-busy={submitting}
         >
@@ -364,7 +378,7 @@ export default function LoginPage() {
                     type="button"
                     variant="ghost"
                     size="icon"
-                    className="absolute right-0 top-0 h-9 w-9"
+                    className="!absolute right-2 top-1/2 h-8 w-8 -translate-y-1/2"
                     aria-label={showPassword ? '隐藏密码' : '显示密码'}
                     aria-pressed={showPassword}
                     onClick={() => setShowPassword((v) => !v)}
@@ -496,3 +510,8 @@ export default function LoginPage() {
     </div>
   );
 }
+
+
+
+
+

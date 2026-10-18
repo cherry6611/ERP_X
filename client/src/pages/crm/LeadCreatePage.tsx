@@ -80,7 +80,8 @@ const LeadCreatePage: React.FC = () => {
         </Button>
       }
     >
-      <div className="mx-auto max-w-lg">
+      <div className="mx-auto w-full max-w-3xl">
+        <div className="rounded-xl border border-border/80 bg-card p-6">
         <Form {...form}>
           <form onSubmit={onSubmit} className="space-y-4">
             <div className="flex gap-4">
@@ -212,9 +213,11 @@ const LeadCreatePage: React.FC = () => {
             </div>
           </form>
         </Form>
+        </div>
       </div>
     </PageShell>
   );
 };
 
 export default LeadCreatePage;
+

@@ -130,7 +130,8 @@ const ProjectCreatePage: React.FC = () => {
         </Button>
       }
     >
-      <div className="mx-auto max-w-xl">
+      <div className="mx-auto w-full max-w-3xl">
+        <div className="rounded-xl border border-border/80 bg-card p-6">
         <Form {...form}>
           <form onSubmit={onSubmit} className="space-y-4">
             <FormField
@@ -347,9 +348,13 @@ const ProjectCreatePage: React.FC = () => {
             </div>
           </form>
         </Form>
+        </div>
       </div>
     </PageShell>
   );
 };
 
 export default ProjectCreatePage;
+
+
+

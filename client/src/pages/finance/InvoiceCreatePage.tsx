@@ -188,7 +188,8 @@ const InvoiceCreatePage: React.FC = () => {
         </Button>
       }
     >
-      <div className="mx-auto max-w-lg">
+      <div className="mx-auto w-full max-w-3xl">
+        <div className="rounded-xl border border-border/80 bg-card p-6">
         <Form {...form}>
           <form onSubmit={onSubmit} className="space-y-4">
             <FormField
@@ -430,9 +431,13 @@ const InvoiceCreatePage: React.FC = () => {
             </div>
           </form>
         </Form>
+        </div>
       </div>
     </PageShell>
   );
 };
 
 export default InvoiceCreatePage;
+
+
+
