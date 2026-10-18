@@ -70,7 +70,7 @@ const StatCard: React.FC<{ label: string; value: string }> = ({
   label,
   value,
 }) => (
-  <div className="rounded-lg border bg-card p-4">
+  <div className="rounded-xl border border-border/80 bg-card p-4">
     <p className="text-sm text-muted-foreground">{label}</p>
     <p className="text-lg font-semibold">{value}</p>
   </div>
@@ -157,7 +157,7 @@ const AssetPanel: React.FC = () => {
         <StatCard label="GPU 服务器" value={formatNumber(overview?.gpuCount)} />
       </div>
 
-      <div className="flex flex-wrap items-center justify-between gap-3">
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border/80 bg-card px-3 py-2.5">
         <div className="flex flex-wrap items-center gap-3">
           <div className="flex items-center gap-2">
             <Label htmlFor="asset-status-filter">状态</Label>
@@ -291,3 +291,5 @@ const AssetPanel: React.FC = () => {
 };
 
 export default AssetPanel;
+
+
