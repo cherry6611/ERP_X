@@ -66,6 +66,7 @@ import type {
   PagedResult,
 } from '@shared/api.interface';
 import { contractListColumns } from './components/contract-list-columns';
+import ContractQuickViewDrawer from './components/ContractQuickViewDrawer';
 import ContractFormDialog from './ContractFormDialog';
 /* §5.9：导出行定义与转项目表单模型已拆到独立模块（可单测） */
 import { CONTRACT_EXPORT_COLUMNS } from './contract-export-columns';
@@ -102,6 +103,7 @@ const ContractsPage: React.FC = () => {
   const [editTarget, setEditTarget] = useState<Contract | null>(null);
   const [editOpen, setEditOpen] = useState(false);
   const [editSeq, setEditSeq] = useState(0);
+  const [quickViewId, setQuickViewId] = useState<string | null>(null);
 
   /** 行内「编辑」的触发点：同一事件里写目标 + 递增 key + 打开，故首帧就是该行的值 */
   const openContractEdit = (record: Contract) => {
@@ -195,7 +197,8 @@ const ContractsPage: React.FC = () => {
 
   /*
    * §5.9（F8）：列定义已移到 `./components/contract-list-columns.tsx`（`render` 里是 JSX，
-   * 故不能进零 React 依赖的模型模块）。`navigate`、两个 setter 与 `onEdit` 以**同名入参**
+   * 故不能进零 React 依赖的模型模块）。
+avigate`、两个 setter 与 `onEdit` 以**同名入参**
    * 传入，`render` 体除新增的「编辑」按钮外逐字未动。
    */
   const columns = contractListColumns({
@@ -203,6 +206,7 @@ const ContractsPage: React.FC = () => {
     setSimilarTarget,
     setTransferTarget,
     onEdit: openContractEdit,
+    onQuickView: (record) => setQuickViewId(record.id),
   });
 
   return (
@@ -484,9 +488,18 @@ const ContractsPage: React.FC = () => {
           void reload();
         }}
       />
+      <ContractQuickViewDrawer
+        contractId={quickViewId}
+        open={quickViewId !== null}
+        onOpenChange={(open) => {
+          if (!open) setQuickViewId(null);
+        }}
+      />
     </PageShell>
   );
 };
 
 export default ContractsPage;
+
+
 

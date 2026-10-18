@@ -86,6 +86,8 @@ interface ContractListColumnsArgs {
   setTransferTarget: React.Dispatch<React.SetStateAction<Contract | null>>;
   /** 「编辑」把目标行交给父组件（父组件负责打开编辑弹窗，见 `ContractsPage`） */
   onEdit: (record: Contract) => void;
+  /** 「快速查看」打开右侧抽屉 */
+  onQuickView: (record: Contract) => void;
 }
 
 export function contractListColumns({
@@ -93,6 +95,7 @@ export function contractListColumns({
   setSimilarTarget,
   setTransferTarget,
   onEdit,
+  onQuickView,
 }: ContractListColumnsArgs): TableColumnsType<Contract> {
   const columns: TableColumnsType<Contract> = [
     { title: '合同编号', dataIndex: 'code', fixed: 'left', width: 150 },
@@ -133,9 +136,12 @@ export function contractListColumns({
       title: '操作',
       key: 'action',
       fixed: 'right',
-      width: 200,
+      width: 240,
       render: (_, record) => (
         <div className="flex gap-1">
+          <Button size="sm" variant="outline" onClick={() => onQuickView(record)}>
+            查看
+          </Button>
           <Button size="sm" onClick={() => navigate(`/contracts/${record.id}`)}>
             详情
           </Button>
@@ -175,3 +181,5 @@ export function contractListColumns({
   ];
   return columns;
 }
+
+
