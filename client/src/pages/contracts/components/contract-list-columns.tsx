@@ -98,21 +98,13 @@ export function contractListColumns({
   onQuickView,
 }: ContractListColumnsArgs): TableColumnsType<Contract> {
   const columns: TableColumnsType<Contract> = [
-    { title: '合同编号', dataIndex: 'code', fixed: 'left', width: 150 },
-    { title: '名称', dataIndex: 'name', width: 220 },
-    { title: '客户', dataIndex: 'customerName', width: 160 },
-    {
-      title: '计费模式',
-      dataIndex: 'billingModel',
-      width: 110,
-      render: (m: string) => (
-        <Badge variant="secondary">{BILLING_MODEL_LABELS[m] ?? m}</Badge>
-      ),
-    },
+    { title: '合同编号', dataIndex: 'code', fixed: 'left', width: 130, ellipsis: true },
+    { title: '名称', dataIndex: 'name', width: 200, ellipsis: true },
+    { title: '客户', dataIndex: 'customerName', width: 150, ellipsis: true },
     {
       title: '金额（含税）',
       dataIndex: 'amount',
-      width: 200,
+      width: 170,
       align: 'right',
       render: (v: number, record) => (
         <div className="text-right">
@@ -123,20 +115,17 @@ export function contractListColumns({
         </div>
       ),
     },
-    { title: '税率', dataIndex: 'taxRate', width: 80, render: (v: number) => `${v}%` },
     {
       title: '状态',
       dataIndex: 'status',
       width: 100,
       render: (s: string) => <StatusBadge status={s} labels={CONTRACT_STATUS_LABELS} />,
     },
-    { title: '负责人', dataIndex: 'owner', width: 100, render: (v) => v ?? '-' },
-    { title: '签订日期', dataIndex: 'signDate', width: 110, render: (v) => v ?? '-' },
     {
       title: '操作',
       key: 'action',
       fixed: 'right',
-      width: 240,
+      width: 220,
       render: (_, record) => (
         <div className="flex gap-1">
           <Button size="sm" variant="outline" onClick={() => onQuickView(record)}>
@@ -181,5 +170,7 @@ export function contractListColumns({
   ];
   return columns;
 }
+
+
 
 

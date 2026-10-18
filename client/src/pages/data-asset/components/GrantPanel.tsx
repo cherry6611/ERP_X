@@ -9,6 +9,7 @@ import { CanCapabilityWrite } from '@client/src/platform/auth';
 import DateField from '@client/src/components/erp/DateField';
 import { SectionTitle } from '@client/src/components/SectionTitle';
 import ActionHelp from '@client/src/components/erp/ActionHelp';
+import ActionGroup from '@client/src/components/erp/ActionGroup';
 import { Button } from '@client/src/components/ui/button';
 import {
   Dialog,
@@ -273,20 +274,25 @@ const GrantPanel: React.FC = () => {
               </SelectContent>
             </Select>
           </div>
-          <CanCapabilityWrite capability="projects_write">
-            <Button
-              onClick={() => {
-                form.reset(EMPTY_FORM);
-                setCreateOpen(true);
-              }}
-            >
-              <Plus className="h-4 w-4" />
-              新增授权
-            </Button>
-          </CanCapabilityWrite>
-          <ActionHelp title="数据资产授权">
-            授权范围决定可访问的数据集与有效期限；到期后自动失效，失效后需重新授权。
-          </ActionHelp>
+          <ActionGroup
+            help={
+              <ActionHelp title="数据资产授权">
+                授权范围决定可访问的数据集与有效期限；到期后自动失效，失效后需重新授权。
+              </ActionHelp>
+            }
+          >
+            <CanCapabilityWrite capability="projects_write">
+              <Button
+                onClick={() => {
+                  form.reset(EMPTY_FORM);
+                  setCreateOpen(true);
+                }}
+              >
+                <Plus className="h-4 w-4" />
+                新增授权
+              </Button>
+            </CanCapabilityWrite>
+          </ActionGroup>
         </div>
         {error ? (
           <p className="text-sm text-destructive">
@@ -487,4 +493,5 @@ const GrantPanel: React.FC = () => {
 };
 
 export default GrantPanel;
+
 

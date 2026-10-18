@@ -3,6 +3,8 @@ import { toast } from 'sonner';
 import { AlertTriangle, CheckCircle2, Download, FileCheck2, RefreshCw, ShieldCheck } from 'lucide-react';
 import PageShell from '@client/src/components/PageShell';
 import ActionHelp from '@client/src/components/erp/ActionHelp';
+import ActionGroup from '@client/src/components/erp/ActionGroup';
+import NoticeBar from '@client/src/components/erp/NoticeBar';
 import TaxRiskPanel from './TaxRiskPanel';
 import VatLineTable from './components/VatLineTable';
 import VatHistorySection from './components/VatHistorySection';
@@ -196,7 +198,13 @@ const TaxDeclarationPage: React.FC = () => {
          * 且确认后不可随意回退 —— 放在筛选控件中间既不显眼也不符合规范
          * （`AGENTS.md`：页头 `actions` 插槽放主操作）。
          */
-        <>
+        <ActionGroup
+          help={
+            <ActionHelp title="扫描与确认底稿">
+              扫描只做风险检测，不改数据；确认底稿会留痕并锁定本期申报数据。确认前请先指定纳税主体。
+            </ActionHelp>
+          }
+        >
           <Button
             type="button"
             disabled={riskLoading}
@@ -218,10 +226,6 @@ const TaxDeclarationPage: React.FC = () => {
             <Button
               type="button"
               onClick={openConfirmDialog}
-              /*
-               * 附加税费须按纳税主体逐户计提（城建税率按主体分档，跨主体无法合并），
-               * 未指定主体时后端必然拒绝确认，所以这里直接禁掉，避免用户点完才吃 400。
-               */
               disabled={
                 !data || data.status === 'confirmed' || taxEntityId === ALL_ENTITIES
               }
@@ -230,10 +234,7 @@ const TaxDeclarationPage: React.FC = () => {
               {data?.status === 'confirmed' ? '底稿已确认' : '确认底稿'}
             </Button>
           </CanCapabilityWrite>
-          <ActionHelp title="扫描与确认底稿">
-            扫描只做风险检测，不改数据；确认底稿会留痕并锁定本期申报数据。确认前请先指定纳税主体。
-          </ActionHelp>
-        </>
+        </ActionGroup>
       }
     >
       <TaxRiskPanel
@@ -321,37 +322,21 @@ const TaxDeclarationPage: React.FC = () => {
         </Button>
       </FilterBar>
 
-      {taxEntityId === ALL_ENTITIES ? (
-        <div className="flex items-center gap-2 rounded-lg border border-warning/40 bg-warning/5 px-4 py-2 text-sm text-warning">
-          <AlertTriangle className="size-4" />
-          附加税费须按纳税主体计提，请先选择具体纳税主体后再确认底稿
-        </div>
+      {taxEntityId === ALL_ENTITIES || (data && !data.reconciled) ? (
+        <NoticeBar tone={data && !data.reconciled && differenceLines.length > 0 ? 'danger' : 'warning'}>
+          {taxEntityId === ALL_ENTITIES
+            ? '未指定纳税主体，附加税费无法按主体计提，请先选择具体主体。'
+            : ''}
+          {data && !data.reconciled
+            ? `${differenceLines.length > 0 ? ` 台账与总账有 ${differenceLines.length} 行差异，` : ' 台账与总账口径存在差异，'}确认底稿前请核实。`
+            : ''}
+        </NoticeBar>
       ) : null}
 
       {data?.status === 'confirmed' ? (
         <div className="flex items-center gap-2 rounded-lg border border-success/40 bg-success/5 px-4 py-2 text-sm text-success">
           <CheckCircle2 className="size-4" />
           该期间申报底稿已确认（生成人：{data.generatedBy ?? '-'}）
-        </div>
-      ) : null}
-
-      {data && !data.reconciled ? (
-        <div
-          role="alert"
-          className="flex flex-col gap-2 rounded-lg border border-destructive/40 bg-destructive/5 px-4 py-3 text-sm text-destructive"
-        >
-          <span className="flex items-center gap-2 font-medium">
-            <AlertTriangle className="size-4" />
-            发票台账口径与总账口径存在差异，确认底稿前请先核实
-          </span>
-          <ul className="ml-6 list-disc">
-            {(data.differences ?? []).map((item) => (
-              <li key={item.code}>
-                {item.label}：差异 {formatMoney(item.amount)}
-                {item.reason ? `（说明：${item.reason}）` : ''}
-              </li>
-            ))}
-          </ul>
         </div>
       ) : null}
 
@@ -393,8 +378,12 @@ const TaxDeclarationPage: React.FC = () => {
             <div className="rounded-lg border bg-card">
               <div className="flex items-center gap-2 border-b px-4 py-3">
                 <SectionTitle>申报表行次</SectionTitle>
-                <Badge variant={data.reconciled ? 'success' : 'destructive'}>
-                  {data.reconciled ? '台账与总账一致' : `${differenceLines.length} 行存在差异`}
+                <Badge variant={data.reconciled ? 'success' : differenceLines.length > 0 ? 'destructive' : 'warning'}>
+                  {data.reconciled
+                    ? '台账与总账一致'
+                    : differenceLines.length > 0
+                      ? `${differenceLines.length} 行存在差异`
+                      : '口径待核实'}
                 </Badge>
               </div>
               {/*
@@ -443,4 +432,9 @@ const TaxDeclarationPage: React.FC = () => {
 };
 
 export default TaxDeclarationPage;
+
+
+
+
+
 

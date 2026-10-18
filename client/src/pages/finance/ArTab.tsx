@@ -129,9 +129,9 @@ const ArTab: React.FC = () => {
   };
 
   const arColumns: TableColumnsType<ArItem> = [
-    { title: '应收编号', dataIndex: 'code', fixed: 'left', width: 150 },
-    { title: '客户', dataIndex: 'customerName', width: 160 },
-    { title: '合同', dataIndex: 'contractName', width: 180 },
+    { title: '应收编号', dataIndex: 'code', fixed: 'left', width: 130, ellipsis: true },
+    { title: '客户', dataIndex: 'customerName', width: 140, ellipsis: true },
+    { title: '合同', dataIndex: 'contractName', width: 150, ellipsis: true },
     {
       title: '应收金额（含税）',
       dataIndex: 'amount',
@@ -153,7 +153,7 @@ const ArTab: React.FC = () => {
       align: 'right',
       render: (_, record) => formatMoney(record.amount - record.settledAmount),
     },
-    { title: '到期日', dataIndex: 'dueDate', width: 110, render: (v) => v ?? '-' },
+    { title: '到期日', dataIndex: 'dueDate', width: 100, render: (v) => v ?? '-' },
     {
       title: '状态',
       dataIndex: 'status',
@@ -171,7 +171,7 @@ const ArTab: React.FC = () => {
 
   const receiptColumns: TableColumnsType<ReceiptItem> = [
     { title: '回款编号', dataIndex: 'code', fixed: 'left', width: 150 },
-    { title: '客户', dataIndex: 'customerName', width: 160 },
+    { title: '客户', dataIndex: 'customerName', width: 140, ellipsis: true },
     {
       title: '金额',
       dataIndex: 'amount',
@@ -281,7 +281,7 @@ const ArTab: React.FC = () => {
 
   return (
     <div className="flex flex-col gap-6">
-      <div className="flex flex-wrap items-center gap-3">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-2">
           <span className="text-sm">状态</span>
           <Select value={statusFilter} onValueChange={setStatusFilter}>
@@ -332,7 +332,7 @@ const ArTab: React.FC = () => {
             columns={arColumns}
             dataSource={ars ?? []}
             rowKey="id"
-            scroll={{ x: 1200, y: 400 }}
+            scroll={{ x: 1120, y: 400 }}
             pagination={{
               pageSize: 10,
               showTotal: (t: number) => `共 ${t} 条`,
@@ -385,3 +385,5 @@ const ArTab: React.FC = () => {
 };
 
 export default ArTab;
+
+

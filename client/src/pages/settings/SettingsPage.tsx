@@ -383,21 +383,35 @@ export default function SettingsPage() {
       description="外观、品牌、飞书云空间/知识库、报价多维表格、账号绑定与系统字典/参数"
     >
       <div className="max-w-5xl">
-      <Tabs defaultValue="appearance">
-        <TabsList>
-          <TabsTrigger value="appearance">外观与集成</TabsTrigger>
-          <TabsTrigger value="dictionary">字典设置</TabsTrigger>
-          <TabsTrigger value="params">参数设置</TabsTrigger>
-        </TabsList>
-        <TabsContent value="appearance">{appearanceTab}</TabsContent>
-        <TabsContent value="dictionary">
-          <DictionarySettings />
-        </TabsContent>
-        <TabsContent value="params">
-          <ParameterSettings />
-        </TabsContent>
-      </Tabs>
+        <Tabs
+          defaultValue="appearance"
+          orientation="vertical"
+          className="flex flex-row gap-8"
+        >
+          <TabsList className="h-fit w-[180px] shrink-0 flex-col items-stretch justify-start gap-1 bg-transparent p-0">
+            <TabsTrigger value="appearance" className="h-9 flex-none justify-start px-3 data-[state=active]:bg-muted">
+              外观与集成
+            </TabsTrigger>
+            <TabsTrigger value="dictionary" className="h-9 flex-none justify-start px-3 data-[state=active]:bg-muted">
+              字典设置
+            </TabsTrigger>
+            <TabsTrigger value="params" className="h-9 flex-none justify-start px-3 data-[state=active]:bg-muted">
+              参数设置
+            </TabsTrigger>
+          </TabsList>
+          <div className="min-w-0 flex-1">
+            <TabsContent value="appearance">{appearanceTab}</TabsContent>
+            <TabsContent value="dictionary">
+              <DictionarySettings />
+            </TabsContent>
+            <TabsContent value="params">
+              <ParameterSettings />
+            </TabsContent>
+          </div>
+        </Tabs>
       </div>
     </PageShell>
   );
 }
+
+

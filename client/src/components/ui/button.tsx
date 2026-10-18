@@ -14,7 +14,7 @@ const buttonVariants = cva(
       variant: {
         default:
           // 晟光主按钮：实心晟蓝 + 轻辉光
-          "bg-primary text-primary-foreground border border-primary-border shadow-brand",
+          "bg-primary text-primary-foreground border border-primary-border",
         destructive:
           // Destructive action button with matching border
           "bg-destructive text-destructive-foreground border border-destructive-border",
@@ -68,3 +68,4 @@ function Button({
 }
 
 export { Button, buttonVariants }
+

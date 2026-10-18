@@ -6,6 +6,7 @@ import { toast } from 'sonner';
 import { Download, History, Plus, Upload } from 'lucide-react';
 import { Table } from 'antd';
 import ActionHelp from '@client/src/components/erp/ActionHelp';
+import ActionGroup from '@client/src/components/erp/ActionGroup';
 import FilterBar from '@client/src/components/erp/FilterBar';
 import { CanCapabilityWrite } from '@client/src/platform/auth';
 import PageShell from '@client/src/components/PageShell';
@@ -230,28 +231,33 @@ avigate`、两个 setter 与 `onEdit` 以**同名入参**
               登记合同
             </Button>
           </CanCapabilityWrite>
-          <CanCapabilityWrite capability="projects_write">
+          <ActionGroup
+            help={
+              <ActionHelp title="同步与同步记录">
+                同步会把合同写入飞书多维表格，已同步成功的记录自动跳过；同步记录可查看最近结果。
+              </ActionHelp>
+            }
+          >
+            <CanCapabilityWrite capability="projects_write">
+              <Button
+                variant="outline"
+                disabled={syncing}
+                onClick={() => setSyncConfirm(true)}
+                aria-label="同步合同到多维表格"
+              >
+                <Upload className="h-4 w-4" />
+                {syncing ? '同步中…' : '同步到多维表格'}
+              </Button>
+            </CanCapabilityWrite>
             <Button
               variant="outline"
-              disabled={syncing}
-              onClick={() => setSyncConfirm(true)}
-              aria-label="同步合同到多维表格"
+              onClick={() => setRecordsOpen(true)}
+              aria-label="查看同步记录"
             >
-              <Upload className="h-4 w-4" />
-              {syncing ? '同步中…' : '同步到多维表格'}
+              <History className="h-4 w-4" />
+              同步记录
             </Button>
-          </CanCapabilityWrite>
-          <Button
-            variant="outline"
-            onClick={() => setRecordsOpen(true)}
-            aria-label="查看同步记录"
-          >
-            <History className="h-4 w-4" />
-            同步记录
-          </Button>
-          <ActionHelp title="同步与同步记录">
-            同步会把合同写入飞书多维表格，已同步成功的记录自动跳过；同步记录可查看最近结果。
-          </ActionHelp>
+          </ActionGroup>
         </>
       }
     >
@@ -274,10 +280,11 @@ avigate`、两个 setter 与 `onEdit` 以**同名入参**
         skeleton="table"
       >
         <Table
+          className="overflow-hidden rounded-xl border border-border/80 bg-card"
           columns={columns}
           dataSource={items}
           rowKey="id"
-          scroll={{ x: 1300, y: 500 }}
+          scroll={{ x: 1000, y: 500 }}
           pagination={{
             current: page,
             pageSize,
@@ -475,6 +482,9 @@ avigate`、两个 setter 与 `onEdit` 以**同名入参**
 };
 
 export default ContractsPage;
+
+
+
 
 
 

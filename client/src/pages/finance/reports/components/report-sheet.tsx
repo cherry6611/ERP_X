@@ -75,7 +75,7 @@ export function amountColumns(reportCode: ReportCode): AmountColumnMeta {
   if (reportCode === 'balance_sheet') {
     return {
       thirdLabel: '期末余额',
-      fourthLabel: '年初余额',
+      fourthLabel: '累计金额',
       fifthLabel: '年初余额',
     };
   }
@@ -284,3 +284,4 @@ export const ReportSheetView: React.FC<ReportSheetViewProps> = ({
     </div>
   );
 };
+

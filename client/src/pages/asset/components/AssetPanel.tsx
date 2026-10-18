@@ -253,7 +253,7 @@ const AssetPanel: React.FC = () => {
         dataSource={items}
         loading={loading}
         rowKey="id"
-        scroll={{ x: 1400, y: 500 }}
+        scroll={{ x: 1100, y: 500 }}
         locale={{ emptyText: '暂无资产数据，点击右上角新增资产' }}
         pagination={{
           current: page,
@@ -291,5 +291,6 @@ const AssetPanel: React.FC = () => {
 };
 
 export default AssetPanel;
+
 
 

@@ -73,12 +73,14 @@ export function assetColumns({
       title: '采购日期',
       dataIndex: 'purchaseDate',
       width: 110,
+      responsive: ['xxl'],
       render: (v: string | null) => v ?? '-',
     },
     {
       title: '折旧月数',
       dataIndex: 'usefulMonths',
       width: 90,
+      responsive: ['xxl'],
       render: (v: number) => `${v} 个月`,
     },
     {
@@ -105,3 +107,4 @@ export function assetColumns({
   ];
   return columns;
 }
+

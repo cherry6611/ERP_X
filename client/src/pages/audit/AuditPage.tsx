@@ -208,16 +208,7 @@ const AuditPage: React.FC = () => {
           : '-',
     },
     {
-      title: '详情',
-      dataIndex: 'detail',
-      render: (d: string | null) => (
-        <span className="text-muted-foreground text-xs break-all line-clamp-2" title={d ?? ''}>
-          {d ?? '-'}
-        </span>
-      ),
-    },
-    {
-      title: '',
+      title: '查看',
       key: 'view',
       width: 72,
       fixed: 'right',
@@ -251,7 +242,16 @@ const AuditPage: React.FC = () => {
   }, [rows]);
 
   return (
-    <PageShell title="审计日志" description="全局写操作审计记录（只追加，不可篡改）">
+    <PageShell
+      title="审计日志"
+      description="全局写操作审计记录（只追加，不可篡改）"
+      actions={
+        <Button variant="outline" disabled={exporting} onClick={() => void exportCsv()}>
+          <Download className="mr-2 h-4 w-4" aria-hidden />
+          {exporting ? '导出中…' : '导出 CSV'}
+        </Button>
+      }
+    >
       <AuditChainPanel />
       <FilterBar>
         <div className="flex flex-col gap-1.5">
@@ -337,15 +337,6 @@ const AuditPage: React.FC = () => {
         </div>
         <Button
           type="button"
-          variant="outline"
-          disabled={exporting}
-          onClick={() => void exportCsv()}
-        >
-          <Download className="mr-2 h-4 w-4" aria-hidden />
-          {exporting ? '导出中…' : '导出 CSV'}
-        </Button>
-        <Button
-          type="button"
           variant="ghost"
           onClick={() => {
             setObjectType('all');
@@ -367,11 +358,12 @@ const AuditPage: React.FC = () => {
         </p>
       ) : null}
       <Table
+        className="overflow-hidden rounded-xl border border-border/80 bg-card"
         columns={columns}
         dataSource={rows}
         loading={loading}
         rowKey="id"
-        scroll={{ x: 1200, y: 500 }}
+        scroll={{ x: 1000, y: 500 }}
         pagination={{
           pageSize: 10,
           /*
@@ -439,6 +431,12 @@ const AuditPage: React.FC = () => {
 };
 
 export default AuditPage;
+
+
+
+
+
+
 
 
 

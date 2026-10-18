@@ -159,6 +159,7 @@ const balanceColumns = useMemo<TableColumnsType<BalanceTableRow>>(
       title: '级次',
       width: 70,
       align: 'center',
+      responsive: ['xxl'],
       render: (_value, record) =>
         record.kind === 'main' ? record.row.level : '—',
     },
@@ -166,6 +167,7 @@ const balanceColumns = useMemo<TableColumnsType<BalanceTableRow>>(
       title: '方向',
       width: 70,
       align: 'center',
+      responsive: ['xxl'],
       render: (_value, record) =>
         record.kind === 'main'
           ? (DIRECTION_LABELS[record.row.direction] ?? record.row.direction)
@@ -182,7 +184,7 @@ const balanceColumns = useMemo<TableColumnsType<BalanceTableRow>>(
       ] as const
     ).map(([title, field]) => ({
       title,
-      width: 130,
+      width: 110,
       align: 'right' as const,
       render: (_value: unknown, record: BalanceTableRow) => {
         const source =
@@ -262,7 +264,7 @@ return (
            * 没有它 antd 会把列压扁到不可读（shadcn 版靠外层 overflow-x-auto
            * 横滚，代价是科目编码列跟着滚走）。
            */
-          scroll={{ x: 1240 }}
+          scroll={{ x: 1120 }}
           pagination={{
             pageSize: 100,
             showSizeChanger: true,
@@ -277,3 +279,5 @@ return (
 };
 
 export default BalanceTab;
+
+

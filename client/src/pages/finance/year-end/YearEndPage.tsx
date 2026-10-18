@@ -4,6 +4,7 @@ import { AlertTriangle, PlayCircle, RefreshCw } from 'lucide-react';
 import PageShell from '@client/src/components/PageShell';
 import FilterBar from '@client/src/components/erp/FilterBar';
 import ActionHelp from '@client/src/components/erp/ActionHelp';
+import ActionGroup from '@client/src/components/erp/ActionGroup';
 import PeriodSelect from '@client/src/components/erp/PeriodSelect';
 import { Button } from '@client/src/components/ui/button';
 import {
@@ -190,17 +191,22 @@ const YearEndPage: React.FC = () => {
          * 它应当与其余筛选控件分开、位置固定、更醒目。
          */
         <CanCapabilityWrite capability="finance_write">
-          <Button
-            type="button"
-            onClick={() => void handleCarryForward()}
-            disabled={!data || !data.canCarry || carrying || data.alreadyCarried}
+          <ActionGroup
+            help={
+              <ActionHelp title="执行年结结转">
+                结转损益并关闭当前年度，执行后账务期间会锁定；反年结需要单独发起并填写原因。
+              </ActionHelp>
+            }
           >
-            <PlayCircle className="size-4" />
-            {carrying ? '结转中…' : '执行年结结转'}
-          </Button>
-          <ActionHelp title="执行年结结转">
-            结转损益并关闭当前年度，执行后账务期间会锁定；反年结需要单独发起并填写原因。
-          </ActionHelp>
+            <Button
+              type="button"
+              onClick={() => void handleCarryForward()}
+              disabled={!data || !data.canCarry || carrying || data.alreadyCarried}
+            >
+              <PlayCircle className="size-4" />
+              {carrying ? '结转中…' : '执行年结结转'}
+            </Button>
+          </ActionGroup>
         </CanCapabilityWrite>
       }
     >
@@ -345,4 +351,5 @@ const YearEndPage: React.FC = () => {
 };
 
 export default YearEndPage;
+
 

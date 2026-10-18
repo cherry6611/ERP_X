@@ -95,17 +95,6 @@ const TaxRiskPanel: React.FC<Props> = ({
 
   return (
     <div className="flex flex-col gap-4">
-      <div>
-        <h3 className="text-base font-semibold">税务风险扫描</h3>
-        <p className="text-sm text-muted-foreground">
-          扫描三个方向：税负率异常、进销项匹配异常、发票异常。
-          系统只做偏差检测与线索归纳，
-          {/* ⚠️ 不要写 `**不做合规判定**` —— JSX 不渲染 markdown，
-              星号会**原样显示**给使用者（实测截图可见）。要加粗用 <strong>。 */}
-          <strong>不做合规判定</strong> —— 阈值可按贵司行业调整。
-        </p>
-      </div>
-
       {/*
         ⚠️ 这里**不要**再加"点击扫描开始检查"的空态框。
         本文件下方（`{!result && …}`）已有一句同义提示，两处并存会出现
@@ -269,14 +258,12 @@ const TaxRiskPanel: React.FC<Props> = ({
         </div>
       )}
 
-      {!result && (
-        <p className="text-sm text-muted-foreground">
-          点击「扫描 {period}」开始检查。建议在提交增值税申报前跑一次，
-          逐条确认后归档。
-        </p>
-      )}
+
     </div>
   );
 };
 
 export default TaxRiskPanel;
+
+
+

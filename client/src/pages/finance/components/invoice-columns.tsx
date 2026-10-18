@@ -90,7 +90,7 @@ export function invoiceColumns({
   onQuickView,
 }: InvoiceColumnsArgs): TableColumnsType<InvoiceItem> {
   const columns: TableColumnsType<InvoiceItem> = [
-    { title: '申请编号', dataIndex: 'code', fixed: 'left', width: 150 },
+    { title: '申请编号', dataIndex: 'code', fixed: 'left', width: 130, ellipsis: true },
     {
       title: '方向',
       dataIndex: 'direction',
@@ -102,21 +102,24 @@ export function invoiceColumns({
     {
       title: '往来方',
       dataIndex: 'customerName',
-      width: 160,
+      width: 140,
+      ellipsis: true,
       render: (v: string, record: InvoiceItem) =>
         record.direction === 'sales' ? record.customerName : (record.supplierName ?? '-'),
     },
-    { title: '合同', dataIndex: 'contractName', width: 180, render: (v: string) => v ?? '-' },
+    { title: '合同', dataIndex: 'contractName', width: 160, responsive: ['xxl'], ellipsis: true, render: (v: string) => v ?? '-' },
     {
       title: '发票类型',
       dataIndex: 'invoiceType',
-      width: 140,
+      width: 130,
+      responsive: ['xxl'],
       render: (t: string) => INVOICE_TYPE_LABELS[t] ?? t,
     },
     {
       title: '发票号码',
       dataIndex: 'invoiceNo',
-      width: 160,
+      width: 150,
+      ellipsis: true,
       render: (v: string | null, record: InvoiceItem) =>
         v ? (
           record.status === 'voided' ? (
@@ -132,12 +135,13 @@ export function invoiceColumns({
       title: '关联应收',
       dataIndex: 'arCode',
       width: 140,
+      responsive: ['xxl'],
       render: (v: string | null) => v ?? '-',
     },
     {
       title: '开票金额（含税）',
       dataIndex: 'amount',
-      width: 180,
+      width: 160,
       align: 'right',
       render: (v: number, record) => (
         <div className="text-right">
@@ -152,6 +156,7 @@ export function invoiceColumns({
       title: '税额',
       dataIndex: 'taxAmount',
       width: 110,
+      responsive: ['xxl'],
       align: 'right',
       render: (v: number) => formatMoney(v),
     },
@@ -170,6 +175,7 @@ export function invoiceColumns({
       title: '查验状态',
       dataIndex: 'verifyStatus',
       width: 100,
+      responsive: ['xxl'],
       render: (v: string, record: InvoiceItem) => (
         <div className="flex flex-col gap-0.5">
           <Badge variant={VERIFY_STATUS_VARIANTS[v] ?? 'secondary'}>
@@ -185,6 +191,7 @@ export function invoiceColumns({
       title: '认证状态',
       dataIndex: 'certificationStatus',
       width: 110,
+      responsive: ['xxl'],
       render: (v: string, record: InvoiceItem) => (
         <div className="flex flex-col gap-0.5">
           <Badge variant={CERT_STATUS_VARIANTS[v] ?? 'secondary'}>
@@ -201,7 +208,7 @@ export function invoiceColumns({
     {
       title: '操作',
       key: 'actions',
-      width: 260,
+      width: 240,
       fixed: 'right',
       render: (_: unknown, record: InvoiceItem) => (
         <div className="flex items-center gap-1">
@@ -284,5 +291,7 @@ export function invoiceColumns({
 
   return columns;
 }
+
+
 
 

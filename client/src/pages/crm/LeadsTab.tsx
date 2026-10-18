@@ -268,7 +268,13 @@ const LeadsTab: React.FC = () => {
         error={error}
         empty={!loading && !error && (data?.length ?? 0) === 0}
         emptyTitle="暂无线索"
-        emptyText="点击上方「新建线索」按钮创建"
+        emptyText="还没有线索，先录入第一条客户线索"
+        emptyAction={
+          <Button onClick={() => navigate('/crm/leads/new')}>
+            <Plus className="h-4 w-4" />
+            新建线索
+          </Button>
+        }
         onRetry={() => void reload()}
         skeleton="table"
       >
@@ -390,3 +396,4 @@ const LeadsTab: React.FC = () => {
 };
 
 export default LeadsTab;
+

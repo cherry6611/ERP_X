@@ -7,6 +7,7 @@ import { CanCapability, CanCapabilityWrite } from '@client/src/platform/auth';
 import { DataState } from '@client/src/components/DataState';
 import FilterBar from '@client/src/components/erp/FilterBar';
 import ActionHelp from '@client/src/components/erp/ActionHelp';
+import ActionGroup from '@client/src/components/erp/ActionGroup';
 import StatCard from '@client/src/components/erp/StatCard';
 import { Button } from '@/components/ui/button';
 import {
@@ -251,7 +252,13 @@ const InvoicesTab: React.FC = () => {
             </SelectContent>
           </Select>
         </FilterBar>
-        <div className="flex items-center gap-2">
+        <ActionGroup
+          help={
+            <ActionHelp title="作废、查验与认证">
+              作废会释放可开票金额且不可恢复；查验/认证是税务状态动作，未配置查验服务商时只记录状态。
+            </ActionHelp>
+          }
+        >
           <Button variant="outline" onClick={handleExportCsv}>
             <Download className="h-4 w-4" />
             导出 CSV
@@ -262,10 +269,7 @@ const InvoicesTab: React.FC = () => {
               发票登记
             </Button>
           </CanCapabilityWrite>
-          <ActionHelp title="作废、查验与认证">
-            作废会释放可开票金额且不可恢复；查验/认证是税务状态动作，未配置查验服务商时只记录状态。
-          </ActionHelp>
-        </div>
+        </ActionGroup>
       </div>
       <DataState
         loading={loading}
@@ -277,7 +281,7 @@ const InvoicesTab: React.FC = () => {
           columns={columns}
           dataSource={invoices}
           rowKey="id"
-          scroll={{ x: 1500, y: 500 }}
+          scroll={{ x: 1120, y: 500 }}
           pagination={{
             pageSize: 10,
             showTotal: (t: number) => `共 ${t} 条`,
@@ -322,5 +326,7 @@ const InvoicesTab: React.FC = () => {
 };
 
 export default InvoicesTab;
+
+
 
 

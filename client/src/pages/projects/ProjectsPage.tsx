@@ -76,11 +76,11 @@ const ProjectsPage: React.FC = () => {
   };
 
   const columns: TableColumnsType<Project> = [
-    { title: '项目编号', dataIndex: 'code', fixed: 'left', width: 140 },
+    { title: '项目编号', dataIndex: 'code', fixed: 'left', width: 120, ellipsis: true },
     {
       title: '名称',
       dataIndex: 'name',
-      width: 220,
+      width: 180,
       render: (v: string, record: Project) => (
         <Link
           to={`/projects/${record.id}`}
@@ -90,11 +90,10 @@ const ProjectsPage: React.FC = () => {
         </Link>
       ),
     },
-    { title: '合同', dataIndex: 'contractName', width: 180 },
     {
       title: '成交报价',
       key: 'wonQuote',
-      width: 180,
+      width: 150,
       render: (_, row) =>
         row.wonQuotationId ? (
           <Link
@@ -110,27 +109,25 @@ const ProjectsPage: React.FC = () => {
           '-'
         ),
     },
-    { title: '项目经理', dataIndex: 'pm', width: 100, render: (v) => v ?? '-' },
     {
       title: '预算基线',
       dataIndex: 'budget',
-      width: 130,
+      width: 110,
       align: 'right',
       render: (v: number) => formatMoney(v),
     },
-    { title: '进度', dataIndex: 'progress', width: 90, render: (v: number) => formatPercent(v) },
+    { title: '进度', dataIndex: 'progress', width: 70, render: (v: number) => formatPercent(v) },
     {
       title: '状态',
       dataIndex: 'status',
-      width: 100,
+      width: 80,
       render: (s: string) => <StatusBadge status={s} labels={PROJECT_STATUS_LABELS} />,
     },
-    { title: '开始日期', dataIndex: 'startDate', width: 110, render: (v) => v ?? '-' },
     {
       title: '操作',
       key: 'action',
       fixed: 'right',
-      width: 210,
+      width: 180,
       render: (_, record) => (
         <div className="flex gap-1">
           <Button
@@ -215,10 +212,11 @@ const ProjectsPage: React.FC = () => {
         skeleton="table"
       >
         <Table
+          className="overflow-hidden rounded-xl border border-border/80 bg-card"
           columns={columns}
           dataSource={data ?? []}
           rowKey="id"
-          scroll={{ x: 1500, y: 500 }}
+          scroll={{ x: 900, y: 500 }}
           pagination={{
             pageSize: 10,
             showTotal: (total: number) => `共 ${total} 条`,
@@ -247,6 +245,9 @@ const ProjectsPage: React.FC = () => {
 };
 
 export default ProjectsPage;
+
+
+
 
 
 

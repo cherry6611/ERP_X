@@ -96,7 +96,7 @@ const AdminAutomationPage: React.FC = () => {
   return (
     <PageShell
       title="自动化任务"
-      description="定时任务总开关：停用后任务到点不再执行业务逻辑；任务标识仅在排障时使用"
+      description="定时任务总开关，停用后到点不执行"
     >
       <DataState
         loading={loading}
@@ -119,3 +119,4 @@ const AdminAutomationPage: React.FC = () => {
 };
 
 export default AdminAutomationPage;
+
