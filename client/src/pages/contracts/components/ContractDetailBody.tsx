@@ -117,7 +117,7 @@ const ContractDetailBody: React.FC<ContractDetailBodyProps> = ({
     <>
       <DataState loading={loading} error={error}>
 <div className="flex flex-col gap-6">
-  <div className="grid grid-cols-3 gap-3 text-sm">
+  <div className="grid grid-cols-3 gap-x-6 gap-y-4 rounded-xl border border-border/80 bg-card p-5 text-sm">
     <div>
       <p className="text-muted-foreground">客户</p>
       <p>{detail.customerName}</p>
@@ -191,7 +191,7 @@ const ContractDetailBody: React.FC<ContractDetailBodyProps> = ({
     </div>
   </CanCapabilityWrite>
 
-  <div className="flex flex-col gap-3">
+  <div className="flex flex-col gap-3 rounded-xl border border-border/80 bg-card p-4">
     <div className="flex items-center justify-between">
       <SectionTitle>合同明细</SectionTitle>
       {detail.status === 'draft' ? (
@@ -237,7 +237,7 @@ const ContractDetailBody: React.FC<ContractDetailBodyProps> = ({
     />
   </div>
 
-  <div className="flex flex-col gap-3">
+  <div className="flex flex-col gap-3 rounded-xl border border-border/80 bg-card p-4">
     <div className="flex items-center justify-between">
       <SectionTitle>合同里程碑</SectionTitle>
       <CanCapabilityWrite capability="crm_write">
@@ -258,7 +258,7 @@ const ContractDetailBody: React.FC<ContractDetailBodyProps> = ({
   </div>
 
   {detail.billingModel === 'framework' ? (
-    <div className="flex flex-col gap-3">
+    <div className="flex flex-col gap-3 rounded-xl border border-border/80 bg-card p-4">
       <div className="flex items-center justify-between">
         <SectionTitle>
           Call-off 下单（累计 {formatMoney(detail.billable.calloffTotal)} / 上限{' '}
@@ -282,7 +282,7 @@ const ContractDetailBody: React.FC<ContractDetailBodyProps> = ({
     </div>
   ) : null}
 
-  <div className="flex flex-col gap-3">
+  <div className="flex flex-col gap-3 rounded-xl border border-border/80 bg-card p-4">
     <SectionTitle>变更版本留痕</SectionTitle>
     <Table
       columns={versionColumns}
