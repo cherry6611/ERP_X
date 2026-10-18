@@ -68,6 +68,7 @@ import type {
 } from '@shared/api.interface';
 import { contractListColumns } from './components/contract-list-columns';
 import ContractQuickViewDrawer from './components/ContractQuickViewDrawer';
+import ContractFilters from './components/ContractFilters';
 import ContractFormDialog from './ContractFormDialog';
 /* §5.9：导出行定义与转项目表单模型已拆到独立模块（可单测） */
 import { CONTRACT_EXPORT_COLUMNS } from './contract-export-columns';
@@ -255,44 +256,17 @@ avigate`、两个 setter 与 `onEdit` 以**同名入参**
       }
     >
       <TaxEntityBanner />
-      <FilterBar>
-        <div className="flex items-center gap-2">
-          <Label htmlFor="contract-status-filter">状态</Label>
-          <Select
-            value={statusFilter}
-            onValueChange={(v: string) => {
-              setStatusFilter(v);
-              setPage(1);
-            }}
-          >
-            <SelectTrigger id="contract-status-filter" className="w-32">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">全部</SelectItem>
-              {Object.entries(CONTRACT_STATUS_LABELS).map(([value, label]) => (
-                <SelectItem key={value} value={value}>
-                  {label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-        <Input
-          aria-label="搜索合同"
-          placeholder="搜索合同名称或编号"
-          className="w-64"
-          value={q}
-          onChange={(e) => setQ(e.target.value)}
-        />
-        {debouncing ? (
-          <span className="text-xs text-muted-foreground">筛选中…</span>
-        ) : null}
-        <Button variant="outline" onClick={handleExport}>
-          <Download className="h-4 w-4" />
-          导出 Excel
-        </Button>
-      </FilterBar>
+      <ContractFilters
+        q={q}
+        onQChange={setQ}
+        debouncing={debouncing}
+        statusFilter={statusFilter}
+        onStatusChange={(value) => {
+          setStatusFilter(value);
+          setPage(1);
+        }}
+        onExport={handleExport}
+      />
       <DataState
         loading={loading}
         error={error}
@@ -501,6 +475,8 @@ avigate`、两个 setter 与 `onEdit` 以**同名入参**
 };
 
 export default ContractsPage;
+
+
 
 
 

@@ -42,7 +42,7 @@ import { useForm } from 'react-hook-form';
 import { toast } from 'sonner';
 import DateField from '@client/src/components/erp/DateField';
 import FieldHelp from '@client/src/components/erp/FieldHelp';
-import StickyActionBar from '@client/src/components/erp/StickyActionBar';
+import ContractFormFooter from './components/ContractFormFooter';
 import { Button } from '@client/src/components/ui/button';
 import {
   Dialog,
@@ -452,27 +452,11 @@ const ContractFormDialog: React.FC<ContractFormDialogProps> = ({
               )}
             />
 
-            {asPage ? (
-              <StickyActionBar
-                variant="card"
-                hint="保存后进入详情，可继续上传附件"
-              >
-                {onCancel ? (
-                  <Button type="button" variant="outline" onClick={onCancel}>
-                    取消
-                  </Button>
-                ) : null}
-                <Button type="submit">
-                  {editTarget ? '保存修改' : '保存'}
-                </Button>
-              </StickyActionBar>
-            ) : (
-              <div className="flex justify-end gap-2 border-t pt-3">
-                <Button type="submit">
-                  {editTarget ? '保存修改' : '保存'}
-                </Button>
-              </div>
-            )}
+            <ContractFormFooter
+              asPage={asPage}
+              isEdit={Boolean(editTarget)}
+              onCancel={onCancel}
+            />
           </form>
         </Form>
   );
@@ -500,6 +484,8 @@ const ContractFormDialog: React.FC<ContractFormDialogProps> = ({
 };
 
 export default ContractFormDialog;
+
+
 
 
 

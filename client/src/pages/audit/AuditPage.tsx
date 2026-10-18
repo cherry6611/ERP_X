@@ -402,11 +402,11 @@ const AuditPage: React.FC = () => {
           className="w-[640px] gap-0 bg-card p-0 sm:max-w-[640px]"
         >
           <SheetHeader className="h-14 flex-row items-center border-b border-border/80 px-5 py-0">
-            <SheetTitle className="text-[14px]">审计详情</SheetTitle>
+            <SheetTitle className="text-sm">审计详情</SheetTitle>
           </SheetHeader>
           {selectedLog ? (
             <div className="flex-1 space-y-5 overflow-y-auto p-5">
-              <div className="grid grid-cols-[88px_1fr] gap-x-3 gap-y-3 text-[12px]">
+              <div className="grid grid-cols-[88px_1fr] gap-x-3 gap-y-3 text-xs">
                 <span className="text-muted-foreground">时间</span>
                 <span>{new Date(selectedLog.createdAt).toLocaleString('zh-CN')}</span>
                 <span className="text-muted-foreground">操作人</span>
@@ -425,8 +425,8 @@ const AuditPage: React.FC = () => {
                 </span>
               </div>
               <div className="space-y-2">
-                <p className="text-[12px] font-medium">原始详情</p>
-                <pre className="max-h-[420px] overflow-auto whitespace-pre-wrap rounded-lg border border-border/80 bg-muted/30 p-3 font-mono text-[11px] leading-5 text-muted-foreground">
+                <p className="text-xs font-medium">原始详情</p>
+                <pre className="max-h-[420px] overflow-auto whitespace-pre-wrap rounded-lg border border-border/80 bg-muted/30 p-3 font-mono text-xs leading-5 text-muted-foreground">
                   {selectedLog.detail ?? '-'}
                 </pre>
               </div>
@@ -439,6 +439,7 @@ const AuditPage: React.FC = () => {
 };
 
 export default AuditPage;
+
 
 
 
