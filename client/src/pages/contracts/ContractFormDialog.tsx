@@ -470,7 +470,13 @@ const ContractFormDialog: React.FC<ContractFormDialogProps> = ({
   );
 
   if (asPage) {
-    return <div className="mx-auto max-w-xl space-y-4">{formInner}</div>;
+    return (
+      <div className="mx-auto w-full max-w-3xl">
+        <div className="rounded-xl border border-border/80 bg-card p-6">
+          {formInner}
+        </div>
+      </div>
+    );
   }
 
   return (
