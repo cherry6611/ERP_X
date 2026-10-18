@@ -7,6 +7,7 @@ import { CanCapability, CanCapabilityWrite } from '@client/src/platform/auth';
 import PageShell from '@client/src/components/PageShell';
 import { DataState } from '@client/src/components/DataState';
 import StatusBadge from '@client/src/components/erp/StatusBadge';
+import ProjectQuickViewDrawer from './components/ProjectQuickViewDrawer';
 import SimilarItemsDialog, {
   type SimilarTarget,
 } from '@client/src/components/SimilarItemsDialog';
@@ -54,6 +55,7 @@ const ProjectsPage: React.FC = () => {
   const { q, setQ, debouncedQ, debouncing } = useListQuery();
   const [statusFilter, setStatusFilter] = useState('all');
   const [similarTarget, setSimilarTarget] = useState<SimilarTarget | null>(null);
+  const [quickViewProject, setQuickViewProject] = useState<Project | null>(null);
 
   const { data, loading, error, reload } = useAsyncData<Project[]>(
     () =>
@@ -128,9 +130,16 @@ const ProjectsPage: React.FC = () => {
       title: '操作',
       key: 'action',
       fixed: 'right',
-      width: 160,
+      width: 210,
       render: (_, record) => (
         <div className="flex gap-1">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setQuickViewProject(record)}
+          >
+            查看
+          </Button>
           <Button
             variant="ghost"
             size="sm"
@@ -227,8 +236,17 @@ const ProjectsPage: React.FC = () => {
           navigate(`/projects/${item.id}`);
         }}
       />
+      <ProjectQuickViewDrawer
+        project={quickViewProject}
+        onOpenChange={(open) => {
+          if (!open) setQuickViewProject(null);
+        }}
+      />
     </PageShell>
   );
 };
 
 export default ProjectsPage;
+
+
+
