@@ -67,6 +67,7 @@ export function assetColumns({
       title: '归属项目',
       dataIndex: 'projectName',
       width: 140,
+      responsive: ['xxl'],
       render: (v: string | null) => v ?? '-',
     },
     {
@@ -107,4 +108,5 @@ export function assetColumns({
   ];
   return columns;
 }
+
 

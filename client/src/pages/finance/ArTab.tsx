@@ -164,6 +164,7 @@ const ArTab: React.FC = () => {
       title: '逾期',
       dataIndex: 'overdue',
       width: 70,
+      responsive: ['xxl'],
       render: (v: boolean) =>
         v ? <span className="text-destructive font-medium">逾期</span> : '-',
     },
@@ -387,5 +388,7 @@ const ArTab: React.FC = () => {
 };
 
 export default ArTab;
+
+
 
 

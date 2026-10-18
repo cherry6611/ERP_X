@@ -122,8 +122,8 @@ export default function SettingsPage() {
           <SectionTitle>外观</SectionTitle>
           <CardDescription>主题与内容密度，偏好保存在本机</CardDescription>
         </CardHeader>
-        <CardContent className="flex flex-col gap-6">
-          <div className="flex flex-col gap-2 sm:max-w-xs">
+        <CardContent className="grid grid-cols-2 gap-6">
+          <div className="flex flex-col gap-2">
             <Label htmlFor="settings-theme">主题</Label>
             <Select
               value={mounted ? (theme ?? 'system') : 'system'}
@@ -139,7 +139,7 @@ export default function SettingsPage() {
               </SelectContent>
             </Select>
           </div>
-          <div className="flex flex-col gap-2 sm:max-w-xs">
+          <div className="flex flex-col gap-2">
             <Label htmlFor="settings-density">密度</Label>
             <Select
               value={density}
@@ -195,7 +195,7 @@ export default function SettingsPage() {
                 <p className="mt-1 text-xs text-muted-foreground">PNG / JPEG / WebP / SVG，≤1MB</p>
               </div>
             </div>
-            <div className="flex flex-col gap-2 sm:max-w-xs">
+            <div className="flex flex-col gap-2">
               <Label htmlFor="brand-name">品牌名</Label>
               <Input
                 id="brand-name"
@@ -380,7 +380,7 @@ export default function SettingsPage() {
   return (
     <PageShell
       title="设置"
-      description="外观、品牌、飞书云空间/知识库、报价多维表格、账号绑定与系统字典/参数"
+      description="外观、集成、字典与系统参数"
     >
       <div className="max-w-5xl">
         <Tabs
@@ -413,5 +413,7 @@ export default function SettingsPage() {
     </PageShell>
   );
 }
+
+
 
 

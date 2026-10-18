@@ -162,7 +162,7 @@ const ProjectsPage: React.FC = () => {
   return (
     <PageShell
       title="项目管理"
-      description="立项、状态流转、里程碑与成交报价关联（整页）"
+      description="立项、状态与交付进度"
       actions={
         /* 写操作（项目立项）归页头；「导出 Excel」是对当前筛选结果的只读工具，留在筛选行 */
         <CanCapabilityWrite capability="projects_write">
@@ -245,6 +245,7 @@ const ProjectsPage: React.FC = () => {
 };
 
 export default ProjectsPage;
+
 
 
 

@@ -194,7 +194,7 @@ function LayoutFrame() {
                 )}
                 {groupCollapsed
                   ? null
-                  : group.items.map((item) => {
+                  : group.items.map((item, itemIndex) => {
                       const linkClass = ({ isActive }: { isActive: boolean }) =>
                         cn(
                           'relative flex h-9 items-center gap-2.5 rounded-lg px-2.5 text-[13px] transition-colors duration-150',
@@ -218,15 +218,25 @@ function LayoutFrame() {
                         </>
                       );
                       if (!collapsed) {
+                        const financeSection =
+                          group.title === '财务'
+                            ? ({ 0: '资金', 2: '账务', 5: '报表' } as Record<number, string>)[itemIndex]
+                            : undefined;
                         return (
-                          <NavLink
-                            key={item.path}
-                            to={item.path}
-                            end={item.path === '/'}
-                            className={linkClass}
-                          >
-                            {linkBody}
-                          </NavLink>
+                          <React.Fragment key={item.path}>
+                            {financeSection ? (
+                              <div className="col-span-2 mt-1 px-2 text-[9px] tracking-[0.12em] text-muted-foreground/60">
+                                {financeSection}
+                              </div>
+                            ) : null}
+                            <NavLink
+                              to={item.path}
+                              end={item.path === '/'}
+                              className={linkClass}
+                            >
+                              {linkBody}
+                            </NavLink>
+                          </React.Fragment>
                         );
                       }
                       return (
@@ -388,6 +398,7 @@ const Layout = () => (
 );
 
 export default Layout;
+
 
 
 

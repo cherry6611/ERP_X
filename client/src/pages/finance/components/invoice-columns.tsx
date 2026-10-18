@@ -160,7 +160,7 @@ export function invoiceColumns({
       align: 'right',
       render: (v: number) => formatMoney(v),
     },
-    { title: '开票日期', dataIndex: 'invoiceDate', width: 110, render: (v: string) => v ?? '-' },
+    { title: '开票日期', dataIndex: 'invoiceDate', width: 110, responsive: ['xxl'], render: (v: string) => v ?? '-' },
     {
       title: '状态',
       dataIndex: 'status',
@@ -208,7 +208,7 @@ export function invoiceColumns({
     {
       title: '操作',
       key: 'actions',
-      width: 240,
+      width: 220,
       fixed: 'right',
       render: (_: unknown, record: InvoiceItem) => (
         <div className="flex items-center gap-1">
@@ -291,6 +291,7 @@ export function invoiceColumns({
 
   return columns;
 }
+
 
 
 
