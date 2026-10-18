@@ -5,9 +5,9 @@ import { useForm, useWatch } from 'react-hook-form';
 import { z } from 'zod';
 import { toast } from 'sonner';
 import { ArrowLeft } from 'lucide-react';
-import AttachmentHint from '@client/src/components/attachments/AttachmentHint';
 import DateField from '@client/src/components/erp/DateField';
 import PageShell from '@client/src/components/PageShell';
+import StickyActionBar from '@client/src/components/erp/StickyActionBar';
 import { Button } from '@client/src/components/ui/button';
 import {
   Form,
@@ -339,13 +339,20 @@ const ProjectCreatePage: React.FC = () => {
                 </FormItem>
               )}
             />
-            <AttachmentHint text="保存后进入项目详情页，可上传立项文档等附件" />
-            <div className="flex justify-end gap-2">
-              <Button type="button" variant="outline" onClick={() => navigate('/projects')}>
+
+            <StickyActionBar
+              variant="card"
+              hint="保存后进入项目详情，可继续上传立项文档"
+            >
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => navigate('/projects')}
+              >
                 取消
               </Button>
               <Button type="submit">立项</Button>
-            </div>
+            </StickyActionBar>
           </form>
         </Form>
         </div>
@@ -355,6 +362,8 @@ const ProjectCreatePage: React.FC = () => {
 };
 
 export default ProjectCreatePage;
+
+
 
 
 

@@ -6,7 +6,7 @@ import { z } from 'zod';
 import { toast } from 'sonner';
 import { ArrowLeft } from 'lucide-react';
 import PageShell from '@client/src/components/PageShell';
-import AttachmentHint from '@client/src/components/attachments/AttachmentHint';
+import StickyActionBar from '@client/src/components/erp/StickyActionBar';
 import FieldHelp from '@client/src/components/erp/FieldHelp';
 import { Button } from '@client/src/components/ui/button';
 import {
@@ -419,8 +419,11 @@ const InvoiceCreatePage: React.FC = () => {
                 </FormItem>
               )}
             />
-            <AttachmentHint text="保存后进入详情页，可上传发票扫描件或登记飞书云文档链接" />
-            <div className="flex justify-end gap-2 border-t pt-3">
+
+            <StickyActionBar
+              variant="card"
+              hint="保存后进入详情，可继续上传发票附件"
+            >
               <Button
                 type="button"
                 variant="outline"
@@ -429,7 +432,7 @@ const InvoiceCreatePage: React.FC = () => {
                 取消
               </Button>
               <Button type="submit">保存</Button>
-            </div>
+            </StickyActionBar>
           </form>
         </Form>
         </div>
@@ -439,6 +442,8 @@ const InvoiceCreatePage: React.FC = () => {
 };
 
 export default InvoiceCreatePage;
+
+
 
 
 

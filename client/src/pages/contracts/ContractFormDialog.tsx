@@ -42,7 +42,7 @@ import { useForm } from 'react-hook-form';
 import { toast } from 'sonner';
 import DateField from '@client/src/components/erp/DateField';
 import FieldHelp from '@client/src/components/erp/FieldHelp';
-import AttachmentHint from '@client/src/components/attachments/AttachmentHint';
+import StickyActionBar from '@client/src/components/erp/StickyActionBar';
 import { Button } from '@client/src/components/ui/button';
 import {
   Dialog,
@@ -451,21 +451,28 @@ const ContractFormDialog: React.FC<ContractFormDialogProps> = ({
                 </FormItem>
               )}
             />
-            <AttachmentHint
-              text={
-                editTarget
-                  ? '保存后返回列表，可在合同详情中上传合同扫描件、补充协议等附件'
-                  : '保存后将自动打开详情，可在其中上传合同扫描件、补充协议等附件'
-              }
-            />
-            <div className="flex justify-end gap-2 border-t pt-3">
-              {asPage && onCancel ? (
-                <Button type="button" variant="outline" onClick={onCancel}>
-                  取消
+
+            {asPage ? (
+              <StickyActionBar
+                variant="card"
+                hint="保存后进入详情，可继续上传附件"
+              >
+                {onCancel ? (
+                  <Button type="button" variant="outline" onClick={onCancel}>
+                    取消
+                  </Button>
+                ) : null}
+                <Button type="submit">
+                  {editTarget ? '保存修改' : '保存'}
                 </Button>
-              ) : null}
-              <Button type="submit">{editTarget ? '保存修改' : '保存'}</Button>
-            </div>
+              </StickyActionBar>
+            ) : (
+              <div className="flex justify-end gap-2 border-t pt-3">
+                <Button type="submit">
+                  {editTarget ? '保存修改' : '保存'}
+                </Button>
+              </div>
+            )}
           </form>
         </Form>
   );
@@ -493,4 +500,6 @@ const ContractFormDialog: React.FC<ContractFormDialogProps> = ({
 };
 
 export default ContractFormDialog;
+
+
 
