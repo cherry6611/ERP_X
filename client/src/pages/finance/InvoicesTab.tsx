@@ -6,6 +6,7 @@ import { Table, TableColumnsType } from 'antd';
 import { CanCapability, CanCapabilityWrite } from '@client/src/platform/auth';
 import { DataState } from '@client/src/components/DataState';
 import FilterBar from '@client/src/components/erp/FilterBar';
+import ActionHelp from '@client/src/components/erp/ActionHelp';
 import StatCard from '@client/src/components/erp/StatCard';
 import { Button } from '@/components/ui/button';
 import {
@@ -258,6 +259,9 @@ const InvoicesTab: React.FC = () => {
               发票登记
             </Button>
           </CanCapabilityWrite>
+          <ActionHelp title="作废、查验与认证">
+            作废会释放可开票金额且不可恢复；查验/认证是税务状态动作，未配置查验服务商时只记录状态。
+          </ActionHelp>
         </div>
       </div>
       <DataState
@@ -309,3 +313,4 @@ const InvoicesTab: React.FC = () => {
 };
 
 export default InvoicesTab;
+

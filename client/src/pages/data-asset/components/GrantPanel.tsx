@@ -8,6 +8,7 @@ import { Table, TableColumnsType } from 'antd';
 import { CanCapabilityWrite } from '@client/src/platform/auth';
 import DateField from '@client/src/components/erp/DateField';
 import { SectionTitle } from '@client/src/components/SectionTitle';
+import ActionHelp from '@client/src/components/erp/ActionHelp';
 import { Button } from '@client/src/components/ui/button';
 import {
   Dialog,
@@ -283,6 +284,9 @@ const GrantPanel: React.FC = () => {
               新增授权
             </Button>
           </CanCapabilityWrite>
+          <ActionHelp title="数据资产授权">
+            授权范围决定可访问的数据集与有效期限；到期后自动失效，失效后需重新授权。
+          </ActionHelp>
         </div>
         {error ? (
           <p className="text-sm text-destructive">
@@ -483,3 +487,4 @@ const GrantPanel: React.FC = () => {
 };
 
 export default GrantPanel;
+

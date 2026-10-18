@@ -6,6 +6,7 @@ import { toast } from 'sonner';
 import { Download, History, Plus, Upload } from 'lucide-react';
 import { Table } from 'antd';
 import ActionHelp from '@client/src/components/erp/ActionHelp';
+import FilterBar from '@client/src/components/erp/FilterBar';
 import { CanCapabilityWrite } from '@client/src/platform/auth';
 import PageShell from '@client/src/components/PageShell';
 import { DataState } from '@client/src/components/DataState';
@@ -254,7 +255,7 @@ avigate`、两个 setter 与 `onEdit` 以**同名入参**
       }
     >
       <TaxEntityBanner />
-      <div className="flex flex-wrap items-center gap-3">
+      <FilterBar>
         <div className="flex items-center gap-2">
           <Label htmlFor="contract-status-filter">状态</Label>
           <Select
@@ -291,7 +292,7 @@ avigate`、两个 setter 与 `onEdit` 以**同名入参**
           <Download className="h-4 w-4" />
           导出 Excel
         </Button>
-      </div>
+      </FilterBar>
       <DataState
         loading={loading}
         error={error}
@@ -500,6 +501,7 @@ avigate`、两个 setter 与 `onEdit` 以**同名入参**
 };
 
 export default ContractsPage;
+
 
 
 
