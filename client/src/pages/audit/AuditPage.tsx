@@ -3,6 +3,13 @@ import { Table, TableColumnsType } from 'antd';
 import { Download } from 'lucide-react';
 import { toast } from 'sonner';
 import PageShell from '@client/src/components/PageShell';
+import FilterBar from '@client/src/components/erp/FilterBar';
+import {
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+} from '@client/src/components/ui/sheet';
 import { Badge } from '@client/src/components/ui/badge';
 import { Button } from '@client/src/components/ui/button';
 import { Input } from '@client/src/components/ui/input';
@@ -27,7 +34,8 @@ import type { AuditLog } from '@shared/api.interface';
  *
  * ⚠️ 这张表原先只有 9 个键，而 `comp_audit_log` 实际写入的 `object_type` 有
  * `users` / `auth` / `asset` / `pur` / `voucher` / `hr` / `purchase` /
- * `notifications` / `fin-budget` / `quotation` / `data-asset` 等 —— 界面上
+ * 
+otifications` / `fin-budget` / `quotation` / `data-asset` 等 —— 界面上
  * 那一列于是显示成生僻的英文单词（`users`、`fin-budget`），
  * 与筛选下拉里的中文标签对不上，用户根本对不出"我筛的是这个模块吗"。
  */
@@ -57,7 +65,8 @@ const OBJECT_TYPE_LABELS: Record<string, string> = {
 /**
  * 操作类型标签。
  *
- * 实际写入的 `action` 除 create/update/delete 外还有 `notify`、
+ * 实际写入的 `action` 除 create/update/delete 外还有 
+otify`、
  * `identity.create`、`identity.set_roles`、`invoice_verify`、`invoice_certify`
  * 等（见 `comp_audit_log` 的分布）。缺标签时会显示原始英文，
  * 而筛选下拉里也没有这些选项 —— 用户无法按它们筛选。
@@ -114,6 +123,7 @@ const AuditPage: React.FC = () => {
   const [dateTo, setDateTo] = useState<string>('');
   const [limit, setLimit] = useState(100);
   const [exporting, setExporting] = useState(false);
+  const [selectedLog, setSelectedLog] = useState<AuditLog | null>(null);
 
   /*
    * ⚠️ 筛选变化必须**重新请求**（服务端过滤），不是在本地 filter。
@@ -206,6 +216,21 @@ const AuditPage: React.FC = () => {
         </span>
       ),
     },
+    {
+      title: '',
+      key: 'view',
+      width: 72,
+      fixed: 'right',
+      render: (_v: unknown, record: AuditLog) => (
+        <Button
+          variant="link"
+          size="sm"
+          onClick={() => setSelectedLog(record)}
+        >
+          查看
+        </Button>
+      ),
+    },
   ];
 
   /** 被筛掉的选项也要能选回来：把当前值并进候选，避免"筛了之后选项消失" */
@@ -228,7 +253,7 @@ const AuditPage: React.FC = () => {
   return (
     <PageShell title="审计日志" description="全局写操作审计记录（只追加，不可篡改）">
       <AuditChainPanel />
-      <div className="flex flex-wrap items-end gap-4">
+      <FilterBar>
         <div className="flex flex-col gap-1.5">
           <Label htmlFor="audit-object-type">模块</Label>
           <Select value={objectType} onValueChange={setObjectType}>
@@ -332,7 +357,7 @@ const AuditPage: React.FC = () => {
         >
           重置筛选
         </Button>
-      </div>
+      </FilterBar>
       {error ? (
         <p className="text-sm text-destructive">
           {error}
@@ -366,8 +391,57 @@ const AuditPage: React.FC = () => {
           筛选命中 {total} 条，当前显示最新 {rows.length} 条；需要完整数据请用「导出 CSV」。
         </p>
       ) : null}
+      <Sheet
+        open={selectedLog !== null}
+        onOpenChange={(open) => {
+          if (!open) setSelectedLog(null);
+        }}
+      >
+        <SheetContent
+          side="right"
+          className="w-[640px] gap-0 bg-card p-0 sm:max-w-[640px]"
+        >
+          <SheetHeader className="h-14 flex-row items-center border-b border-border/80 px-5 py-0">
+            <SheetTitle className="text-[14px]">审计详情</SheetTitle>
+          </SheetHeader>
+          {selectedLog ? (
+            <div className="flex-1 space-y-5 overflow-y-auto p-5">
+              <div className="grid grid-cols-[88px_1fr] gap-x-3 gap-y-3 text-[12px]">
+                <span className="text-muted-foreground">时间</span>
+                <span>{new Date(selectedLog.createdAt).toLocaleString('zh-CN')}</span>
+                <span className="text-muted-foreground">操作人</span>
+                <span><ActorCell actor={selectedLog.actor} /></span>
+                <span className="text-muted-foreground">操作</span>
+                <span>{ACTION_LABELS[selectedLog.action] ?? selectedLog.action}</span>
+                <span className="text-muted-foreground">模块</span>
+                <span>{OBJECT_TYPE_LABELS[selectedLog.objectType] ?? selectedLog.objectType}</span>
+                <span className="text-muted-foreground">对象编号</span>
+                <span className="font-mono">{selectedLog.objectCode ?? '-'}</span>
+                <span className="text-muted-foreground">状态变化</span>
+                <span>
+                  {selectedLog.statusAfter
+                    ? `${selectedLog.statusBefore ?? '-'} → ${selectedLog.statusAfter}`
+                    : '-'}
+                </span>
+              </div>
+              <div className="space-y-2">
+                <p className="text-[12px] font-medium">原始详情</p>
+                <pre className="max-h-[420px] overflow-auto whitespace-pre-wrap rounded-lg border border-border/80 bg-muted/30 p-3 font-mono text-[11px] leading-5 text-muted-foreground">
+                  {selectedLog.detail ?? '-'}
+                </pre>
+              </div>
+            </div>
+          ) : null}
+        </SheetContent>
+      </Sheet>
     </PageShell>
   );
 };
 
 export default AuditPage;
+
+
+
+
+
+
