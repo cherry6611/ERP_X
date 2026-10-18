@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { NavLink, Outlet, useLocation } from 'react-router-dom';
 import { ChevronDown, ChevronRight, LogOut, PanelLeft, Plus, Search } from 'lucide-react';
 import { useAuth, useCurrentUserProfile } from '@client/src/platform/auth';
@@ -398,6 +398,7 @@ const Layout = () => (
 );
 
 export default Layout;
+
 
 
 
