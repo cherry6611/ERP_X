@@ -14,6 +14,7 @@ import {
   SelectValue,
 } from '@client/src/components/ui/select';
 import PageShell from '@client/src/components/PageShell';
+import FilterBar from '@client/src/components/erp/FilterBar';
 import { DataState } from '@client/src/components/DataState';
 import { adminApi } from '@client/src/api';
 import { useAsyncData } from '@client/src/hooks/useAsyncData';
@@ -197,7 +198,7 @@ const AdminAssetsPage: React.FC = () => {
         </CanCapabilityWrite>
       }
     >
-      <div className="flex flex-wrap items-end gap-4">
+      <FilterBar>
         <div className="flex flex-col gap-1.5">
           <Label htmlFor="asset-category-filter">类别</Label>
           <Select
@@ -240,7 +241,7 @@ const AdminAssetsPage: React.FC = () => {
             </SelectContent>
           </Select>
         </div>
-      </div>
+      </FilterBar>
       <DataState
         loading={loading}
         error={error}
@@ -272,3 +273,4 @@ const AdminAssetsPage: React.FC = () => {
 };
 
 export default AdminAssetsPage;
+

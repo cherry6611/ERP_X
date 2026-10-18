@@ -4,6 +4,7 @@ import { Plus, Wallet, Hourglass, FileText } from 'lucide-react';
 import { Table, TableColumnsType } from 'antd';
 import { CanRole } from '@client/src/platform/auth';
 import PageShell from '@client/src/components/PageShell';
+import FilterBar from '@client/src/components/erp/FilterBar';
 import { Button } from '@client/src/components/ui/button';
 import StatCard from '@client/src/components/erp/StatCard';
 import { Label } from '@client/src/components/ui/label';
@@ -266,7 +267,7 @@ const AdminBillsPage: React.FC = () => {
         />
       </div>
 
-      <div className="flex flex-wrap items-end gap-4">
+      <FilterBar>
         <div className="flex flex-col gap-1.5">
           <Label htmlFor="bill-type-filter">类型</Label>
           <Select
@@ -309,7 +310,7 @@ const AdminBillsPage: React.FC = () => {
             </SelectContent>
           </Select>
         </div>
-      </div>
+      </FilterBar>
 
       {error ? (
         <p className="text-sm text-destructive">
@@ -371,3 +372,5 @@ const AdminBillsPage: React.FC = () => {
 };
 
 export default AdminBillsPage;
+
+
