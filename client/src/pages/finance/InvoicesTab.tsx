@@ -278,6 +278,7 @@ const InvoicesTab: React.FC = () => {
         skeleton="table"
       >
         <Table
+          className="overflow-hidden rounded-xl border border-border/80 bg-card"
           columns={columns}
           dataSource={invoices}
           rowKey="id"

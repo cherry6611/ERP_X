@@ -249,6 +249,7 @@ const AssetPanel: React.FC = () => {
       ) : null}
 
       <Table
+        className="overflow-hidden rounded-xl border border-border/80 bg-card"
         columns={columns}
         dataSource={items}
         loading={loading}

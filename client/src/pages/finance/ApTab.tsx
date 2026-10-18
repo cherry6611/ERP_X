@@ -294,7 +294,7 @@ const ApTab: React.FC = () => {
 
   return (
     <div className="flex flex-col gap-6">
-      <div className="flex flex-wrap items-center gap-3">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-2">
           <span className="text-sm">状态</span>
           <Select value={statusFilter} onValueChange={setStatusFilter}>
@@ -311,6 +311,7 @@ const ApTab: React.FC = () => {
             </SelectContent>
           </Select>
         </div>
+        <div className="flex flex-wrap items-center gap-2">
         <CanCapabilityWrite capability="finance_write">
           <Button onClick={() => setApOpen(true)}>
             <Plus className="h-4 w-4" />
@@ -329,15 +330,16 @@ const ApTab: React.FC = () => {
           </Button>
         </CanCapabilityWrite>
         <CanCapabilityWrite capability="finance_write">
-          <Button onClick={() => setVendorSettlementOpen(true)}>
+          <Button variant="outline" onClick={() => setVendorSettlementOpen(true)}>
             <Plus className="h-4 w-4" />
             外协结算
           </Button>
         </CanCapabilityWrite>
-        <Button variant="outline" onClick={handleExport}>
-          <Download className="h-4 w-4" />
-          导出 Excel
-        </Button>
+          <Button variant="outline" onClick={handleExport}>
+            <Download className="h-4 w-4" />
+            导出 Excel
+          </Button>
+        </div>
       </div>
       <DataState
         loading={loading}
@@ -405,3 +407,4 @@ const ApTab: React.FC = () => {
 };
 
 export default ApTab;
+
