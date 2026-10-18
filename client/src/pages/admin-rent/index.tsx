@@ -5,6 +5,7 @@ import { Plus } from 'lucide-react';
 import { Table, TableColumnsType } from 'antd';
 import { CanCapability, CanCapabilityWrite } from '@client/src/platform/auth';
 import PageShell from '@client/src/components/PageShell';
+import FilterBar from '@client/src/components/erp/FilterBar';
 import { Button } from '@client/src/components/ui/button';
 import { Label } from '@client/src/components/ui/label';
 import {
@@ -235,7 +236,7 @@ const AdminRentPage: React.FC = () => {
       }
     >
       <RentStatsCards stats={stats} loading={statsLoading} />
-      <div className="flex flex-wrap items-end gap-4">
+      <FilterBar>
         <div className="flex flex-col gap-1.5">
           <Label htmlFor="rent-status-filter">状态</Label>
           <Select
@@ -257,7 +258,7 @@ const AdminRentPage: React.FC = () => {
             </SelectContent>
           </Select>
         </div>
-      </div>
+      </FilterBar>
       {error ? (
         <div className="flex items-center gap-3 text-sm text-destructive">
           <span>加载失败：{error}</span>
@@ -292,3 +293,5 @@ const AdminRentPage: React.FC = () => {
 };
 
 export default AdminRentPage;
+
+
