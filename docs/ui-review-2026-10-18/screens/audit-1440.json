@@ -1,0 +1,206 @@
+[
+  {
+    "slug": "dashboard",
+    "h": "经营看板",
+    "len": 344,
+    "overflow": false
+  },
+  {
+    "slug": "metrics",
+    "h": "指标中心",
+    "len": 1268,
+    "overflow": false
+  },
+  {
+    "slug": "notes",
+    "h": "应收应付票据",
+    "len": 644,
+    "overflow": false
+  },
+  {
+    "slug": "returns",
+    "h": "退货管理",
+    "len": 335,
+    "overflow": false
+  },
+  {
+    "slug": "customers",
+    "h": "客户管理",
+    "len": 389,
+    "overflow": false
+  },
+  {
+    "slug": "crm",
+    "h": "线索与商机",
+    "len": 301,
+    "overflow": false
+  },
+  {
+    "slug": "contracts",
+    "h": "合同管理",
+    "len": 432,
+    "overflow": false
+  },
+  {
+    "slug": "contract-new",
+    "h": "登记合同",
+    "len": 427,
+    "overflow": false
+  },
+  {
+    "slug": "suppliers",
+    "h": "供应商管理",
+    "len": 366,
+    "overflow": false
+  },
+  {
+    "slug": "tax-entities",
+    "h": "纳税主体",
+    "len": 262,
+    "overflow": false
+  },
+  {
+    "slug": "projects",
+    "h": "项目管理",
+    "len": 375,
+    "overflow": false
+  },
+  {
+    "slug": "project-new",
+    "h": "项目立项",
+    "len": 384,
+    "overflow": false
+  },
+  {
+    "slug": "costs",
+    "h": "成本核算",
+    "len": 430,
+    "overflow": false
+  },
+  {
+    "slug": "revenue",
+    "h": "收入确认",
+    "len": 371,
+    "overflow": false
+  },
+  {
+    "slug": "finance",
+    "h": "应收应付",
+    "len": 512,
+    "overflow": false
+  },
+  {
+    "slug": "audit",
+    "h": "审计日志",
+    "len": 2011,
+    "overflow": false
+  },
+  {
+    "slug": "hr",
+    "h": "人力资源",
+    "len": 632,
+    "overflow": false
+  },
+  {
+    "slug": "fin-expense",
+    "h": "预算费控",
+    "len": 434,
+    "overflow": false
+  },
+  {
+    "slug": "pur",
+    "h": "采购管理",
+    "len": 388,
+    "overflow": false
+  },
+  {
+    "slug": "asset",
+    "h": "",
+    "len": 0,
+    "overflow": false
+  },
+  {
+    "slug": "voucher",
+    "h": "",
+    "len": 42,
+    "overflow": false
+  },
+  {
+    "slug": "data-asset",
+    "h": "",
+    "len": 42,
+    "overflow": false
+  },
+  {
+    "slug": "admin-rent",
+    "h": "",
+    "len": 42,
+    "overflow": false
+  },
+  {
+    "slug": "admin-bills",
+    "h": "",
+    "len": 42,
+    "overflow": false
+  },
+  {
+    "slug": "admin-assets",
+    "h": "行政资产",
+    "len": 365,
+    "overflow": false
+  },
+  {
+    "slug": "admin-affairs",
+    "h": "车辆与差旅",
+    "len": 352,
+    "overflow": false
+  },
+  {
+    "slug": "admin-automation",
+    "h": "自动化任务",
+    "len": 1142,
+    "overflow": false
+  },
+  {
+    "slug": "drive",
+    "h": "云空间",
+    "len": 409,
+    "overflow": false
+  },
+  {
+    "slug": "wiki",
+    "h": "知识库",
+    "len": 322,
+    "overflow": false
+  },
+  {
+    "slug": "settings",
+    "h": "设置",
+    "len": 656,
+    "overflow": false
+  },
+  {
+    "slug": "reports",
+    "h": "财务报表",
+    "len": 1198,
+    "overflow": false
+  },
+  {
+    "slug": "ledgers",
+    "h": "会计账簿",
+    "len": 2404,
+    "overflow": false
+  },
+  {
+    "slug": "tax-declaration",
+    "h": "增值税申报",
+    "len": 1176,
+    "overflow": false
+  },
+  {
+    "slug": "year-end",
+    "h": "期末年结",
+    "len": 648,
+    "overflow": false
+  }
+]
