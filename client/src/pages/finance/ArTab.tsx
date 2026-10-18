@@ -298,27 +298,29 @@ const ArTab: React.FC = () => {
             </SelectContent>
           </Select>
         </div>
-        <CanCapabilityWrite capability="finance_write">
-          <Button onClick={() => setArOpen(true)}>
-            <Plus className="h-4 w-4" />
-            登记应收
+        <div className="flex flex-wrap items-center gap-2">
+          <CanCapabilityWrite capability="finance_write">
+            <Button onClick={() => setArOpen(true)}>
+              <Plus className="h-4 w-4" />
+              登记应收
+            </Button>
+          </CanCapabilityWrite>
+          <CanCapabilityWrite capability="finance_write">
+            <Button variant="outline" onClick={() => setReceiptOpen(true)}>
+              <Plus className="h-4 w-4" />
+              登记回款
+            </Button>
+          </CanCapabilityWrite>
+          <CanCapabilityWrite capability="finance_write">
+            <Button variant="outline" onClick={() => setWriteoffOpen(true)}>
+              回款核销
+            </Button>
+          </CanCapabilityWrite>
+          <Button variant="outline" onClick={handleExport}>
+            <Download className="h-4 w-4" />
+            导出 Excel
           </Button>
-        </CanCapabilityWrite>
-        <CanCapabilityWrite capability="finance_write">
-          <Button variant="outline" onClick={() => setReceiptOpen(true)}>
-            <Plus className="h-4 w-4" />
-            登记回款
-          </Button>
-        </CanCapabilityWrite>
-        <CanCapabilityWrite capability="finance_write">
-          <Button variant="outline" onClick={() => setWriteoffOpen(true)}>
-            回款核销
-          </Button>
-        </CanCapabilityWrite>
-        <Button variant="outline" onClick={handleExport}>
-          <Download className="h-4 w-4" />
-          导出 Excel
-        </Button>
+        </div>
       </div>
       <DataState
         loading={loading}
