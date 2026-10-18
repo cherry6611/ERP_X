@@ -6,8 +6,8 @@ import { z } from 'zod';
 import { toast } from 'sonner';
 import { ArrowLeft } from 'lucide-react';
 import PageShell from '@client/src/components/PageShell';
+import StickyActionBar from '@client/src/components/erp/StickyActionBar';
 import DateField from '@client/src/components/erp/DateField';
-import AttachmentHint from '@client/src/components/attachments/AttachmentHint';
 import { Button } from '@client/src/components/ui/button';
 import {
   Form,
@@ -200,8 +200,8 @@ const LeadCreatePage: React.FC = () => {
                 </FormItem>
               )}
             />
-            <AttachmentHint text="保存后将进入详情页，可上传客户需求文档、沟通记录等附件" />
-            <div className="flex justify-end gap-2 border-t pt-3">
+
+            <StickyActionBar variant="card" hint="保存后进入线索详情">
               <Button
                 type="button"
                 variant="outline"
@@ -210,7 +210,7 @@ const LeadCreatePage: React.FC = () => {
                 取消
               </Button>
               <Button type="submit">保存</Button>
-            </div>
+            </StickyActionBar>
           </form>
         </Form>
         </div>
@@ -220,4 +220,6 @@ const LeadCreatePage: React.FC = () => {
 };
 
 export default LeadCreatePage;
+
+
 

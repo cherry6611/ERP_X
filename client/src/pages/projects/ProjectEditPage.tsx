@@ -8,6 +8,7 @@ import { ArrowLeft } from 'lucide-react';
 import DateField from '@client/src/components/erp/DateField';
 import { DataState } from '@client/src/components/DataState';
 import PageShell from '@client/src/components/PageShell';
+import StickyActionBar from '@client/src/components/erp/StickyActionBar';
 import { Button } from '@client/src/components/ui/button';
 import {
   Form,
@@ -279,7 +280,7 @@ const ProjectEditPage: React.FC = () => {
                     </FormItem>
                   )}
                 />
-                <div className="flex justify-end gap-2">
+                <StickyActionBar variant="card" hint="修改后保存，返回项目详情">
                   <Button
                     type="button"
                     variant="outline"
@@ -290,7 +291,7 @@ const ProjectEditPage: React.FC = () => {
                   <Button type="submit" disabled={saving}>
                     保存
                   </Button>
-                </div>
+                </StickyActionBar>
               </form>
             </Form>
             </div>
@@ -302,4 +303,5 @@ const ProjectEditPage: React.FC = () => {
 };
 
 export default ProjectEditPage;
+
 

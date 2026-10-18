@@ -6,6 +6,7 @@ import { z } from 'zod';
 import { toast } from 'sonner';
 import { ArrowLeft } from 'lucide-react';
 import PageShell from '@client/src/components/PageShell';
+import StickyActionBar from '@client/src/components/erp/StickyActionBar';
 import DateField from '@client/src/components/erp/DateField';
 import { Button } from '@client/src/components/ui/button';
 import {
@@ -197,7 +198,7 @@ const OpportunityCreatePage: React.FC = () => {
                 </FormItem>
               )}
             />
-            <div className="flex justify-end gap-2 pt-2">
+            <StickyActionBar variant="card" hint="创建后进入商机详情">
               <Button
                 type="button"
                 variant="outline"
@@ -206,7 +207,7 @@ const OpportunityCreatePage: React.FC = () => {
                 取消
               </Button>
               <Button type="submit">创建并进入详情</Button>
-            </div>
+            </StickyActionBar>
           </form>
         </Form>
         </div>
@@ -216,4 +217,6 @@ const OpportunityCreatePage: React.FC = () => {
 };
 
 export default OpportunityCreatePage;
+
+
 
