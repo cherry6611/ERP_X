@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { ColumnHelpTitle } from '@client/src/components/erp/ItemHelp';
 import { toast } from 'sonner';
 import { Download, Plus } from 'lucide-react';
 import { Table, TableColumnsType } from 'antd';
@@ -140,14 +141,24 @@ const ArTab: React.FC = () => {
       render: (v: number) => formatMoney(v),
     },
     {
-      title: '已核销',
+      title: (
+        <ColumnHelpTitle
+          title="已核销"
+          content="已经用回款冲掉的金额。未核销等于应收金额减去已核销。"
+        />
+      ),
       dataIndex: 'settledAmount',
       width: 120,
       align: 'right',
       render: (v: number) => formatMoney(v),
     },
     {
-      title: '未核销',
+      title: (
+        <ColumnHelpTitle
+          title="未核销"
+          content="还没被回款冲掉的余额，等于应收金额减去已核销。"
+        />
+      ),
       key: 'unsettled',
       width: 120,
       align: 'right',
@@ -161,7 +172,12 @@ const ArTab: React.FC = () => {
       render: (s: string) => <StatusBadge status={s} labels={AR_STATUS_LABELS} />,
     },
     {
-      title: '逾期',
+      title: (
+        <ColumnHelpTitle
+          title="逾期"
+          content="到期日早于今天、并且还没核销完，就标为逾期。没有到期日的不算逾期。"
+        />
+      ),
       dataIndex: 'overdue',
       width: 70,
       responsive: ['xxl'],

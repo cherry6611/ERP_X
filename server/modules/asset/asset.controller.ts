@@ -4,6 +4,7 @@ import {
   Controller,
   Get,
   Param,
+  Patch,
   ParseUUIDPipe,
   Post,
   Query,
@@ -75,6 +76,10 @@ export class CreateAssetDto implements ICreateAssetDto {
   projectId?: string;
 
   @IsOptional()
+  @IsUUID()
+  taxEntityId?: string;
+
+  @IsOptional()
   @IsDateString()
   purchaseDate?: string;
 
@@ -86,6 +91,11 @@ export class CreateAssetDto implements ICreateAssetDto {
   @IsOptional()
   @IsString()
   remark?: string;
+}
+
+export class SetAssetTaxEntityDto {
+  @IsUUID()
+  taxEntityId!: string;
 }
 
 export class CreateAssetChangeDto implements ICreateAssetChangeDto {
@@ -214,6 +224,15 @@ export class AssetController {
   @Post('assets')
   async createAsset(@Body() dto: CreateAssetDto): Promise<AssetItem> {
     return this.assetService.createAsset(dto);
+  }
+
+  @CanCapability('pur_asset')
+  @Patch('assets/:id/tax-entity')
+  async setAssetTaxEntity(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: SetAssetTaxEntityDto,
+  ): Promise<AssetItem> {
+    return this.assetService.setAssetTaxEntity(id, dto.taxEntityId);
   }
 
   @Get('changes')

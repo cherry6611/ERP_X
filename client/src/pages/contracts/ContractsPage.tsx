@@ -5,8 +5,8 @@ import { useForm } from 'react-hook-form';
 import { toast } from 'sonner';
 import { Download, History, Plus, Upload } from 'lucide-react';
 import { Table } from 'antd';
-import ActionHelp from '@client/src/components/erp/ActionHelp';
-import ActionGroup from '@client/src/components/erp/ActionGroup';
+import ButtonHelp from '@client/src/components/erp/ButtonHelp';
+import { Explained } from '@client/src/components/erp/ItemHelp';
 import FilterBar from '@client/src/components/erp/FilterBar';
 import { CanCapabilityWrite } from '@client/src/platform/auth';
 import PageShell from '@client/src/components/PageShell';
@@ -217,13 +217,6 @@ avigate`、两个 setter 与 `onEdit` 以**同名入参**
       title="合同管理"
       description="合同登记、审批、里程碑与变更留痕"
       actions={
-        /*
-         * 三个会改变数据的动作归页头 `actions`：
-         *   · 登记合同     —— 新建流程入口
-         *   · 同步到多维表格 —— 写外部系统（飞书多维表格）
-         *   · 同步记录     —— 同步动作的配套查看入口
-         * 「导出 Excel」是对当前筛选结果的只读工具，留在筛选行。
-         */
         <>
           <CanCapabilityWrite capability="projects_write">
             <Button onClick={() => navigate('/contracts/new')}>
@@ -231,14 +224,11 @@ avigate`、两个 setter 与 `onEdit` 以**同名入参**
               登记合同
             </Button>
           </CanCapabilityWrite>
-          <ActionGroup
-            help={
-              <ActionHelp title="同步与同步记录">
-                同步会把合同写入飞书多维表格，已同步成功的记录自动跳过；同步记录可查看最近结果。
-              </ActionHelp>
-            }
-          >
-            <CanCapabilityWrite capability="projects_write">
+          <CanCapabilityWrite capability="projects_write">
+            <ButtonHelp
+              title="同步到多维表格"
+              content="写入飞书多维表格。已经同步成功的记录会跳过，不会重复写入。"
+            >
               <Button
                 variant="outline"
                 disabled={syncing}
@@ -248,16 +238,16 @@ avigate`、两个 setter 与 `onEdit` 以**同名入参**
                 <Upload className="h-4 w-4" />
                 {syncing ? '同步中…' : '同步到多维表格'}
               </Button>
-            </CanCapabilityWrite>
-            <Button
-              variant="outline"
-              onClick={() => setRecordsOpen(true)}
-              aria-label="查看同步记录"
-            >
-              <History className="h-4 w-4" />
-              同步记录
-            </Button>
-          </ActionGroup>
+            </ButtonHelp>
+          </CanCapabilityWrite>
+          <Button
+            variant="outline"
+            onClick={() => setRecordsOpen(true)}
+            aria-label="查看同步记录"
+          >
+            <History className="h-4 w-4" />
+            同步记录
+          </Button>
         </>
       }
     >
@@ -338,7 +328,12 @@ avigate`、两个 setter 与 `onEdit` 以**同名入参**
                   name="budget"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>预算</FormLabel>
+                      <Explained
+                        title="预算"
+                        content="转成项目后的预算基线。费用能不能提交，看的是这个数。填 0 表示先不设预算。"
+                      >
+                        <FormLabel>预算</FormLabel>
+                      </Explained>
                       <FormControl>
                         <Input type="number" min={0} step="0.01" placeholder="0.00" {...field} />
                       </FormControl>

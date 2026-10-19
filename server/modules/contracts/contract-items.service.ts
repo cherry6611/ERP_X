@@ -8,7 +8,7 @@ import {
   DRIZZLE_DATABASE,
   type PostgresJsDatabase,
 } from '@server/platform';
-import { and, eq, sql } from 'drizzle-orm';
+import { and, eq, sql, sum } from 'drizzle-orm';
 import {
   crmQuotationItem,
   erpContract,
@@ -26,6 +26,13 @@ export interface ContractItemInput {
   estUnitCost?: number;
   sourceType?: 'quotation' | 'manual' | 'change';
   sourceItemId?: string | null;
+}
+
+export interface ContractItemWriteResult {
+  item?: ContractItemView;
+  headerAmount: number;
+  itemSum: number;
+  differs: boolean;
 }
 
 export interface ContractItemView {
@@ -69,7 +76,7 @@ export class ContractItemsService {
   async create(
     contractId: string,
     dto: ContractItemInput
-  ): Promise<ContractItemView> {
+  ): Promise<ContractItemWriteResult> {
     return this.db.transaction(async (tx) => {
       const contract = await this.requireDraft(contractId, tx);
       const seqRows = await tx
@@ -88,7 +95,7 @@ export class ContractItemsService {
         .insert(erpContractItem)
         .values(this.toInsert(contractId, seq, contract.version, dto))
         .returning();
-      return this.toView(rows[0]);
+      return this.writeResult(contractId, this.toView(rows[0]), tx);
     });
   }
 
@@ -96,7 +103,7 @@ export class ContractItemsService {
     contractId: string,
     itemId: string,
     dto: ContractItemInput
-  ): Promise<ContractItemView> {
+  ): Promise<ContractItemWriteResult> {
     await this.requireDraft(contractId);
     const rows = await this.db
       .update(erpContractItem)
@@ -110,10 +117,10 @@ export class ContractItemsService {
       )
       .returning();
     if (rows.length === 0) throw new NotFoundException('合同明细不存在');
-    return this.toView(rows[0]);
+    return this.writeResult(contractId, this.toView(rows[0]));
   }
 
-  async remove(contractId: string, itemId: string): Promise<void> {
+  async remove(contractId: string, itemId: string): Promise<ContractItemWriteResult> {
     await this.requireDraft(contractId);
     // 软删除：保留历史版本行，仅取消当前标记（T-03）
     const rows = await this.db
@@ -128,6 +135,31 @@ export class ContractItemsService {
       )
       .returning({ id: erpContractItem.id });
     if (rows.length === 0) throw new NotFoundException('合同明细不存在');
+    return this.writeResult(contractId);
+  }
+
+  private async writeResult(
+    contractId: string,
+    item?: ContractItemView,
+    db: PostgresJsDatabase = this.db,
+  ): Promise<ContractItemWriteResult> {
+    const headerRows = await db
+      .select({ amount: erpContract.amount })
+      .from(erpContract)
+      .where(eq(erpContract.id, contractId))
+      .limit(1);
+    const sumRows = await db
+      .select({ total: sum(erpContractItem.amount) })
+      .from(erpContractItem)
+      .where(and(eq(erpContractItem.contractId, contractId), eq(erpContractItem.isCurrent, 1)));
+    const headerAmount = Number(headerRows[0]?.amount ?? 0);
+    const itemSum = Number(sumRows[0]?.total ?? 0);
+    return {
+      item,
+      headerAmount,
+      itemSum,
+      differs: Math.abs(headerAmount - itemSum) > 0.01,
+    };
   }
 
   async importQuotation(

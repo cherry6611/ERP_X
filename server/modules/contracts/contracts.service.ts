@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ForbiddenException,
   Inject,
   Injectable,
   Logger,
@@ -9,7 +10,10 @@ import {
   DRIZZLE_DATABASE,
   type PostgresJsDatabase,
 } from '@server/platform';
-import { and, count, desc, eq, or, sql, sum } from 'drizzle-orm';
+import { and, count, desc, eq, or, sql, sum, type SQL } from 'drizzle-orm';
+import type { RequestActor } from '@server/common/auth/actor';
+import { DataScopeService } from '@server/common/auth/data-scope.service';
+import { yuanToCents } from '@shared/number';
 import {
   ilikeEscaped,
   likeContains,
@@ -28,6 +32,7 @@ import {
 } from '@server/database/schema';
 import { generateBizCode } from '@server/common/utils/biz-code';
 import { TaxEntityService } from '@server/modules/tax/tax-entity.service';
+import { listActiveTaxEntityIds } from '@server/common/tax/tax-entity-resolver';
 import { VoucherHookService } from '@server/modules/voucher/voucher-hook.service';
 import {
   DEFAULT_STAMP_DUTY_ITEM,
@@ -98,8 +103,28 @@ export class ContractsService {
     private readonly taxResolver: TaxResolverService,
     private readonly taxEntities: TaxEntityService,
     /** §4.7(f)：合同生效时计提印花税（原实现完全未实现 —— 全仓零命中） */
-    private readonly voucherHookService: VoucherHookService
+    private readonly voucherHookService: VoucherHookService,
+    private readonly dataScope: DataScopeService,
   ) {}
+
+  /**
+   * 合同行级范围。没有启用配置时不追加条件，避免把现有全量列表收成空。
+   * custom 比纳税主体，self 比负责人。合同没有部门列，部门范围直接空集。
+   */
+  private async contractScope(actor?: RequestActor): Promise<SQL | undefined> {
+    if (!actor) return undefined;
+    const resolved = await this.dataScope.resolveScope(actor.roles ?? [], 'contract');
+    if (resolved.from === 'default' || resolved.scope === 'all') return undefined;
+    if (resolved.scope === 'dept' || resolved.scope === 'dept_and_child') {
+      return this.dataScope.failClosed('contract', actor, resolved, '合同没有部门列');
+    }
+    return this.dataScope.conditionFor(
+      'contract',
+      actor,
+      { primary: erpContract.taxEntityId, self: erpContract.owner },
+      { resolved },
+    );
+  }
 
   private async contractWithCustomerName(row: {
     id: string;
@@ -151,9 +176,12 @@ export class ContractsService {
     keyword?: string,
     customerId?: string,
     page = 1,
-    pageSize = 20
+    pageSize = 20,
+    actor?: RequestActor,
   ): Promise<PagedResult<Contract>> {
     const conditions = [];
+    const scope = await this.contractScope(actor);
+    if (scope) conditions.push(scope);
     if (status) conditions.push(eq(erpContract.status, status));
     if (customerId) conditions.push(eq(erpContract.customerId, customerId));
     if (keyword && keyword.trim() !== '') {
@@ -191,12 +219,27 @@ export class ContractsService {
     };
   }
 
-  async getBillable(contractId: string): Promise<BillableSummary> {
+  async getBillable(contractId: string, actor?: RequestActor): Promise<BillableSummary> {
+    const scope = await this.contractScope(actor);
     const contracts = await this.db
       .select()
       .from(erpContract)
-      .where(eq(erpContract.id, contractId));
-    if (contracts.length === 0) throw new NotFoundException('合同不存在');
+      .where(
+        scope ? and(eq(erpContract.id, contractId), scope) : eq(erpContract.id, contractId),
+      );
+    if (contracts.length === 0) {
+      if (scope) {
+        const exists = await this.db
+          .select({ id: erpContract.id })
+          .from(erpContract)
+          .where(eq(erpContract.id, contractId))
+          .limit(1);
+        if (exists.length > 0) {
+          throw new ForbiddenException('没有访问该合同的数据权限');
+        }
+      }
+      throw new NotFoundException('合同不存在');
+    }
     const contractAmount = Number(contracts[0].amount ?? 0);
     const invoicedRows = await this.db
       .select({ total: sum(erpInvoice.amount) })
@@ -220,13 +263,26 @@ export class ContractsService {
     };
   }
 
-  async getContract(id: string): Promise<ContractDetail> {
+  async getContract(id: string, actor?: RequestActor): Promise<ContractDetail> {
+    const scope = await this.contractScope(actor);
     const rows = await this.db
       .select({ contract: erpContract, customerName: mdCustomer.name })
       .from(erpContract)
       .leftJoin(mdCustomer, eq(erpContract.customerId, mdCustomer.id))
-      .where(eq(erpContract.id, id));
-    if (rows.length === 0) throw new NotFoundException('合同不存在');
+      .where(scope ? and(eq(erpContract.id, id), scope) : eq(erpContract.id, id));
+    if (rows.length === 0) {
+      if (scope) {
+        const exists = await this.db
+          .select({ id: erpContract.id })
+          .from(erpContract)
+          .where(eq(erpContract.id, id))
+          .limit(1);
+        if (exists.length > 0) {
+          throw new ForbiddenException('没有访问该合同的数据权限');
+        }
+      }
+      throw new NotFoundException('合同不存在');
+    }
     const base = await this.contractWithCustomerName(
       rows[0].contract,
       rows[0].customerName ?? ''
@@ -299,12 +355,19 @@ export class ContractsService {
     if (!VALID_BILLING_MODELS.includes(dto.billingModel)) {
       throw new BadRequestException('非法的计费模型');
     }
+    const activeEntities = await listActiveTaxEntityIds(this.db);
+    if (activeEntities.length > 1 && !dto.taxEntityId) {
+      throw new BadRequestException('请选择我方纳税主体');
+    }
     const resolved = await this.taxResolver.resolve({
       explicit: dto.taxRate,
       customerId: dto.customerId,
       taxEntityId: dto.taxEntityId,
       side: 'output',
     });
+    if (activeEntities.length > 1 && !resolved.taxEntityId) {
+      throw new BadRequestException('请选择我方纳税主体');
+    }
     const split = splitTax(dto.amount, resolved.rate);
     const code = await generateBizCode(
       this.db,
@@ -388,6 +451,24 @@ export class ContractsService {
      */
     const blocked = contractUpdateBlockReason(status, dto);
     if (blocked !== null) throw new BadRequestException(blocked);
+    if (status === 'draft' && dto.amount !== undefined) {
+      const itemRows = await this.db
+        .select({ total: sum(erpContractItem.amount), n: count() })
+        .from(erpContractItem)
+        .where(and(eq(erpContractItem.contractId, id), eq(erpContractItem.isCurrent, 1)));
+      const n = Number(itemRows[0]?.n ?? 0);
+      const headerCents = yuanToCents(dto.amount);
+      const totalCents = yuanToCents(itemRows[0]?.total ?? 0);
+      const gap =
+        headerCents != null && totalCents != null
+          ? (headerCents > totalCents ? headerCents - totalCents : totalCents - headerCents)
+          : null;
+      if (n > 0 && (gap == null || gap > 1n)) {
+        throw new BadRequestException(
+          `合同金额 ${dto.amount} 与明细合计 ${itemRows[0]?.total ?? 0} 相差超过 0.01`,
+        );
+      }
+    }
     if (dto.billingModel !== undefined && !VALID_BILLING_MODELS.includes(dto.billingModel)) {
       throw new BadRequestException('非法的计费模型');
     }
@@ -822,7 +903,9 @@ export class ContractsService {
       .where(eq(erpCalloff.contractId, contractId));
     const totalExisting = Number(calloffRows[0]?.total ?? 0);
     const contractAmount = Number(contract[0].amount ?? 0);
-    if (totalExisting + orderedAmount > contractAmount) {
+    const unlimited =
+      contract[0].billingModel === 'framework' && contractAmount <= 0;
+    if (!unlimited && totalExisting + orderedAmount > contractAmount) {
       throw new BadRequestException(
         `累计下单金额将超过框架上限 ${contractAmount}`
       );
@@ -959,6 +1042,12 @@ export class ContractsService {
     contract: typeof erpContract.$inferSelect
   ): Promise<void> {
     try {
+      if (
+        contract.billingModel === 'framework' &&
+        Number(contract.amount ?? 0) <= 0
+      ) {
+        return;
+      }
       if (!contract.taxEntityId) return;
       const entity = await this.db
         .select({ taxpayerType: mdTaxEntity.taxpayerType })

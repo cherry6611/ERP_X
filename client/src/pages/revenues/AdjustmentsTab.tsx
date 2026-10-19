@@ -3,6 +3,7 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { useForm } from 'react-hook-form';
 import { z } from 'zod';
 import { toast } from 'sonner';
+import { Explained } from '@client/src/components/erp/ItemHelp';
 import { Plus } from 'lucide-react';
 import { Table, TableColumnsType } from 'antd';
 import { CanCapability, CanCapabilityWrite } from '@client/src/platform/auth';
@@ -184,9 +185,14 @@ const AdjustmentsTab: React.FC = () => {
                   name="adjustmentType"
                   render={({ field }) => (
                     <FormItem className="flex-1">
-                      <FormLabel>
-                        调整类型 <span aria-hidden="true" className="text-destructive">*</span>
-                      </FormLabel>
+                      <Explained
+                        title="调整类型"
+                        content="折让、退回或其它更正。生效后会改已确认收入，不会改已经开出的发票。"
+                      >
+                        <FormLabel>
+                          调整类型 <span aria-hidden="true" className="text-destructive">*</span>
+                        </FormLabel>
+                      </Explained>
                       <Select onValueChange={field.onChange} value={field.value}>
                         <FormControl>
                           <SelectTrigger>

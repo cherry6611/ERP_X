@@ -21,6 +21,7 @@ import type {
   AdminRentContractStatus,
   RentContractListParams,
   AutomationConfigItem,
+  VoucherJobQueueSummary,
   CreateAdminAffairDto,
   CreateAdminAssetDto,
   CreateAdminBillDto,
@@ -33,6 +34,13 @@ import type {
 } from '@shared/api.interface';
 
 /* ========== 自动化任务开关 ========== */
+
+export async function listVoucherJobs(): Promise<VoucherJobQueueSummary> {
+  const resp = await axiosForBackend.get<VoucherJobQueueSummary>(
+    '/api/admin/voucher-jobs',
+  );
+  return resp.data;
+}
 
 export async function listAutomationConfig(): Promise<AutomationConfigItem[]> {
   const resp = await axiosForBackend.get<AutomationConfigItem[]>(

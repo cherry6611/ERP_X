@@ -3,7 +3,7 @@ import {
   DRIZZLE_DATABASE,
   type PostgresJsDatabase,
 } from '@server/platform';
-import { and, eq } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 import { mdCustomer, mdSupplier, mdTaxEntity } from '@server/database/schema';
 import {
   FALLBACK_RATE,
@@ -147,14 +147,11 @@ export class TaxResolverService {
         if (entity) return entity;
       }
     }
-    const defaults = await this.db
+    const active = await this.db
       .select()
       .from(mdTaxEntity)
-      .where(
-        and(eq(mdTaxEntity.isDefault, 1), eq(mdTaxEntity.status, 'active'))
-      )
-      .limit(1);
-    return defaults[0] ?? null;
+      .where(eq(mdTaxEntity.status, 'active'));
+    return active.length === 1 ? active[0] : null;
   }
 
   /** 绑定主体必须可用；停用不静默换默认主体（T-08） */

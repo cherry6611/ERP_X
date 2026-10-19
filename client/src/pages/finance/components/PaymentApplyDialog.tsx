@@ -190,7 +190,7 @@ const PaymentApplyDialog: React.FC<PaymentApplyDialogProps> = ({
               )}
             />
             <DialogFooter>
-              <Button type="submit">提交</Button>
+              <Button type="submit" disabled={paymentForm.formState.isSubmitting}>提交</Button>
             </DialogFooter>
           </form>
         </Form>

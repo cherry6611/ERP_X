@@ -15,6 +15,7 @@ import {
   erpCostAllocation,
   erpProjectCost,
 } from '@server/database/schema';
+import { resolveDocumentTaxEntity } from '@server/common/tax/document-tax-entity';
 import { generateBizCode } from '@server/common/utils/biz-code';
 import { VoucherHookService } from '@server/modules/voucher/voucher-hook.service';
 import { round2 } from '@server/common/utils/number';
@@ -173,8 +174,7 @@ export class AssetDepreciationService {
     let assetCount = 0;
     let totalAmount = 0;
     /** D-29：有项目归 6401，无项目归 6602 管理费用 */
-    let projectDepreciation = 0;
-    let adminDepreciation = 0;
+    const voucherBuckets = new Map<string, { entityId: string; account: '6401' | '6602'; amount: number }>();
     for (const asset of assets) {
       if (doneThisPeriod.has(asset.id)) continue;
       const done = doneTotal.get(asset.id) ?? 0;
@@ -192,6 +192,23 @@ export class AssetDepreciationService {
         donePeriods: done,
       });
       if (decision.kind === 'skip') continue;
+      let entityId: string | null = null;
+      try {
+        entityId = await resolveDocumentTaxEntity(this.db, {
+          projectId: asset.projectId,
+          taxEntityId: asset.taxEntityId,
+          kind: 'asset',
+        });
+      } catch (error) {
+        this.logger.error(
+          `资产 ${asset.code} 未归属纳税主体，跳过计提：${error instanceof Error ? error.message : String(error)}`,
+        );
+        continue;
+      }
+      if (!entityId) {
+        this.logger.error(`资产 ${asset.code} 未归属纳税主体，跳过计提`);
+        continue;
+      }
       const amount = decision.amount;
 
       const amountStr = amount.toFixed(2);
@@ -280,11 +297,14 @@ export class AssetDepreciationService {
       }
       assetCount += 1;
       totalAmount = round2(totalAmount + amount);
-      if (asset.projectId) {
-        projectDepreciation = round2(projectDepreciation + amount);
-      } else {
-        adminDepreciation = round2(adminDepreciation + amount);
-      }
+      const account: '6401' | '6602' = asset.projectId ? '6401' : '6602';
+      const bucketKey = `${entityId}|${account}`;
+      const prev = voucherBuckets.get(bucketKey);
+      voucherBuckets.set(bucketKey, {
+        entityId,
+        account,
+        amount: round2((prev?.amount ?? 0) + amount),
+      });
     }
 
     /* A2：sourceRef 带批次；D-29 按是否挂项目拆分费用科目 */
@@ -292,21 +312,29 @@ export class AssetDepreciationService {
     const postDepreciation = async (
       expenseAccount: '6401' | '6602',
       amount: number,
-      label: string,
+      entityId: string,
     ) => {
       if (amount <= 0) return;
-      const sourceRef = `depreciation:${period}:${expenseAccount}:${batchId}`;
+      const sourceRef = `depreciation:${period}:${expenseAccount}:${entityId}:${batchId}`;
+      const label = expenseAccount === '6401' ? '项目成本' : '管理费用';
       const lines = [
         { accountCode: expenseAccount, debit: amount },
         { accountCode: '1602', credit: amount },
       ];
-      const result = await this.voucherHookService.generateVoucherDraft({
+      const draft = {
         sourceType: 'depreciation',
         sourceRef,
         voucherDate: periodEndDate(period),
         summary: `折旧计提 ${period} ${label}`,
         lines,
-      });
+        taxEntityId: entityId,
+      };
+      await this.voucherHookService.reserveCompensation(
+        this.db,
+        draft,
+        `折旧凭证待生成 ${label}`,
+      );
+      const result = await this.voucherHookService.generateVoucherDraft(draft);
       if (result === 'failed') {
         await this.voucherHookService.recordCompensation(
           'depreciation',
@@ -317,8 +345,9 @@ export class AssetDepreciationService {
         );
       }
     };
-    await postDepreciation('6401', projectDepreciation, '项目成本');
-    await postDepreciation('6602', adminDepreciation, '管理费用');
+    for (const bucket of voucherBuckets.values()) {
+      await postDepreciation(bucket.account, bucket.amount, bucket.entityId);
+    }
     return { period, assetCount, totalAmount };
   }
 }

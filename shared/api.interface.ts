@@ -1441,7 +1441,8 @@ export interface CreateProjectDto {
 /**
  * B6：项目状态动作。
  *
- * cancel（取消/终止）与 eopen（反结项）是本轮新增的**退出路径** ——
+ * cancel（取消/终止）与 
+eopen（反结项）是本轮新增的**退出路径** ——
  * 原表只有 4 条正向流转，导致项目一旦进入任一非终态就无法退出，
  * 且已结项无法撤回（详见 projects.transform.ts 的 PROJECT_STATUS_FLOW）。
  */
@@ -1527,6 +1528,8 @@ export interface CreateCostDto {
   sourceRef: string;
   supplierId?: string;
   departmentId?: string;
+  /** 开支记到哪一家我方主体。不传时用项目合同主体。 */
+  taxEntityId?: string;
   remark?: string;
 }
 
@@ -1746,6 +1749,8 @@ export interface CreateInvoiceDto {
   invoiceNo?: string;
   invoiceDate?: string;
   remark?: string;
+  /** 同一张登记表单的幂等键。重试时返回已创建的发票，不再插第二张。 */
+  clientRequestId?: string;
 }
 
 export interface UpdateInvoiceDto {
@@ -1771,7 +1776,6 @@ export interface UpdateInvoiceDto {
   taxRate?: number;
   invoiceDate?: string;
   invoiceType?: InvoiceType;
-  direction?: InvoiceDirection;
   projectId?: string | null;
   contractId?: string | null;
   supplierId?: string | null;
@@ -2235,6 +2239,7 @@ export interface ExpenseApplyItem {
   departmentName: string | null;
   projectId: string | null;
   projectName: string | null;
+  taxEntityId: string | null;
   expenseCategory: string;
   amount: number;
   expectDate: string | null;
@@ -2253,6 +2258,7 @@ export interface ExpenseClaimItem {
   departmentName: string | null;
   projectId: string | null;
   projectName: string | null;
+  taxEntityId: string | null;
   expenseCategory: string;
   amount: number;
   expenseDate: string | null;
@@ -2289,6 +2295,7 @@ export interface CreateExpenseApplyDto {
   title: string;
   departmentId?: string;
   projectId?: string;
+  taxEntityId?: string;
   expenseCategory: string;
   amount: number;
   expectDate?: string;
@@ -2302,6 +2309,7 @@ export interface CreateExpenseClaimDto {
   applyId?: string;
   departmentId?: string;
   projectId?: string;
+  taxEntityId?: string;
   expenseCategory: string;
   amount: number;
   expenseDate?: string;
@@ -2312,7 +2320,8 @@ export interface CreateExpenseClaimDto {
  * B12：报销单动作。
  *
  * pay = 标记已支付（与应付单 paid 同步）；oid = 作废（仅未支付时可作废）。
- * 原实现只有 pprove / eject，导致 pproved 是一个**没有出口**的状态。
+ * 原实现只有 pprove / 
+eject，导致 pproved 是一个**没有出口**的状态。
  */
 export type ExpenseClaimAction = 'approve' | 'reject' | 'pay' | 'void';
 
@@ -2416,6 +2425,8 @@ export interface CreatePurOrderDto {
   contractId?: string;
   supplierId: string;
   projectId?: string;
+  /** 采购记到哪一家我方主体。不传时用项目合同主体。 */
+  taxEntityId?: string;
   itemName: string;
   category: PurOrderCategory;
   quantity: number;
@@ -2456,6 +2467,7 @@ export interface AssetItem {
   departmentName: string | null;
   projectId: string | null;
   projectName: string | null;
+  taxEntityId: string | null;
   purchaseDate: string | null;
   usefulMonths: number;
   status: AssetStatus;
@@ -2509,6 +2521,7 @@ export interface CreateAssetDto {
   residualValue?: number;
   departmentId?: string;
   projectId?: string;
+  taxEntityId?: string;
   purchaseDate?: string;
   usefulMonths?: number;
   remark?: string;
@@ -2942,6 +2955,7 @@ export interface AdminRentContractItem {
   endDate: string;
   paymentCycle: AdminPaymentCycle;
   status: AdminRentContractStatus;
+  taxEntityId: string | null;
   remark: string | null;
   createdAt: string;
 }
@@ -2962,6 +2976,8 @@ export interface CreateAdminRentContractDto {
   startDate: string;
   endDate: string;
   paymentCycle?: AdminPaymentCycle;
+  /** 房租记到哪一家我方主体。多家时必填。 */
+  taxEntityId?: string;
   remark?: string;
 }
 
@@ -3108,6 +3124,21 @@ export interface AutomationConfigItem {
   description: string | null;
   enabled: boolean;
   updatedAt: string;
+}
+
+export interface VoucherJobQueueItem {
+  sourceRef: string;
+  sourceType: string;
+  status: string;
+  lastError: string | null;
+}
+
+export interface VoucherJobQueueSummary {
+  pending: number;
+  processing: number;
+  failed: number;
+  dead: number;
+  items: VoucherJobQueueItem[];
 }
 
 export interface UpdateAutomationConfigDto {

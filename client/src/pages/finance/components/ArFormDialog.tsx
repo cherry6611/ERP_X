@@ -32,6 +32,7 @@
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useForm } from 'react-hook-form';
 import { toast } from 'sonner';
+import { Explained } from '@client/src/components/erp/ItemHelp';
 import { Button } from '@client/src/components/ui/button';
 import {
   Dialog,
@@ -168,7 +169,12 @@ const ArFormDialog: React.FC<ArFormDialogProps> = ({
                 name="dueDate"
                 render={({ field }) => (
                   <FormItem className="flex-1">
-                    <FormLabel>到期日（账期）</FormLabel>
+                    <Explained
+                      title="到期日"
+                      content="不填时，按客户账期从今天往后推。账龄从到期日计算逾期；没有到期日的未结清应收记在未逾期。"
+                    >
+                      <FormLabel>到期日（账期）</FormLabel>
+                    </Explained>
                     <FormControl>
                       <Input placeholder="YYYY-MM-DD" {...field} value={field.value ?? ''} />
                     </FormControl>
@@ -191,7 +197,7 @@ const ArFormDialog: React.FC<ArFormDialogProps> = ({
               )}
             />
             <DialogFooter>
-              <Button type="submit">保存</Button>
+              <Button type="submit" disabled={arForm.formState.isSubmitting}>保存</Button>
             </DialogFooter>
           </form>
         </Form>

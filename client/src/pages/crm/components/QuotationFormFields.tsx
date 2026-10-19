@@ -11,6 +11,7 @@
  * 客户/商机选项由父组件查询后传入（父组件持有数据查询）。
  */
 import React from 'react';
+import { Explained } from '@client/src/components/erp/ItemHelp';
 import DateField from '@client/src/components/erp/DateField';
 import {
   FormControl,
@@ -151,7 +152,12 @@ const QuotationFormFields: React.FC<QuotationFormFieldsProps> = ({
         name="validUntil"
         render={({ field }) => (
           <FormItem>
-            <FormLabel>有效期至</FormLabel>
+            <Explained
+              title="有效期至"
+              content="报价在这一天之后视为过期。过期后仍可改，但不应再按这张报价成交。"
+            >
+              <FormLabel>有效期至</FormLabel>
+            </Explained>
             <DateField value={field.value} onChange={field.onChange} />
             <FormMessage />
           </FormItem>
@@ -162,7 +168,12 @@ const QuotationFormFields: React.FC<QuotationFormFieldsProps> = ({
         name="discountPct"
         render={({ field }) => (
           <FormItem>
-            <FormLabel>整单折扣（%）</FormLabel>
+            <Explained
+              title="整单折扣"
+              content="在明细合计上再打的折扣。100 表示不打折，90 表示按九折。它不改变每一行的单价。"
+            >
+              <FormLabel>整单折扣（%）</FormLabel>
+            </Explained>
             <FormControl>
               <Input
                 type="number"

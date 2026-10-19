@@ -398,6 +398,13 @@ export class ReturnService {
         );
       }
       const sourceRef = `purchase-return:${current.code}`;
+      await this.voucherHookService.reserveCompensation(this.db, {
+        sourceType: 'purchase_return',
+        sourceRef,
+        voucherDate: current.returnDate,
+        summary: `采购退货 ${current.orderCode ?? ''} ${current.code}`.trim(),
+        lines,
+      }, `采购退货红字凭证待生成 ${current.code}`);
       const voucherResult = await this.voucherHookService.generateVoucherDraft({
         sourceType: 'purchase_return',
         sourceRef,
@@ -717,6 +724,13 @@ export class ReturnService {
         );
       }
       const sourceRef = `sales-return:${current.code}`;
+      await this.voucherHookService.reserveCompensation(this.db, {
+        sourceType: 'sales_return',
+        sourceRef,
+        voucherDate: current.returnDate,
+        summary: `销售退货 ${current.revenueCode ?? ''} ${current.code}`.trim(),
+        lines,
+      }, `销售退货红字凭证待生成 ${current.code}`);
       const voucherResult = await this.voucherHookService.generateVoucherDraft({
         sourceType: 'sales_return',
         sourceRef,

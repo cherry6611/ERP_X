@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ForbiddenException,
   Inject,
   Injectable,
   NotFoundException,
@@ -9,7 +10,9 @@ import {
   type PostgresJsDatabase,
 } from '@server/platform';
 import type { RequestActor } from '@server/common/auth/actor';
-import { and, count, desc, eq, ne, or } from 'drizzle-orm';
+import { hasCapability } from '@shared/rbac';
+import { and, count, desc, eq, ne, or, sql, type SQL } from 'drizzle-orm';
+import { DataScopeService } from '@server/common/auth/data-scope.service';
 import {
   ilikeEscaped,
   likeContains,
@@ -58,8 +61,47 @@ interface CustomerRow {
 @Injectable()
 export class MasterDataService {
   constructor(
-    @Inject(DRIZZLE_DATABASE) private readonly db: PostgresJsDatabase
+    @Inject(DRIZZLE_DATABASE) private readonly db: PostgresJsDatabase,
+    private readonly dataScope: DataScopeService,
   ) {}
+
+  /**
+   * 客户行级范围。未配置时不加条件。
+   * custom 比纳税主体（与表上 idx 注释一致），self 比创建人。没有部门列。
+   */
+  private async customerScope(actor?: RequestActor): Promise<SQL | undefined> {
+    if (!actor) return undefined;
+    const resolved = await this.dataScope.resolveScope(actor.roles ?? [], 'customer');
+    if (resolved.from === 'default' || resolved.scope === 'all') return undefined;
+    if (resolved.scope === 'dept' || resolved.scope === 'dept_and_child') {
+      return this.dataScope.failClosed('customer', actor, resolved, '客户没有部门列');
+    }
+    return this.dataScope.conditionFor(
+      'customer',
+      actor,
+      {
+        primary: mdCustomer.taxEntityId,
+        self: sql`(md_customer._created_by).user_id`,
+      },
+      { resolved },
+    );
+  }
+
+  private async assertCustomerVisible(
+    customerId: string,
+    actor?: RequestActor,
+  ): Promise<void> {
+    const scope = await this.customerScope(actor);
+    if (!scope) return;
+    const rows = await this.db
+      .select({ id: mdCustomer.id })
+      .from(mdCustomer)
+      .where(and(eq(mdCustomer.id, customerId), scope))
+      .limit(1);
+    if (rows.length === 0) {
+      throw new ForbiddenException('没有访问该客户的数据权限');
+    }
+  }
 
   private toCustomer(row: CustomerRow): Customer {
     return {
@@ -105,19 +147,25 @@ export class MasterDataService {
   async listCustomers(
     keyword?: string,
     page = 1,
-    pageSize = 20
+    pageSize = 20,
+    actor?: RequestActor,
   ): Promise<PagedResult<Customer>> {
     // S4：原实现把 `%${keyword}%` 直接交给 ilike —— 传 `keyword=%` 模式变成
     // `%%%` 即**匹配全表**，任意登录用户都能用搜索接口枚举全部客户。
     // 这不是 SQL 注入（drizzle 已绑定参数），但同样越过了"搜索"语义。
     // `likeContains` 同时做长度上限与 `%`/`_`/`\` 转义，`ilikeEscaped` 补 ESCAPE 子句。
     const pattern = likeContains(keyword);
-    const where = pattern
-      ? or(
-          ilikeEscaped(mdCustomer.name, pattern),
-          ilikeEscaped(mdCustomer.code, pattern)
-        )
-      : undefined;
+    const filters: SQL[] = [];
+    const scope = await this.customerScope(actor);
+    if (scope) filters.push(scope);
+    if (pattern) {
+      const matched = or(
+        ilikeEscaped(mdCustomer.name, pattern),
+        ilikeEscaped(mdCustomer.code, pattern),
+      );
+      if (matched) filters.push(matched);
+    }
+    const where = filters.length > 0 ? and(...filters) : undefined;
     const [{ total }] = await this.db
       .select({ total: count() })
       .from(mdCustomer)
@@ -208,7 +256,8 @@ export class MasterDataService {
     return this.updateCustomer(id, { status });
   }
 
-  async listContacts(customerId: string): Promise<CustomerContact[]> {
+  async listContacts(customerId: string, actor?: RequestActor): Promise<CustomerContact[]> {
+    await this.assertCustomerVisible(customerId, actor);
     const rows = await this.db
       .select({
         id: crmContact.id,
@@ -312,7 +361,8 @@ export class MasterDataService {
     if (rows.length === 0) throw new NotFoundException('联系人不存在');
   }
 
-  async getCredit(customerId: string): Promise<CreditSummary> {
+  async getCredit(customerId: string, actor?: RequestActor): Promise<CreditSummary> {
+    await this.assertCustomerVisible(customerId, actor);
     const customers = await this.db
       .select({
         id: mdCustomer.id,
@@ -352,7 +402,7 @@ export class MasterDataService {
     };
   }
 
-  async listSuppliers(keyword?: string): Promise<Supplier[]> {
+  async listSuppliers(keyword?: string, roles: string[] = []): Promise<Supplier[]> {
     // S4：与 listCustomers 同一修法（转义 + ESCAPE）
     const pattern = likeContains(keyword);
     const where = pattern
@@ -366,7 +416,8 @@ export class MasterDataService {
       .from(mdSupplier)
       .where(where)
       .orderBy(desc(mdSupplier.createdAt));
-    return rows.map((row) => this.mapSupplier(row));
+    const revealBank = hasCapability(roles, 'finance');
+    return rows.map((row) => this.mapSupplier(row, revealBank));
   }
 
   async createSupplier(dto: CreateSupplierDto): Promise<Supplier> {
@@ -426,7 +477,7 @@ export class MasterDataService {
     return this.updateSupplier(id, { status });
   }
 
-  private mapSupplier(row: typeof mdSupplier.$inferSelect): Supplier {
+  private mapSupplier(row: typeof mdSupplier.$inferSelect, revealBank = true): Supplier {
     return {
       id: row.id,
       code: row.code,
@@ -434,7 +485,7 @@ export class MasterDataService {
       type: row.type,
       contactName: row.contactName,
       contactPhone: row.contactPhone,
-      bankAccount: row.bankAccount,
+      bankAccount: revealBank ? row.bankAccount : '',
       rating: Number(row.rating ?? 0),
       status: row.status ?? 'active',
       remark: row.remark,

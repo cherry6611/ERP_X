@@ -28,7 +28,8 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { useForm } from 'react-hook-form';
 import { z } from 'zod';
 import { toast } from 'sonner';
-import { assetApi } from '@client/src/api';
+import { assetApi, masterDataApi } from '@client/src/api';
+import { useAsyncData } from '@client/src/hooks/useAsyncData';
 import { ASSET_CATEGORY_LABELS } from '../AssetStatusBadge';
 import { Button } from '@client/src/components/ui/button';
 import { Input } from '@client/src/components/ui/input';
@@ -49,6 +50,7 @@ import {
   FormLabel,
   FormMessage,
 } from '@client/src/components/ui/form';
+import { Explained } from '@client/src/components/erp/ItemHelp';
 import {
   Select,
   SelectContent,
@@ -72,6 +74,7 @@ const assetFormSchema = z.object({
   usefulMonths: z.coerce.number().int().min(1, '折旧月数至少为 1'),
   departmentId: z.string(),
   projectId: z.string(),
+  taxEntityId: z.string(),
   purchaseDate: z.string(),
   remark: z.string(),
 });
@@ -84,6 +87,7 @@ const EMPTY_ASSET_FORM = {
   usefulMonths: 36,
   departmentId: '',
   projectId: '',
+  taxEntityId: '',
   purchaseDate: '',
   remark: '',
 };
@@ -122,6 +126,10 @@ const AssetCreateDialog: React.FC<AssetCreateDialogProps> = ({
     resolver: zodResolver(assetFormSchema),
     defaultValues: EMPTY_ASSET_FORM,
   });
+  const { data: taxEntities } = useAsyncData(
+    () => masterDataApi.listTaxEntities(),
+    [],
+  );
 
   const onCreateSubmit = createForm.handleSubmit(async (values) => {
     const dto: CreateAssetDto = {
@@ -132,6 +140,7 @@ const AssetCreateDialog: React.FC<AssetCreateDialogProps> = ({
       usefulMonths: values.usefulMonths,
       departmentId: values.departmentId || undefined,
       projectId: values.projectId || undefined,
+      taxEntityId: values.taxEntityId || undefined,
       purchaseDate: values.purchaseDate || undefined,
       remark: values.remark || undefined,
     };
@@ -246,7 +255,12 @@ const AssetCreateDialog: React.FC<AssetCreateDialogProps> = ({
                 name="residualValue"
                 render={({ field }) => (
                   <FormItem className="flex-1">
-                    <FormLabel>残值（元）</FormLabel>
+                    <Explained
+                      title="残值"
+                      content="折旧到这个金额后不再计提。它不是采购原值。残值不能大于原值。"
+                    >
+                      <FormLabel>残值（元）</FormLabel>
+                    </Explained>
                     <FormControl>
                       <Input
                         type="number"
@@ -263,7 +277,12 @@ const AssetCreateDialog: React.FC<AssetCreateDialogProps> = ({
                 name="usefulMonths"
                 render={({ field }) => (
                   <FormItem className="flex-1">
-                    <FormLabel>折旧月数</FormLabel>
+                    <Explained
+                      title="折旧月数"
+                      content="从采购日期所在期间的下一期开始，按这个月数计提折旧。处置和减值会提前结束或减少以后的折旧。"
+                    >
+                      <FormLabel>折旧月数</FormLabel>
+                    </Explained>
                     <FormControl>
                       <Input
                         type="number"
@@ -276,6 +295,38 @@ const AssetCreateDialog: React.FC<AssetCreateDialogProps> = ({
                 )}
               />
             </div>
+            <FormField
+              control={createForm.control}
+              name="taxEntityId"
+              render={({ field }) => (
+                <FormItem>
+                  <Explained
+                    title="我方纳税主体"
+                    content="折旧凭证记到这个纳税主体。合同上已有主体时以合同为准；没有合同时必须选，否则不会计提。"
+                  >
+                    <FormLabel>我方纳税主体</FormLabel>
+                  </Explained>
+                  <Select
+                    onValueChange={field.onChange}
+                    value={field.value || undefined}
+                  >
+                    <FormControl>
+                      <SelectTrigger>
+                        <SelectValue placeholder="多主体且合同无主体时必填" />
+                      </SelectTrigger>
+                    </FormControl>
+                    <SelectContent>
+                      {(taxEntities ?? []).map((entity) => (
+                          <SelectItem key={entity.id} value={entity.id}>
+                            {entity.name}
+                          </SelectItem>
+                        ))}
+                    </SelectContent>
+                  </Select>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
             <div className="flex flex-wrap gap-4">
               <FormField
                 control={createForm.control}
@@ -336,7 +387,12 @@ const AssetCreateDialog: React.FC<AssetCreateDialogProps> = ({
                 name="purchaseDate"
                 render={({ field }) => (
                   <FormItem className="flex-1">
-                    <FormLabel>采购日期</FormLabel>
+                    <Explained
+                      title="采购日期"
+                      content="决定折旧从哪一期开始计提。改采购日期会改后续折旧期间。"
+                    >
+                      <FormLabel>采购日期</FormLabel>
+                    </Explained>
                     <DateField value={field.value} onChange={field.onChange} />
                     <FormMessage />
                   </FormItem>

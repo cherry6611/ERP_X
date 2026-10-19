@@ -26,7 +26,10 @@ const FinancePage: React.FC = () => {
   const tab = TAB_VALUES.has(raw) ? raw : 'ar';
 
   return (
-    <PageShell title="应收应付" description="应收与回款核销、应付与付款审批、发票登记、勾稽中心与账龄分析">
+    <PageShell
+      title="应收应付"
+      description="应收与回款核销、应付与付款审批、发票登记、勾稽中心与账龄分析"
+    >
       <Tabs
         value={tab}
         onValueChange={(v) => {

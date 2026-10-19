@@ -6,6 +6,7 @@ import { z } from 'zod';
 import { toast } from 'sonner';
 import { ArrowLeft } from 'lucide-react';
 import DateField from '@client/src/components/erp/DateField';
+import { Explained } from '@client/src/components/erp/ItemHelp';
 import PageShell from '@client/src/components/PageShell';
 import StickyActionBar from '@client/src/components/erp/StickyActionBar';
 import { Button } from '@client/src/components/ui/button';
@@ -39,7 +40,9 @@ const projectSchema = z.object({
   pm: z.string(),
   pmUserId: z.string().optional(),
   deptName: z.string(),
-  budget: z.coerce.number().min(0),
+  budget: z
+    .union([z.literal(''), z.coerce.number().positive('预算基线必须大于 0')])
+    .transform((value) => (value === '' ? undefined : value)),
   estimatedTotalCost: z
     .union([z.literal(''), z.coerce.number().min(0, '预计总成本不能为负数')])
     .transform((v) => (v === '' ? undefined : v)),
@@ -75,7 +78,7 @@ const ProjectCreatePage: React.FC = () => {
       pm: '',
       pmUserId: '',
       deptName: '',
-      budget: 0,
+      budget: '',
       estimatedTotalCost: '',
       remark: '',
     },
@@ -104,7 +107,7 @@ const ProjectCreatePage: React.FC = () => {
       pm: values.pm || undefined,
       pmUserId: values.pmUserId || undefined,
       deptName: values.deptName || undefined,
-      budget: values.budget || undefined,
+      budget: values.budget,
       estimatedTotalCost: values.estimatedTotalCost,
       startDate: values.startDate,
       endDate: values.endDate,
@@ -180,7 +183,12 @@ const ProjectCreatePage: React.FC = () => {
               name="wonQuotationId"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>最终成交报价单</FormLabel>
+                  <Explained
+                    title="最终成交报价单"
+                    content="项目金额和预算默认从这张已赢单的报价带出。不指定时，系统按合同自动匹配。它不是预算基线，也不是预计总成本。"
+                  >
+                    <FormLabel>最终成交报价单</FormLabel>
+                  </Explained>
                   <Select
                     onValueChange={(v) => field.onChange(v === '__none__' ? '' : v)}
                     value={field.value || '__none__'}
@@ -263,12 +271,19 @@ const ProjectCreatePage: React.FC = () => {
                 name="budget"
                 render={({ field }) => (
                   <FormItem className="flex-1">
-                    <FormLabel>预算基线（元）</FormLabel>
+                    <Explained
+                      title="预算基线"
+                      content="费用能不能提交，看的是这个数。留空时使用合同净额。合同净额为 0 时必须填写，否则费用无法提交。它不是预计总成本。"
+                    >
+                      <FormLabel>预算基线（元）</FormLabel>
+                    </Explained>
                     <FormControl>
                       <Input
                         type="number"
-                        min={0}
-                        value={String(field.value ?? '')}
+                        min={0.01}
+                        step="0.01"
+                        placeholder="不填则使用合同净额"
+                        value={field.value == null ? '' : String(field.value)}
                         onChange={field.onChange}
                         onBlur={field.onBlur}
                         name={field.name}
@@ -284,7 +299,12 @@ const ProjectCreatePage: React.FC = () => {
                 name="estimatedTotalCost"
                 render={({ field }) => (
                   <FormItem className="flex-1">
-                    <FormLabel>预计总成本（元）</FormLabel>
+                    <Explained
+                      title="预计总成本"
+                      content="用来提前看项目会不会超支，不参与费用能否提交的判断。费用控制看的是预算基线。"
+                    >
+                      <FormLabel>预计总成本（元）</FormLabel>
+                    </Explained>
                     <FormControl>
                       <Input
                         type="number"
@@ -351,7 +371,9 @@ const ProjectCreatePage: React.FC = () => {
               >
                 取消
               </Button>
-              <Button type="submit">立项</Button>
+              <Button type="submit" disabled={form.formState.isSubmitting}>
+                {form.formState.isSubmitting ? '立项中' : '立项'}
+              </Button>
             </StickyActionBar>
           </form>
         </Form>

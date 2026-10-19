@@ -7,7 +7,10 @@ import {
   Patch,
   Post,
   Query,
+  Req,
 } from '@nestjs/common';
+import type { Request } from 'express';
+import { actorFromRequest } from '@server/common/auth/actor';
 import { CanCapability, NeedLogin } from '@server/platform';
 import { IsIn, IsString } from 'class-validator';
 import { ContractsService } from './contracts.service';
@@ -15,6 +18,7 @@ import {
   ContractItemsService,
   type ContractItemInput,
   type ContractItemView,
+  type ContractItemWriteResult,
 } from './contract-items.service';
 import type {
   BillableSummary,
@@ -52,6 +56,7 @@ export class ContractsController {
 
   @Get()
   async listContracts(
+    @Req() req: Request,
     @Query('status') status?: string,
     @Query('keyword') keyword?: string,
     @Query('customerId') customerId?: string,
@@ -70,7 +75,8 @@ export class ContractsController {
       keyword,
       customerId,
       pageNumber,
-      pageSizeNumber
+      pageSizeNumber,
+      actorFromRequest(req),
     );
   }
 
@@ -82,16 +88,18 @@ export class ContractsController {
 
   @Get('billable/:id')
   async getBillable(
+    @Req() req: Request,
     @Param('id', ParseUUIDPipe) id: string
   ): Promise<BillableSummary> {
-    return this.contractsService.getBillable(id);
+    return this.contractsService.getBillable(id, actorFromRequest(req));
   }
 
   @Get(':id')
   async getContract(
+    @Req() req: Request,
     @Param('id', ParseUUIDPipe) id: string
   ): Promise<ContractDetail> {
-    return this.contractsService.getContract(id);
+    return this.contractsService.getContract(id, actorFromRequest(req));
   }
 
   @CanCapability('crm_write')
@@ -151,7 +159,7 @@ export class ContractsController {
   async createItem(
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: ContractItemBodyDto
-  ): Promise<ContractItemView> {
+  ): Promise<ContractItemWriteResult> {
     return this.contractItems.create(id, dto);
   }
 
@@ -161,7 +169,7 @@ export class ContractsController {
     @Param('id', ParseUUIDPipe) id: string,
     @Param('itemId', ParseUUIDPipe) itemId: string,
     @Body() dto: ContractItemBodyDto
-  ): Promise<ContractItemView> {
+  ): Promise<ContractItemWriteResult> {
     return this.contractItems.update(id, itemId, dto);
   }
 
@@ -170,9 +178,8 @@ export class ContractsController {
   async deleteItem(
     @Param('id', ParseUUIDPipe) id: string,
     @Param('itemId', ParseUUIDPipe) itemId: string
-  ): Promise<{ ok: true }> {
-    await this.contractItems.remove(id, itemId);
-    return { ok: true };
+  ): Promise<ContractItemWriteResult> {
+    return this.contractItems.remove(id, itemId);
   }
 
   @CanCapability('crm_write')

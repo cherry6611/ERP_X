@@ -44,6 +44,7 @@ export class MasterDataController {
 
   @Get('customers')
   async listCustomers(
+    @Req() req: Request,
     @Query('keyword') keyword?: string,
     @Query('page') page?: string,
     @Query('pageSize') pageSize?: string
@@ -56,7 +57,12 @@ export class MasterDataController {
       Number.isFinite(pageSizeRaw) && pageSizeRaw >= 1
         ? Math.min(Math.floor(pageSizeRaw), 500)
         : 20;
-    return this.masterDataService.listCustomers(keyword, safePage, safePageSize);
+    return this.masterDataService.listCustomers(
+      keyword,
+      safePage,
+      safePageSize,
+      actorFromRequest(req),
+    );
   }
 
   @CanCapability('crm_write')
@@ -85,9 +91,10 @@ export class MasterDataController {
 
   @Get('customers/:id/contacts')
   async listContacts(
+    @Req() req: Request,
     @Param('id', ParseUUIDPipe) id: string
   ): Promise<CustomerContact[]> {
-    return this.masterDataService.listContacts(id);
+    return this.masterDataService.listContacts(id, actorFromRequest(req));
   }
 
   @CanCapability('crm_write')
@@ -101,9 +108,10 @@ export class MasterDataController {
 
   @Get('customers/:id/credit')
   async getCredit(
+    @Req() req: Request,
     @Param('id', ParseUUIDPipe) id: string
   ): Promise<CreditSummary> {
-    return this.masterDataService.getCredit(id);
+    return this.masterDataService.getCredit(id, actorFromRequest(req));
   }
 
   @CanCapability('crm_write')
@@ -122,8 +130,11 @@ export class MasterDataController {
   }
 
   @Get('suppliers')
-  async listSuppliers(@Query('keyword') keyword?: string): Promise<Supplier[]> {
-    return this.masterDataService.listSuppliers(keyword);
+  async listSuppliers(
+    @Req() req: Request,
+    @Query('keyword') keyword?: string,
+  ): Promise<Supplier[]> {
+    return this.masterDataService.listSuppliers(keyword, req.userContext?.roles ?? []);
   }
 
   @CanCapability('crm_write')

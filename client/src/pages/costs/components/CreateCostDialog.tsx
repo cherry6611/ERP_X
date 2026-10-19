@@ -37,6 +37,7 @@ import React from 'react';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useForm } from 'react-hook-form';
 import { toast } from 'sonner';
+import { Explained } from '@client/src/components/erp/ItemHelp';
 import { Button } from '@client/src/components/ui/button';
 import { dialogSize } from '@client/src/theme/dialog-size';
 import {
@@ -62,7 +63,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@client/src/components/ui/select';
-import { costsApi } from '@client/src/api';
+import { costsApi, masterDataApi } from '@client/src/api';
+import { useAsyncData } from '@client/src/hooks/useAsyncData';
 import { COST_TYPE_LABELS } from '@client/src/utils/biz-labels';
 import { getApiErrorMessage } from '@client/src/utils/api-error-message';
 import { costSchema, type CostFormData, type CostFormInput } from '../costs-schemas';
@@ -83,9 +85,10 @@ const CreateCostDialog: React.FC<CreateCostDialogProps> = ({
   projects,
   onSaved,
 }) => {
+  const { data: taxEntities } = useAsyncData(() => masterDataApi.listTaxEntities(), []);
   const form = useForm<CostFormInput, unknown, CostFormData>({
     resolver: zodResolver(costSchema),
-    defaultValues: { projectId: '', costType: 'compute', amount: 0, sourceRef: '', remark: '' },
+    defaultValues: { projectId: '', costType: 'compute', amount: 0, sourceRef: '', taxEntityId: '', remark: '' },
   });
 
   const onSubmit = form.handleSubmit(async (values) => {
@@ -94,13 +97,14 @@ const CreateCostDialog: React.FC<CreateCostDialogProps> = ({
       costType: values.costType as CostType,
       amount: values.amount,
       sourceRef: values.sourceRef,
+      taxEntityId: values.taxEntityId || undefined,
       remark: values.remark || undefined,
     };
     try {
       await costsApi.createCost(dto);
       toast.success('成本已归集');
       onOpenChange(false);
-      form.reset({ projectId: '', costType: 'compute', amount: 0, sourceRef: '', remark: '' });
+      form.reset({ projectId: '', costType: 'compute', amount: 0, sourceRef: '', taxEntityId: '', remark: '' });
       await onSaved();
     } catch (err) {
       toast.error(getApiErrorMessage(err, '归集失败'));
@@ -147,9 +151,14 @@ const CreateCostDialog: React.FC<CreateCostDialogProps> = ({
                 name="costType"
                 render={({ field }) => (
                   <FormItem className="flex-1">
-                    <FormLabel>
-                      成本类型 <span aria-hidden="true" className="text-destructive">*</span>
-                    </FormLabel>
+                    <Explained
+                      title="成本类型"
+                      content="人工和灵活用工按不含税金额归集，其它类型按含税金额归集。类型决定这笔成本怎么进项目。"
+                    >
+                      <FormLabel>
+                        成本类型 <span aria-hidden="true" className="text-destructive">*</span>
+                      </FormLabel>
+                    </Explained>
                     <Select onValueChange={field.onChange} value={field.value}>
                       <FormControl>
                         <SelectTrigger>
@@ -215,6 +224,32 @@ const CreateCostDialog: React.FC<CreateCostDialogProps> = ({
             />
             <FormField
               control={form.control}
+              name="taxEntityId"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>我方纳税主体</FormLabel>
+                  <Select value={field.value || undefined} onValueChange={field.onChange}>
+                    <FormControl>
+                      <SelectTrigger>
+                        <SelectValue placeholder="默认用项目合同主体，可改" />
+                      </SelectTrigger>
+                    </FormControl>
+                    <SelectContent>
+                      {(taxEntities ?? [])
+                        .filter((entity) => entity.status === 'active')
+                        .map((entity) => (
+                          <SelectItem key={entity.id} value={entity.id}>
+                            {entity.name}
+                          </SelectItem>
+                        ))}
+                    </SelectContent>
+                  </Select>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+            <FormField
+              control={form.control}
               name="remark"
               render={({ field }) => (
                 <FormItem>
@@ -241,7 +276,7 @@ const CreateCostDialog: React.FC<CreateCostDialogProps> = ({
               >
                 取消
               </Button>
-              <Button type="submit">保存</Button>
+              <Button type="submit" disabled={form.formState.isSubmitting}>保存</Button>
             </DialogFooter>
           </form>
         </Form>

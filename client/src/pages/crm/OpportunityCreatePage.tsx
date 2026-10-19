@@ -1,4 +1,5 @@
 import React from 'react';
+import { Explained } from '@client/src/components/erp/ItemHelp';
 import { useNavigate } from 'react-router-dom';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useForm } from 'react-hook-form';
@@ -133,7 +134,12 @@ const OpportunityCreatePage: React.FC = () => {
                 name="amount"
                 render={({ field }) => (
                   <FormItem className="flex-1">
-                    <FormLabel>预计金额（元）</FormLabel>
+                    <Explained
+                      title="预计金额"
+                      content="预估这单能成交的含税金额，只用于销售预测，不会生成合同或应收。"
+                    >
+                      <FormLabel>预计金额（元）</FormLabel>
+                    </Explained>
                     <FormControl>
                       <Input
                         type="number"
@@ -154,7 +160,12 @@ const OpportunityCreatePage: React.FC = () => {
                 name="winRate"
                 render={({ field }) => (
                   <FormItem className="flex-1">
-                    <FormLabel>赢单率（%）</FormLabel>
+                    <Explained
+                      title="赢单率"
+                      content="你估计这单能成交的百分比。只记在商机上，不会生成合同，也不会自动改阶段。"
+                    >
+                      <FormLabel>赢单率（%）</FormLabel>
+                    </Explained>
                     <FormControl>
                       <Input
                         type="number"

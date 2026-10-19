@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
+import { Explained } from '@client/src/components/erp/ItemHelp';
 import dayjs from 'dayjs';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useForm } from 'react-hook-form';
@@ -291,7 +292,12 @@ const MilestoneSection: React.FC<MilestoneSectionProps> = ({ projectId, onChange
                 name="weightPct"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>权重（%）</FormLabel>
+                    <Explained
+                      title="权重"
+                      content="同一项目的里程碑权重合计不能超过 100。已达成的权重会用来重算项目进度。"
+                    >
+                      <FormLabel>权重（%）</FormLabel>
+                    </Explained>
                     <FormControl>
                       <Input
                         type="number"
@@ -346,7 +352,12 @@ const MilestoneSection: React.FC<MilestoneSectionProps> = ({ projectId, onChange
                 name="weightPct"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>权重（%）</FormLabel>
+                    <Explained
+                      title="权重"
+                      content="同一项目的里程碑权重合计不能超过 100。已达成的权重会用来重算项目进度。"
+                    >
+                      <FormLabel>权重（%）</FormLabel>
+                    </Explained>
                     <FormControl>
                       <Input
                         type="number"

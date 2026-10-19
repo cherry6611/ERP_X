@@ -214,6 +214,7 @@ export class DataAssetController {
 
   @Get('datasets')
   async listDatasets(
+    @Req() req: Request,
     @Query('status') status?: string,
     @Query('page') page?: string,
     @Query('pageSize') pageSize?: string
@@ -221,7 +222,8 @@ export class DataAssetController {
     return this.dataAssetService.listDatasets(
       status,
       parsePage(page),
-      parsePageSize(pageSize)
+      parsePageSize(pageSize),
+      actorFromRequest(req),
     );
   }
 
@@ -255,6 +257,7 @@ export class DataAssetController {
 
   @Get('grants')
   async listGrants(
+    @Req() req: Request,
     @Query('datasetId') datasetId?: string,
     @Query('status') status?: string,
     @Query('page') page?: string,
@@ -264,7 +267,8 @@ export class DataAssetController {
       datasetId,
       status,
       parsePage(page),
-      parsePageSize(pageSize)
+      parsePageSize(pageSize),
+      actorFromRequest(req),
     );
   }
 
@@ -304,6 +308,7 @@ export class DataAssetController {
 
   @Get('grant-revoke-logs')
   async listRevokeLogs(
+    @Req() req: Request,
     @Query('grantId') grantId?: string,
     @Query('datasetId') datasetId?: string,
     @Query('page') page?: string,
@@ -314,6 +319,7 @@ export class DataAssetController {
       datasetId,
       page: parsePage(page),
       pageSize: parsePageSize(pageSize),
+      actor: actorFromRequest(req),
     });
   }
 
@@ -327,9 +333,10 @@ export class DataAssetController {
 
   @Get('datasets/:id/fields')
   async listDatasetFields(
+    @Req() req: Request,
     @Param('id', ParseUUIDPipe) id: string
   ): Promise<DatasetFieldItem[]> {
-    return this.dataAssetService.listDatasetFields(id);
+    return this.dataAssetService.listDatasetFields(id, actorFromRequest(req));
   }
 
   @CanCapability('data_asset')
@@ -353,16 +360,17 @@ export class DataAssetController {
   /** 脱敏预览：导出前先看一行样例会变成什么样 */
   @Post('datasets/:id/mask-preview')
   async previewMasking(
+    @Req() req: Request,
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: PreviewMaskingDto
   ): Promise<MaskPreviewResult> {
-    return this.dataAssetService.previewMasking(id, dto.sample ?? {});
+    return this.dataAssetService.previewMasking(id, dto.sample ?? {}, actorFromRequest(req));
   }
 
   /* ========== 到期预警 ========== */
 
   @Get('grant-warnings')
-  async listGrantWarnings(): Promise<GrantWarningItem[]> {
-    return this.dataAssetService.listGrantWarnings();
+  async listGrantWarnings(@Req() req: Request): Promise<GrantWarningItem[]> {
+    return this.dataAssetService.listGrantWarnings(actorFromRequest(req));
   }
 }

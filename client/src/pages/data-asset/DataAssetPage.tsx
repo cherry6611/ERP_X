@@ -26,7 +26,7 @@ const DataAssetPage: React.FC = () => {
   return (
     <PageShell
       title="数据资产授权"
-      description="数据集目录、授权记录、脱敏等级与授权回收审计，项目立项前自动校验数据集授权"
+      description="数据集目录、授权记录、脱敏等级与授权回收审计"
     >
       <div className="flex gap-2 flex-wrap" data-ai-section-type="card-list">
         {DATA_ASSET_TABS.map((item) => (

@@ -10,7 +10,8 @@ import {
 } from '@nestjs/common';
 import { and, desc, eq, sql } from 'drizzle-orm';
 import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
-import { compStoredFile } from '@server/database/schema';
+import { compAttachment, compStoredFile } from '@server/database/schema';
+import { ResourceAclService } from '@server/modules/attachment/resource-acl.service';
 import {
   assertLocalUploadFile,
   scanUploadedFile,
@@ -51,7 +52,10 @@ export interface StoredFileRow {
 export class FilesService {
   private readonly logger = new Logger(FilesService.name);
 
-  constructor(@Inject(DRIZZLE_DATABASE) private readonly db: PostgresJsDatabase) {}
+  constructor(
+    @Inject(DRIZZLE_DATABASE) private readonly db: PostgresJsDatabase,
+    private readonly resourceAcl: ResourceAclService,
+  ) {}
 
   async save(
     file: { originalname: string; mimetype: string; size: number; buffer: Buffer },
@@ -145,9 +149,35 @@ export class FilesService {
     const isOwner = row.ownerUserId != null && row.ownerUserId === userId;
     // 历史无归属文件仅 admin 可下；新文件需本人或 admin
     if (!isAdmin && !isOwner) {
-      throw new ForbiddenException('无权下载该文件');
+      const allowed = await this.allowedByAttachment(id, userId);
+      if (!allowed) throw new ForbiddenException('无权下载该文件');
     }
     return row;
+  }
+
+  /** 任一引用该文件的单据通过 ResourceAcl 即可下载。无引用时仍仅 owner/admin。 */
+  private async allowedByAttachment(fileId: string, userId: string): Promise<boolean> {
+    const needle = `%/api/files/${fileId}%`;
+    const rows = await this.db
+      .select({
+        resourceType: compAttachment.resourceType,
+        resourceId: compAttachment.resourceId,
+      })
+      .from(compAttachment)
+      .where(sql`${compAttachment.fileUrl} LIKE ${needle}`);
+    for (const item of rows) {
+      try {
+        await this.resourceAcl.assertCanAccess(
+          { userId, userName: userId },
+          item.resourceType,
+          item.resourceId,
+        );
+        return true;
+      } catch {
+        // 这条引用无权，继续看下一张单据
+      }
+    }
+    return false;
   }
 
   /** B-06 ②：版本链查询（默认展示最新版本，但可查看/下载历史版本） */

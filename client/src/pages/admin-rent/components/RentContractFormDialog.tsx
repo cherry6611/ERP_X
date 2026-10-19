@@ -3,7 +3,9 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { useForm } from 'react-hook-form';
 import { z } from 'zod';
 import { toast } from 'sonner';
-import { adminApi } from '@client/src/api';
+import { Explained } from '@client/src/components/erp/ItemHelp';
+import { adminApi, masterDataApi } from '@client/src/api';
+import { useAsyncData } from '@client/src/hooks/useAsyncData';
 import { Button } from '@client/src/components/ui/button';
 import {
   Dialog,
@@ -61,6 +63,7 @@ const rentContractSchema = z.object({
   startDate: z.string().min(1, '请选择起租日期'),
   endDate: z.string().min(1, '请选择到期日期'),
   paymentCycle: z.enum(['monthly', 'quarterly', 'half_yearly', 'yearly']),
+  taxEntityId: z.string(),
   remark: z.string(),
 });
 
@@ -76,6 +79,7 @@ const EMPTY_FORM: z.input<typeof rentContractSchema> = {
   startDate: '',
   endDate: '',
   paymentCycle: 'monthly',
+  taxEntityId: '',
   remark: '',
 };
 
@@ -94,6 +98,7 @@ const RentContractFormDialog: React.FC<RentContractFormDialogProps> = ({
 }) => {
   const [operating, setOperating] = useState(false);
 
+  const { data: taxEntities } = useAsyncData(() => masterDataApi.listTaxEntities(), []);
   const form = useForm<
     z.input<typeof rentContractSchema>,
     unknown,
@@ -117,6 +122,7 @@ const RentContractFormDialog: React.FC<RentContractFormDialogProps> = ({
             startDate: target.startDate,
             endDate: target.endDate,
             paymentCycle: target.paymentCycle,
+            taxEntityId: target.taxEntityId ?? '',
             remark: target.remark ?? '',
           }
         : EMPTY_FORM,
@@ -151,6 +157,7 @@ const RentContractFormDialog: React.FC<RentContractFormDialogProps> = ({
           startDate: values.startDate,
           endDate: values.endDate,
           paymentCycle: values.paymentCycle,
+          taxEntityId: values.taxEntityId || undefined,
           remark: values.remark || undefined,
         });
         toast.success('租房合同已登记（草稿）');
@@ -252,7 +259,12 @@ const RentContractFormDialog: React.FC<RentContractFormDialogProps> = ({
                 name="deposit"
                 render={({ field }) => (
                   <FormItem className="flex-1 min-w-32">
-                    <FormLabel>押金（元）</FormLabel>
+                    <Explained
+                      title="押金"
+                      content="租房押金，不计入每期租金。退租时按合同退还，不自动生成付款。"
+                    >
+                      <FormLabel>押金（元）</FormLabel>
+                    </Explained>
                     <FormControl>
                       <Input
                         type="number"
@@ -330,7 +342,12 @@ const RentContractFormDialog: React.FC<RentContractFormDialogProps> = ({
                 name="paymentCycle"
                 render={({ field }) => (
                   <FormItem className="flex-1 min-w-32">
-                    <FormLabel>付款方式</FormLabel>
+                    <Explained
+                      title="付款方式"
+                      content="约定租金怎么付，例如月付或季付。这里只作记录，不自动生成付款计划。"
+                    >
+                      <FormLabel>付款方式</FormLabel>
+                    </Explained>
                     <Select
                       value={field.value}
                       onValueChange={field.onChange}
@@ -353,6 +370,32 @@ const RentContractFormDialog: React.FC<RentContractFormDialogProps> = ({
                 )}
               />
             </div>
+            <FormField
+              control={form.control}
+              name="taxEntityId"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>我方纳税主体</FormLabel>
+                  <Select value={field.value || undefined} onValueChange={field.onChange}>
+                    <FormControl>
+                      <SelectTrigger>
+                        <SelectValue placeholder="多家主体时必选" />
+                      </SelectTrigger>
+                    </FormControl>
+                    <SelectContent>
+                      {(taxEntities ?? [])
+                        .filter((entity) => entity.status === 'active')
+                        .map((entity) => (
+                          <SelectItem key={entity.id} value={entity.id}>
+                            {entity.name}
+                          </SelectItem>
+                        ))}
+                    </SelectContent>
+                  </Select>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
             <FormField
               control={form.control}
               name="remark"

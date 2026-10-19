@@ -3,6 +3,7 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { useForm } from 'react-hook-form';
 import { z } from 'zod';
 import { toast } from 'sonner';
+import { Explained } from '@client/src/components/erp/ItemHelp';
 import { Plus } from 'lucide-react';
 import { Table, TableColumnsType } from 'antd';
 import { DataState } from '@client/src/components/DataState';
@@ -245,9 +246,14 @@ const RevenuesTab: React.FC = () => {
                   name="method"
                   render={({ field }) => (
                     <FormItem className="flex-1">
-                      <FormLabel>
-                        确认方式 <span aria-hidden="true" className="text-destructive">*</span>
-                      </FormLabel>
+                      <Explained
+                        title="确认方式"
+                        content="进度法按完成比例，里程碑按节点，按量按交付数量，分期按期间。确认收入不等于开票。"
+                      >
+                        <FormLabel>
+                          确认方式 <span aria-hidden="true" className="text-destructive">*</span>
+                        </FormLabel>
+                      </Explained>
                       <Select onValueChange={field.onChange} value={field.value}>
                         <FormControl>
                           <SelectTrigger>
@@ -311,7 +317,12 @@ const RevenuesTab: React.FC = () => {
                 name="basis"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>确认依据</FormLabel>
+                    <Explained
+                      title="确认依据"
+                      content="写明凭什么确认这笔收入，例如验收单或里程碑。它不参与计算，但留在记录里供审计查看。"
+                    >
+                      <FormLabel>确认依据</FormLabel>
+                    </Explained>
                     <FormControl>
                       <Textarea placeholder="如：里程碑「一期交付」达成" {...field} />
                     </FormControl>

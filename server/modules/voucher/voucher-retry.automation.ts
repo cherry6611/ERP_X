@@ -12,7 +12,7 @@ export class VoucherRetryAutomationTasksService {
   async retryFailedVouchers(): Promise<void> {
     const result = await this.voucherHook.retryPendingJobs(30);
     this.logger.log(
-      `凭证失败队列重试完成 retried=${result.retried} dead=${result.dead}`
+      `凭证失败队列重试完成 retried=${result.retried} dead=${result.dead} deadSourceRefs=${result.deadSourceRefs.join(',')}`
     );
   }
 }

@@ -20,6 +20,7 @@
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useForm } from 'react-hook-form';
 import { toast } from 'sonner';
+import { Explained } from '@client/src/components/erp/ItemHelp';
 import { Button } from '@client/src/components/ui/button';
 import {
   Dialog,
@@ -156,7 +157,12 @@ const ApFormDialog: React.FC<ApFormDialogProps> = ({
                 name="dueDate"
                 render={({ field }) => (
                   <FormItem className="flex-1">
-                    <FormLabel>到期日</FormLabel>
+                    <Explained
+                      title="到期日"
+                      content="账龄和付款提醒从这一天起算。不填时，这笔应付不按逾期计算。"
+                    >
+                      <FormLabel>到期日</FormLabel>
+                    </Explained>
                     <FormControl>
                       <Input placeholder="YYYY-MM-DD" {...field} value={field.value ?? ''} />
                     </FormControl>
@@ -179,7 +185,7 @@ const ApFormDialog: React.FC<ApFormDialogProps> = ({
               )}
             />
             <DialogFooter>
-              <Button type="submit">保存</Button>
+              <Button type="submit" disabled={apForm.formState.isSubmitting}>保存</Button>
             </DialogFooter>
           </form>
         </Form>

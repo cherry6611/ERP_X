@@ -1,4 +1,4 @@
-import { round2 } from '@shared/number';
+import { moneyText, round2, yuanToCents } from '@shared/number';
 
 /**
  * 金额取整的口径锁定。
@@ -89,5 +89,22 @@ describe('round2', () => {
       expect(round2(Infinity)).toBe(Infinity);
       expect(round2(-Infinity)).toBe(-Infinity);
     });
+  });
+});
+
+describe('yuanToCents / moneyText', () => {
+  it('1.005 元是 101 分，落库为 1.01', () => {
+    expect(yuanToCents(1.005)).toBe(101n);
+    expect(moneyText(1.005)).toBe('1.01');
+  });
+
+  it('红冲与正数分值互为相反数', () => {
+    expect(yuanToCents(-1.005)).toBe(-101n);
+    expect(moneyText(-1.005)).toBe('-1.01');
+  });
+
+  it('非有限数不能换成 0 分', () => {
+    expect(yuanToCents(Number.NaN)).toBeNull();
+    expect(moneyText(Number.POSITIVE_INFINITY)).toBeNull();
   });
 });

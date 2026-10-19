@@ -92,6 +92,8 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { useForm } from 'react-hook-form';
 import { z } from 'zod';
 import { toast } from 'sonner';
+import { masterDataApi } from '@client/src/api';
+import { useAsyncData } from '@client/src/hooks/useAsyncData';
 import type { NavigateFunction } from 'react-router-dom';
 import DateField from '@client/src/components/erp/DateField';
 import { Button } from '@client/src/components/ui/button';
@@ -110,6 +112,7 @@ import {
   FormLabel,
   FormMessage,
 } from '@client/src/components/ui/form';
+import { Explained } from '@client/src/components/erp/ItemHelp';
 import { Input } from '@client/src/components/ui/input';
 import {
   Select,
@@ -135,6 +138,7 @@ const claimSchema = z.object({
   applyId: z.string(),
   departmentId: z.string(),
   projectId: z.string(),
+  taxEntityId: z.string(),
   expenseCategory: z.string().min(1, '请填写费用科目'),
   amount: z.coerce.number().min(0, '报销金额不能为负'),
   expenseDate: z.string().optional(),
@@ -147,6 +151,7 @@ const EMPTY_FORM: ClaimFormData = {
   applyId: NONE,
   departmentId: NONE,
   projectId: NONE,
+  taxEntityId: '',
   expenseCategory: '',
   amount: 0,
   expenseDate: undefined,
@@ -184,6 +189,10 @@ const CreateExpenseClaimDialog: React.FC<CreateExpenseClaimDialogProps> = ({
     resolver: zodResolver(claimSchema),
     defaultValues: EMPTY_FORM,
   });
+  const { data: taxEntities } = useAsyncData(
+    () => masterDataApi.listTaxEntities(),
+    [],
+  );
 
   const onSubmit = form.handleSubmit(async (values) => {
     const dto: CreateExpenseClaimDto = {
@@ -191,6 +200,7 @@ const CreateExpenseClaimDialog: React.FC<CreateExpenseClaimDialogProps> = ({
       departmentId:
         values.departmentId !== NONE ? values.departmentId : undefined,
       projectId: values.projectId !== NONE ? values.projectId : undefined,
+      taxEntityId: values.taxEntityId || undefined,
       expenseCategory: values.expenseCategory,
       amount: values.amount,
       expenseDate: values.expenseDate || undefined,
@@ -323,6 +333,38 @@ const CreateExpenseClaimDialog: React.FC<CreateExpenseClaimDialogProps> = ({
                 )}
               />
             </div>
+            <FormField
+              control={form.control}
+              name="taxEntityId"
+              render={({ field }) => (
+                <FormItem>
+                  <Explained
+                    title="我方纳税主体"
+                    content="默认带出项目合同的签约主体，可以改成其他启用中的主体。多家又没有合同时必须选。"
+                  >
+                    <FormLabel>我方纳税主体</FormLabel>
+                  </Explained>
+                  <Select
+                    value={field.value || undefined}
+                    onValueChange={field.onChange}
+                  >
+                    <FormControl>
+                      <SelectTrigger>
+                        <SelectValue placeholder="无项目且多主体时必填" />
+                      </SelectTrigger>
+                    </FormControl>
+                    <SelectContent>
+                      {(taxEntities ?? []).map((entity) => (
+                        <SelectItem key={entity.id} value={entity.id}>
+                          {entity.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
             <div className="flex flex-wrap gap-4">
               <FormField
                 control={form.control}

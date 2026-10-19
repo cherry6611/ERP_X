@@ -234,6 +234,10 @@ export class CreateInvoiceDto implements ICreateInvoiceDto {
   @IsString()
   @MaxLength(1000)
   remark?: string;
+
+  @IsOptional()
+  @IsUUID()
+  clientRequestId?: string;
 }
 
 /** 发票补充关联 + 登记后编辑（PATCH /api/finance/invoices/:id）；可空字段传 null 表示清除 */
@@ -286,12 +290,6 @@ export class UpdateInvoiceDto implements IUpdateInvoiceDto {
     message: 'invoiceType 仅支持 vat_special / vat_normal / electronic',
   })
   invoiceType?: IUpdateInvoiceDto['invoiceType'];
-
-  @IsOptional()
-  @IsIn(['sales', 'purchase'], {
-    message: 'direction 仅支持 sales / purchase',
-  })
-  direction?: IUpdateInvoiceDto['direction'];
 
   @IsOptional()
   @ValidateIf((_, v) => v !== null)

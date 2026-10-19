@@ -3,6 +3,7 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { useForm } from 'react-hook-form';
 import { z } from 'zod';
 import { toast } from 'sonner';
+import { Explained } from '@client/src/components/erp/ItemHelp';
 import { Plus } from 'lucide-react';
 import { Table, TableColumnsType } from 'antd';
 import { CanCapability, CanCapabilityWrite } from '@client/src/platform/auth';
@@ -377,7 +378,12 @@ const InvoiceSection: React.FC<InvoiceSectionProps> = ({ projectId, onChanged })
                     const rates = resolveRateOptions(entity);
                     return (
                     <FormItem className="flex-1">
-                      <FormLabel>税率</FormLabel>
+                      <Explained
+                        title="税率"
+                        content="按合同所属纳税主体的默认档位带出。小规模纳税人和一般纳税人可选档位不同。"
+                      >
+                        <FormLabel>税率</FormLabel>
+                      </Explained>
                       <Select
                         onValueChange={(value) => field.onChange(Number(value))}
                         value={String(field.value)}

@@ -34,6 +34,7 @@
  * 文案、placeholder、Select 选项与各 `<FormField name>` 全部逐字未动。
  */
 import React from 'react';
+import { Explained } from '@client/src/components/erp/ItemHelp';
 import type { UseFormReturn } from 'react-hook-form';
 import { Button } from '@client/src/components/ui/button';
 import {
@@ -144,7 +145,12 @@ const CustomerFormDialog: React.FC<CustomerFormDialogProps> = ({
                 name="creditLevel"
                 render={({ field }) => (
                   <FormItem className="w-32">
-                    <FormLabel>信用等级</FormLabel>
+                    <Explained
+                      title="信用等级"
+                      content="用来标识客户资信。它不直接拦住合同，超额看的是信用额度。"
+                    >
+                      <FormLabel>信用等级</FormLabel>
+                    </Explained>
                     <Select onValueChange={field.onChange} value={field.value}>
                       <FormControl>
                         <SelectTrigger>
@@ -168,7 +174,12 @@ const CustomerFormDialog: React.FC<CustomerFormDialogProps> = ({
                 name="creditLimit"
                 render={({ field }) => (
                   <FormItem className="flex-1">
-                    <FormLabel>信用额度（元）</FormLabel>
+                    <Explained
+                      title="信用额度"
+                      content="未结清应收超过这个金额时记为超额。填 0 表示不设上限。"
+                    >
+                      <FormLabel>信用额度（元）</FormLabel>
+                    </Explained>
                     <FormControl>
                       <Input
                         type="number"
@@ -189,7 +200,12 @@ const CustomerFormDialog: React.FC<CustomerFormDialogProps> = ({
                 name="termsDays"
                 render={({ field }) => (
                   <FormItem className="flex-1">
-                    <FormLabel>账期（天）</FormLabel>
+                    <Explained
+                      title="账期"
+                      content="登记应收时如果没填到期日，就从今天起按这个天数推算。不填时按 30 天。"
+                    >
+                      <FormLabel>账期（天）</FormLabel>
+                    </Explained>
                     <FormControl>
                       <Input
                         type="number"
@@ -235,7 +251,12 @@ const CustomerFormDialog: React.FC<CustomerFormDialogProps> = ({
                 name="taxEntityId"
                 render={({ field }) => (
                   <FormItem className="flex-1">
-                    <FormLabel>关联纳税主体</FormLabel>
+                    <Explained
+                      title="关联纳税主体"
+                      content="这个客户默认用哪个纳税主体计税。合同没选主体时，会按这里校正税率。"
+                    >
+                      <FormLabel>关联纳税主体</FormLabel>
+                    </Explained>
                     <Select
                       value={field.value || '__none__'}
                       onValueChange={(value) =>
@@ -271,7 +292,12 @@ const CustomerFormDialog: React.FC<CustomerFormDialogProps> = ({
                   const rates = resolveRateOptions(entity);
                   return (
                   <FormItem className="w-36">
-                    <FormLabel>默认税率</FormLabel>
+                    <Explained
+                      title="默认税率"
+                      content="给这个客户开票时默认带出的税率。只能选关联纳税主体允许的档位。"
+                    >
+                      <FormLabel>默认税率</FormLabel>
+                    </Explained>
                     <Select
                       value={field.value || '__none__'}
                       onValueChange={(value) =>

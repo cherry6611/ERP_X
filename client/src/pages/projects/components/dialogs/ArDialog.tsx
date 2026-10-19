@@ -42,6 +42,7 @@ import {
   FormLabel,
   FormMessage,
 } from '@/components/ui/form';
+import { Explained } from '@client/src/components/erp/ItemHelp';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { UserSelect } from '@client/src/components/business-ui/user-select';
@@ -151,7 +152,12 @@ const ArDialog: React.FC<ArDialogProps> = ({
               name="dueDate"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>到期日</FormLabel>
+                  <Explained
+                    title="到期日"
+                    content="账龄从这一天计算逾期天数。不填时，这笔未结清应收记在未逾期。已结清和已作废的不进入账龄。"
+                  >
+                    <FormLabel>到期日</FormLabel>
+                  </Explained>
                   <DateField value={field.value} onChange={field.onChange} />
                   <FormMessage />
                 </FormItem>
@@ -199,7 +205,7 @@ const ArDialog: React.FC<ArDialogProps> = ({
               )}
             />
             <DialogFooter>
-              <Button type="submit">提交登记</Button>
+              <Button type="submit" disabled={arForm.formState.isSubmitting}>提交登记</Button>
             </DialogFooter>
           </form>
         </Form>

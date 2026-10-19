@@ -11,6 +11,17 @@ import {
 const resolverLogger = new Logger('TaxEntityResolver');
 
 /**
+ * 查询本身失败（断连、超时、权限），不是“没有匹配的合同”。
+ * 调用方必须失败，不能再落到默认纳税主体。
+ */
+export class TaxEntityLookupError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'TaxEntityLookupError';
+  }
+}
+
+/**
  * 凭证纳税主体归属的唯一解析口径（手工凭证与自动/钩子凭证共用）。
  *
  * 归属规则（与 `voucher.service.ts` 的历史注释一致，逐级兜底、不确定就不猜）：
@@ -56,15 +67,30 @@ export async function resolveVoucherTaxEntityId(
     if (byDoc) return byDoc;
   }
 
-  // ③ 库中恰有一个启用中的默认主体
-  const candidates = await safeQuery<{ id: string }>(
-    db,
-    sql`
-      SELECT id FROM md_tax_entity
-      WHERE is_default = 1 AND status = 'active'
-    `,
+  /*
+   * ③ 兜底。启用主体恰好 1 个时用它。
+   * 多于 1 个时不再用默认主体填任何来源类型的缺口。
+   */
+  const active = await listActiveTaxEntityIds(db);
+  return active.length === 1 ? active[0] : null;
+}
+
+/** 折旧、报销、采购退货、销售退货：多主体下禁止默认主体兜底。 */
+export function isStrictTaxEntitySource(sourceType: string | null | undefined): boolean {
+  return (
+    sourceType === 'expense' ||
+    sourceType === 'depreciation' ||
+    sourceType === 'purchase_return' ||
+    sourceType === 'sales_return'
   );
-  return candidates.length === 1 ? candidates[0].id : null;
+}
+
+export async function listActiveTaxEntityIds(db: PostgresJsDatabase): Promise<string[]> {
+  const rows = await safeQuery<{ id: string }>(
+    db,
+    sql`SELECT id FROM md_tax_entity WHERE status = 'active' ORDER BY id`,
+  );
+  return rows.map((row) => row.id);
 }
 
 /**
@@ -84,10 +110,11 @@ async function lookupBySourceType(
       const rows = await safeQuery<{ tax_entity_id: string | null }>(
         db,
         sql`
-          SELECT c.tax_entity_id
+          SELECT coalesce(pc.tax_entity_id, c.tax_entity_id) AS tax_entity_id
           FROM erp_project_cost pc
-          JOIN erp_contract c ON c.id = pc.contract_id
-          WHERE pc.code = ${code} AND c.tax_entity_id IS NOT NULL
+          LEFT JOIN erp_contract c ON c.id = pc.contract_id
+          WHERE pc.code = ${code}
+            AND coalesce(pc.tax_entity_id, c.tax_entity_id) IS NOT NULL
           LIMIT 1
         `,
       );
@@ -118,6 +145,55 @@ async function lookupBySourceType(
       );
       return rows[0]?.tax_entity_id ?? null;
     }
+    case 'expense': {
+      const rows = await safeQuery<{ tax_entity_id: string | null }>(
+        db,
+        sql`
+          SELECT coalesce(cl.tax_entity_id, c.tax_entity_id) AS tax_entity_id
+          FROM fin_expense_claim cl
+          LEFT JOIN erp_project p ON p.id = cl.project_id
+          LEFT JOIN erp_contract c ON c.id = p.contract_id
+          WHERE cl.code = ${code}
+            AND coalesce(cl.tax_entity_id, c.tax_entity_id) IS NOT NULL
+          LIMIT 1
+        `,
+      );
+      return rows[0]?.tax_entity_id ?? null;
+    }
+    case 'purchase_return': {
+      const rows = await safeQuery<{ tax_entity_id: string | null }>(
+        db,
+        sql`
+          SELECT coalesce(oc.tax_entity_id, pc.tax_entity_id, s.tax_entity_id) AS tax_entity_id
+          FROM pur_return r
+          JOIN pur_order o ON o.id = r.order_id
+          LEFT JOIN erp_contract oc ON oc.id = o.contract_id
+          LEFT JOIN erp_project p ON p.id = coalesce(r.project_id, o.project_id)
+          LEFT JOIN erp_contract pc ON pc.id = p.contract_id
+          LEFT JOIN md_supplier s ON s.id = coalesce(r.supplier_id, o.supplier_id)
+          WHERE r.code = ${code}
+            AND coalesce(oc.tax_entity_id, pc.tax_entity_id, s.tax_entity_id) IS NOT NULL
+          LIMIT 1
+        `,
+      );
+      return rows[0]?.tax_entity_id ?? null;
+    }
+    case 'sales_return': {
+      const rows = await safeQuery<{ tax_entity_id: string | null }>(
+        db,
+        sql`
+          SELECT coalesce(c.tax_entity_id, rc.tax_entity_id) AS tax_entity_id
+          FROM sales_return s
+          LEFT JOIN erp_contract c ON c.id = s.contract_id
+          LEFT JOIN erp_project_revenue rev ON rev.id = s.revenue_id
+          LEFT JOIN erp_contract rc ON rc.id = rev.contract_id
+          WHERE s.code = ${code}
+            AND coalesce(c.tax_entity_id, rc.tax_entity_id) IS NOT NULL
+          LIMIT 1
+        `,
+      );
+      return rows[0]?.tax_entity_id ?? null;
+    }
     default:
       return null;
   }
@@ -138,9 +214,9 @@ async function lookupBySourceType(
  *     这两个是"环境尚未迁移完成"的特征码，是**预期内**的降级条件
  *     （例如补偿队列在迁移前被调用、单测用最小 schema）。它们不记日志，
  *     否则每次都会刷一条噪声，反而淹没真实故障。
- *   · **必须记录**：其余任何错误（连接断开、权限、超时、语法）——
- *     一律 `logger.error`，因为"查不到主体"与"数据库挂了"对业务的影响
- *     完全不同，前者是个别凭证待补，后者是**整批凭证都会无主体**。
+ *   · **必须失败**：其余任何错误（连接断开、权限、超时、语法）——
+ *     记日志并抛出 `TaxEntityLookupError`。不能当成“查不到”再落到默认主体，
+ *     否则一次数据库抖动会把成本、收入、发票凭证记到错误的主体上。
  */
 async function safeQuery<T>(
   db: PostgresJsDatabase,
@@ -160,13 +236,15 @@ async function safeQuery<T>(
       );
       return [];
     }
+    const code = extractPgCode(error) ?? 'unknown';
+    const message =
+      `纳税主体查询失败（code=${code}）。本次不使用默认主体填缺口，凭证进入补偿队列。` +
+      `这不是"确实没有匹配合同"，请检查数据库连通性与权限。`;
     resolverLogger.error(
-      `纳税主体兜底查询失败（code=${extractPgCode(error) ?? 'unknown'}）：本次将降级为"查不到主体"，` +
-        `该批凭证会以无主体落库并出现在 v_fin_voucher_unassigned_entity 视图中待补。` +
-        `这不是"确实没有匹配合同"，请检查数据库连通性与权限。`,
+      message,
       error instanceof Error ? error.stack : String(error),
     );
-    return [];
+    throw new TaxEntityLookupError(message);
   }
 }
 

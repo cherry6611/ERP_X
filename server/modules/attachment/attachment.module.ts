@@ -10,5 +10,6 @@ import { ResourceAclService } from './resource-acl.service';
   imports: [ProjectsModule, FeishuDriveModule],
   controllers: [AttachmentController],
   providers: [AttachmentService, FeishuDocParseService, ResourceAclService],
+  exports: [ResourceAclService],
 })
 export class AttachmentModule {}

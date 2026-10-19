@@ -12,6 +12,7 @@ import {
   type PostgresJsDatabase,
 } from '@server/platform';
 import { and, asc, desc, eq, inArray, lte, ne, or, sql, type SQL } from 'drizzle-orm';
+import { resolveDocumentTaxEntity } from '@server/common/tax/document-tax-entity';
 import type { PgColumn } from 'drizzle-orm/pg-core';
 import {
   erpContract,
@@ -353,6 +354,11 @@ export class CostsService {
       'CST'
     );
     const occurredDate = dto.occurredDate ?? todayInShanghai();
+    const taxEntityId = await resolveDocumentTaxEntity(this.db, {
+      projectId: dto.projectId,
+      taxEntityId: dto.taxEntityId,
+      kind: 'expense',
+    });
     // B4 / D-27：**成本登记的期间闸门**。
     //
     // 原实现整体缺这道校验（全仓 `assertPeriodOpen` 的 18 处引用里，成本模块 0 处），
@@ -381,6 +387,7 @@ export class CostsService {
         supplierId: dto.supplierId,
         departmentId,
         contractId: project[0].contractId ?? null,
+        taxEntityId,
         isAccrual: 0,
         remark: dto.remark,
       })
@@ -393,6 +400,7 @@ export class CostsService {
         voucherDate: occurredDate,
         summary: `成本确认 ${code}`,
         lines: costConfirmLines(dto.amount),
+        taxEntityId: taxEntityId ?? undefined,
       });
     }
     let supplierName: string | null = null;
@@ -639,7 +647,7 @@ export class CostsService {
     if (action === 'reject' && current !== 'submitted') {
       throw new BadRequestException('仅已提交状态可驳回');
     }
-    let postedCost: { code: string; amount: number; date: string } | null = null;
+    let postedCost: { code: string; amount: number; date: string; taxEntityId: string | null } | null = null;
     if (action === 'submit') {
       await this.db
         .update(erpTimesheet)
@@ -665,6 +673,12 @@ export class CostsService {
         'CST'
       );
       const workDate = sheet.workDate ?? todayInShanghai();
+      const laborEntity = sheet.projectId
+        ? await resolveDocumentTaxEntity(this.db, {
+            projectId: sheet.projectId,
+            kind: 'expense',
+          })
+        : null;
       postedCost = await this.db.transaction(async (tx) => {
         const claimed = await tx
           .update(erpTimesheet)
@@ -733,10 +747,11 @@ export class CostsService {
           departmentId,
           supplierId: employeeRows[0]?.supplierId ?? null,
           contractId: projectRows[0]?.contractId ?? null,
+          taxEntityId: laborEntity,
           isAccrual: 1,
           remark: `工时折算（预提）：${sheet.employeeName} ${sheet.hours}h × 费率 ${rate}`,
         });
-        return { code: costCode, amount, date: workDate };
+        return { code: costCode, amount, date: workDate, taxEntityId: laborEntity };
       });
     }
     if (postedCost !== null && postedCost.amount > 0) {
@@ -745,6 +760,7 @@ export class CostsService {
         sourceRef: `cost:${postedCost.code}`,
         voucherDate: postedCost.date,
         summary: `成本确认 ${postedCost.code}`,
+        taxEntityId: postedCost.taxEntityId ?? undefined,
         lines: costConfirmLines(postedCost.amount),
       });
     }

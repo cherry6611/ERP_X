@@ -8,8 +8,8 @@ import { Table, TableColumnsType } from 'antd';
 import { CanCapabilityWrite } from '@client/src/platform/auth';
 import DateField from '@client/src/components/erp/DateField';
 import { SectionTitle } from '@client/src/components/SectionTitle';
-import ActionHelp from '@client/src/components/erp/ActionHelp';
-import ActionGroup from '@client/src/components/erp/ActionGroup';
+import ButtonHelp from '@client/src/components/erp/ButtonHelp';
+import { Explained } from '@client/src/components/erp/ItemHelp';
 import { Button } from '@client/src/components/ui/button';
 import {
   Dialog,
@@ -274,14 +274,11 @@ const GrantPanel: React.FC = () => {
               </SelectContent>
             </Select>
           </div>
-          <ActionGroup
-            help={
-              <ActionHelp title="数据资产授权">
-                授权范围决定可访问的数据集与有效期限；到期后自动失效，失效后需重新授权。
-              </ActionHelp>
-            }
-          >
-            <CanCapabilityWrite capability="projects_write">
+          <CanCapabilityWrite capability="projects_write">
+            <ButtonHelp
+              title="新增授权"
+              content="授权决定谁能访问哪份数据集，以及有效期。到期后自动失效，失效后需要重新授权。"
+            >
               <Button
                 onClick={() => {
                   form.reset(EMPTY_FORM);
@@ -291,8 +288,8 @@ const GrantPanel: React.FC = () => {
                 <Plus className="h-4 w-4" />
                 新增授权
               </Button>
-            </CanCapabilityWrite>
-          </ActionGroup>
+            </ButtonHelp>
+          </CanCapabilityWrite>
         </div>
         {error ? (
           <p className="text-sm text-destructive">
@@ -422,7 +419,12 @@ const GrantPanel: React.FC = () => {
                 name="scope"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>授权范围</FormLabel>
+                    <Explained
+                      title="授权范围"
+                      content="写明对方能看哪些字段、能不能调用接口。到期后授权自动失效，不会沿用原来的范围，需要重新授权。"
+                    >
+                      <FormLabel>授权范围</FormLabel>
+                    </Explained>
                     <FormControl>
                       <Input placeholder="如：字段级读取、API 调用" {...field} />
                     </FormControl>
@@ -452,12 +454,17 @@ const GrantPanel: React.FC = () => {
                   name="endDate"
                   render={({ field }) => (
                     <FormItem className="flex-1">
-                      <FormLabel>
-                        结束日期{' '}
-                        <span aria-hidden="true" className="text-destructive">
-                          *
-                        </span>
-                      </FormLabel>
+                      <Explained
+                        title="结束日期"
+                        content="授权到这一天为止。到期后自动失效，失效后需要重新授权。"
+                      >
+                        <FormLabel>
+                          结束日期{' '}
+                          <span aria-hidden="true" className="text-destructive">
+                            *
+                          </span>
+                        </FormLabel>
+                      </Explained>
                       <DateField value={field.value || null} onChange={field.onChange} />
                       <FormMessage />
                     </FormItem>

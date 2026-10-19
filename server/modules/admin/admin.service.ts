@@ -10,6 +10,7 @@ import {
   type PostgresJsDatabase,
 } from '@server/platform';
 import { and, asc, count, eq, gte, lte, sum, type SQL } from 'drizzle-orm';
+import { resolveDocumentTaxEntity } from '@server/common/tax/document-tax-entity';
 import dayjs from 'dayjs';
 import {
   erpAdminAffair,
@@ -146,6 +147,10 @@ export class AdminService {
   async createRentContract(
     dto: CreateAdminRentContractDto
   ): Promise<AdminRentContractItem> {
+    const taxEntityId = await resolveDocumentTaxEntity(this.db, {
+      taxEntityId: dto.taxEntityId,
+      kind: 'expense',
+    });
     const code: string = await generateBizCode(
       this.db,
       erpAdminRentContract,
@@ -166,6 +171,7 @@ export class AdminService {
         endDate: dto.endDate,
         paymentCycle: (dto.paymentCycle ?? 'monthly') satisfies AdminPaymentCycle,
         status: 'draft',
+        taxEntityId,
         remark: dto.remark ?? null,
       })
       .returning();
@@ -251,6 +257,7 @@ export class AdminService {
       endDate: row.endDate,
       paymentCycle: row.paymentCycle as AdminPaymentCycle,
       status: row.status as AdminRentContractStatus,
+      taxEntityId: row.taxEntityId ?? null,
       remark: row.remark,
       createdAt: row.createdAt.toISOString(),
     };

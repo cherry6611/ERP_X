@@ -50,6 +50,10 @@ export class CreateExpenseApplyDto implements ICreateExpenseApplyDto {
   @IsUUID()
   projectId?: string;
 
+  @IsOptional()
+  @IsUUID()
+  taxEntityId?: string;
+
   @IsString()
   @IsNotEmpty()
   expenseCategory!: string;
@@ -83,6 +87,10 @@ export class CreateExpenseClaimDto implements ICreateExpenseClaimDto {
   @IsOptional()
   @IsUUID()
   projectId?: string;
+
+  @IsOptional()
+  @IsUUID()
+  taxEntityId?: string;
 
   @IsString()
   @IsNotEmpty()

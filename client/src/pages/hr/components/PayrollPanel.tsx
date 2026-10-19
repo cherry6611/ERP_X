@@ -3,6 +3,7 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { useForm } from 'react-hook-form';
 import { z } from 'zod';
 import { toast } from 'sonner';
+import { Explained } from '@client/src/components/erp/ItemHelp';
 import { Plus } from 'lucide-react';
 import { Table } from 'antd';
 import { CanCapability, CanCapabilityWrite } from '@client/src/platform/auth';
@@ -300,7 +301,9 @@ const PayrollPanel: React.FC = () => {
                   name="perfSalary"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>绩效工资</FormLabel>
+                      <Explained title="绩效工资" content="计入应发工资，和基本工资分开记。">
+                        <FormLabel>绩效工资</FormLabel>
+                      </Explained>
                       <FormControl>
                         <Input
                           type="number"
@@ -342,7 +345,9 @@ const PayrollPanel: React.FC = () => {
                   name="socialInsurance"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>社保</FormLabel>
+                      <Explained title="社保" content="个人承担的社保，从应发工资里扣除。">
+                        <FormLabel>社保</FormLabel>
+                      </Explained>
                       <FormControl>
                         <Input
                           type="number"
@@ -363,7 +368,9 @@ const PayrollPanel: React.FC = () => {
                   name="housingFund"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>公积金</FormLabel>
+                      <Explained title="公积金" content="个人承担的公积金，从应发工资里扣除。">
+                        <FormLabel>公积金</FormLabel>
+                      </Explained>
                       <FormControl>
                         <Input
                           type="number"
@@ -384,7 +391,9 @@ const PayrollPanel: React.FC = () => {
                   name="tax"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>个税</FormLabel>
+                      <Explained title="个税" content="本月代扣的个人所得税，从应发工资里扣除。">
+                        <FormLabel>个税</FormLabel>
+                      </Explained>
                       <FormControl>
                         <Input
                           type="number"

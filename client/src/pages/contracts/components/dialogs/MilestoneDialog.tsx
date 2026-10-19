@@ -28,6 +28,7 @@
  *    （父组件仍是同一行 `milestoneForm.reset(...)`）。
  */
 import React from 'react';
+import { Explained } from '@client/src/components/erp/ItemHelp';
 import { useForm } from 'react-hook-form';
 import { Button } from '@client/src/components/ui/button';
 import {
@@ -92,7 +93,12 @@ const MilestoneDialog: React.FC<MilestoneDialogProps> = ({
                 name="amount"
                 render={({ field }) => (
                   <FormItem className="flex-1">
-                    <FormLabel>金额（元）</FormLabel>
+                    <Explained
+                      title="金额"
+                      content="这个里程碑对应的含税金额。它用来拆分合同收款，不自动生成应收。"
+                    >
+                      <FormLabel>金额（元）</FormLabel>
+                    </Explained>
                     <FormControl>
                       <Input
                         type="number"
@@ -113,7 +119,12 @@ const MilestoneDialog: React.FC<MilestoneDialogProps> = ({
                 name="dueCondition"
                 render={({ field }) => (
                   <FormItem className="flex-1">
-                    <FormLabel>触发条件</FormLabel>
+                    <Explained
+                      title="触发条件"
+                      content="写明什么情况下达到这个里程碑，例如验收通过。它不参与计税。"
+                    >
+                      <FormLabel>触发条件</FormLabel>
+                    </Explained>
                     <FormControl>
                       <Input placeholder="如：验收通过" {...field} />
                     </FormControl>

@@ -848,6 +848,7 @@ export class ProjectsService {
         id: erpContract.id,
         status: erpContract.status,
         netAmount: erpContract.netAmount,
+        billingModel: erpContract.billingModel,
       })
       .from(erpContract)
       .where(eq(erpContract.id, dto.contractId));
@@ -891,32 +892,72 @@ export class ProjectsService {
         if (fromQuote[0]) wonQuotationId = fromQuote[0].id;
       }
     }
+    const framework = contracts[0].billingModel === 'framework';
+    const contractNet = Number(contracts[0].netAmount ?? 0);
+    let budget: number;
+    if (dto.budget != null) {
+      if (!(dto.budget > 0)) {
+        throw new BadRequestException(
+          '项目预算必须大于 0。预算为 0 时，带项目的费用会在创建时被拒绝',
+        );
+      }
+      budget = dto.budget;
+    } else if (!framework && contractNet > 0) {
+      budget = contractNet;
+    } else {
+      throw new BadRequestException(
+        '请填写大于 0 的项目预算。合同净额为 0 时不能把预算留空，否则费用无法提交',
+      );
+    }
+    const existing = await this.db
+      .select({ id: erpProject.id })
+      .from(erpProject)
+      .where(eq(erpProject.contractId, dto.contractId))
+      .limit(1);
+    if (existing.length > 0 && !framework) {
+      throw new BadRequestException('该合同已立项');
+    }
     const code = await generateBizCode(
       this.db,
       erpProject,
       erpProject.code,
       'PRJ'
     );
-    const rows = await this.db
-      .insert(erpProject)
-      .values({
-        code,
-        name: dto.name,
-        contractId: dto.contractId,
-        wonQuotationId,
-        pm: dto.pm,
-        pmUserId: dto.pmUserId ?? null,
-        deptName: dto.deptName,
-        budget: String(dto.budget ?? Number(contracts[0].netAmount ?? 0)),
-        estimatedTotalCost: String(dto.estimatedTotalCost ?? 0),
-        startDate: dto.startDate,
-        endDate: dto.endDate,
-        progress: 0,
-        status: 'initiating',
-        remark: dto.remark,
-      })
-      .returning();
-    return this.getProject(rows[0].id);
+    try {
+      const rows = await this.db
+        .insert(erpProject)
+        .values({
+          code,
+          name: dto.name,
+          contractId: dto.contractId,
+          wonQuotationId,
+          pm: dto.pm,
+          pmUserId: dto.pmUserId ?? null,
+          deptName: dto.deptName,
+          budget: String(budget),
+          estimatedTotalCost: String(dto.estimatedTotalCost ?? 0),
+          startDate: dto.startDate,
+          endDate: dto.endDate,
+          progress: 0,
+          status: 'initiating',
+          remark: dto.remark,
+        })
+        .returning();
+      return this.getProject(rows[0].id);
+    } catch (error) {
+      const pgCode =
+        error && typeof error === 'object' && 'code' in error
+          ? String((error as { code: unknown }).code)
+          : '';
+      if (pgCode !== '23505') throw error;
+      const again = await this.db
+        .select({ id: erpProject.id })
+        .from(erpProject)
+        .where(eq(erpProject.contractId, dto.contractId))
+        .limit(1);
+      if (again.length === 0) throw error;
+      return this.getProject(again[0].id);
+    }
   }
 
   async updateProject(id: string, dto: UpdateProjectDto): Promise<Project> {

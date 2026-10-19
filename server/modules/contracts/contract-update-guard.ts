@@ -125,6 +125,7 @@ export const CONTRACT_FROZEN_FIELDS: ReadonlyArray<ContractUpdatableField> = [
 export const CONTRACT_DRAFT_ONLY_FIELDS: ReadonlyArray<ContractUpdatableField> = [
   'amount',
   'customerId',
+  'taxEntityId',
 ];
 
 /** 冻结状态下的统一文案（字段清单变了必须同步，否则使用者按提示改别的字段仍会被拒） */
@@ -138,6 +139,9 @@ export const CONTRACT_AMOUNT_LOCKED_MESSAGE =
 /** 客户变更的文案：必须说清"为什么不行"，而不是一句"当前状态不可操作" */
 export const CONTRACT_CUSTOMER_LOCKED_MESSAGE =
   '合同已生效，客户不可变更（已开具的发票与已登记的应收挂在原客户上，变更后无法核销）';
+
+export const CONTRACT_ENTITY_LOCKED_MESSAGE =
+  '合同已提交，签约主体不可变更。要换主体请终止本合同并另签一份';
 
 /**
  * 该状态下这次 PATCH 是否被拒。
@@ -165,6 +169,7 @@ export function contractUpdateBlockReason(
      */
     if (dto.amount !== undefined) return CONTRACT_AMOUNT_LOCKED_MESSAGE;
     if (dto.customerId !== undefined) return CONTRACT_CUSTOMER_LOCKED_MESSAGE;
+    if (dto.taxEntityId !== undefined) return CONTRACT_ENTITY_LOCKED_MESSAGE;
   }
   return null;
 }

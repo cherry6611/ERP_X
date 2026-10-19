@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useForm } from 'react-hook-form';
 import { toast } from 'sonner';
+import { Explained } from '@client/src/components/erp/ItemHelp';
 import { Plus } from 'lucide-react';
 import { Table, TableColumnsType } from 'antd';
 import { CanCapability, CanCapabilityWrite } from '@client/src/platform/auth';
@@ -290,7 +291,12 @@ const DatasetPanel: React.FC = () => {
                   name="maskLevel"
                   render={({ field }) => (
                     <FormItem className="w-32">
-                      <FormLabel>脱敏等级</FormLabel>
+                      <Explained
+                        title="脱敏等级"
+                        content="决定导出和查看时哪些字段会被遮住。等级越高，遮住的字段越多。"
+                      >
+                        <FormLabel>脱敏等级</FormLabel>
+                      </Explained>
                       <Select
                         value={field.value}
                         onValueChange={field.onChange}

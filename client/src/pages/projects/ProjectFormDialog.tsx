@@ -5,6 +5,7 @@ import { z } from 'zod';
 import { toast } from 'sonner';
 import AttachmentHint from '@client/src/components/attachments/AttachmentHint';
 import DateField from '@client/src/components/erp/DateField';
+import { Explained } from '@client/src/components/erp/ItemHelp';
 import { Button } from '@client/src/components/ui/button';
 import {
   Dialog,
@@ -194,7 +195,12 @@ const ProjectFormDialog: React.FC<ProjectFormDialogProps> = ({
                 name="budget"
                 render={({ field }) => (
                   <FormItem className="flex-1">
-                    <FormLabel>预算基线（元）</FormLabel>
+                    <Explained
+                      title="预算基线"
+                      content="费用能不能提交，看的是这个数。留空时使用合同净额。它不是预计总成本。"
+                    >
+                      <FormLabel>预算基线（元）</FormLabel>
+                    </Explained>
                     <FormControl>
                       <Input
                         type="number"
@@ -215,7 +221,12 @@ const ProjectFormDialog: React.FC<ProjectFormDialogProps> = ({
                 name="estimatedTotalCost"
                 render={({ field }) => (
                   <FormItem className="flex-1">
-                    <FormLabel>预计总成本（元）</FormLabel>
+                    <Explained
+                      title="预计总成本"
+                      content="用来提前看项目会不会超支，不参与费用能否提交的判断。费用控制看的是预算基线。"
+                    >
+                      <FormLabel>预计总成本（元）</FormLabel>
+                    </Explained>
                     <FormControl>
                       <Input
                         type="number"

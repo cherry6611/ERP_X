@@ -54,6 +54,8 @@ export const DATA_SCOPE_RESOURCES = [
   'cost',
   /** B-2：项目收入（口径 erp_project_revenue.project_id） */
   'revenue',
+  /** 合同（custom = 纳税主体 id，self = owner） */
+  'contract',
 ] as const;
 
 export type DataScopeResource = (typeof DATA_SCOPE_RESOURCES)[number];
@@ -376,19 +378,19 @@ export class DataScopeService implements OnModuleInit {
    * 启动期数据权限覆盖核查（S2 收口）。
    *
    * 不强制、不影响已配置资源行为，仅做**告警与可观测**：
-   * 1. 生产环境若未设 `DATA_SCOPE_UNCONFIGURED_POLICY=deny`，未配置资源将 fail-open（全量暴露），
-   *    此处强烈提示运维补齐环境变量（默认已是 deny，但显式声明可避免误配 allow）。
+   * 1. 只有字面量 `allow` 会放开。空值、`fail_closed`、`deny` 都是拒绝。
+   *    生产若设成 `allow`，未配置资源会全量暴露，这里告警。
    * 2. 会计资料类（voucher/ledger/report）一旦未登记任何行级权限配置，在 deny 策略下对非 admin
    *    返回空集——属预期的安全收紧，但需运维先确认配置已就绪，否则列表会变空。故此处列出未配置项。
    */
   async onModuleInit(): Promise<void> {
     // 用 fail-safe 判定（非显式开发即生产）：NODE_ENV 误配成 'prod' 时
-    // 这条安全告警不能静默消失，否则运维永远不知道自己在 fail-open。
+    // 只有显式 allow 才会放开。这条告警不能静默，否则运维不知道自己在全量暴露。
     const isProd = isProductionRuntime();
     if (isProd && this.unconfiguredPolicy() !== 'deny') {
       this.logger.warn(
-        '生产环境未设置 DATA_SCOPE_UNCONFIGURED_POLICY=deny：未配置行级权限的资源将 fail-open（全量暴露）。' +
-          '请设置该环境变量以默认 fail-closed。',
+        '生产环境 DATA_SCOPE_UNCONFIGURED_POLICY=allow：未配置行级权限的资源将全量暴露。' +
+          '请去掉该值，或改为 fail_closed。除 allow 以外都按拒绝处理。',
       );
     }
     try {

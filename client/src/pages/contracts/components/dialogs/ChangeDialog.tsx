@@ -24,6 +24,7 @@
  * `contract-detail-model.ts` 文件头「两处看着该统一、其实不能统一的门槛」）。
  */
 import React from 'react';
+import { Explained } from '@client/src/components/erp/ItemHelp';
 import { useForm } from 'react-hook-form';
 import { Button } from '@client/src/components/ui/button';
 import {
@@ -86,7 +87,12 @@ const ChangeDialog: React.FC<ChangeDialogProps> = ({
               name="newAmount"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>变更后金额（元，不变可填 0）</FormLabel>
+                  <Explained
+                    title="变更后金额"
+                    content="变更生效后的合同含税金额。填 0 表示金额不变。审批通过后的金额不能在原合同上直接改，要走变更。"
+                  >
+                    <FormLabel>变更后金额（元，不变可填 0）</FormLabel>
+                  </Explained>
                   <FormControl>
                     <Input
                       type="number"

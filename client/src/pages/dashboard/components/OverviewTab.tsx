@@ -43,6 +43,7 @@ const OverviewTab: React.FC<OverviewTabProps> = ({
                   icon={card.icon}
                   tone={card.tone}
                   delta={card.delta}
+                  help={card.help}
                 />
               </div>
             ))}

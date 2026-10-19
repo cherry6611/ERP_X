@@ -15,6 +15,7 @@ import {
   erpProject,
   hrDepartment,
 } from '@server/database/schema';
+import { resolveDocumentTaxEntity } from '@server/common/tax/document-tax-entity';
 import { generateBizCode } from '@server/common/utils/biz-code';
 import { round2 } from '@server/common/utils/number';
 import type {
@@ -69,6 +70,7 @@ interface AssetRow {
   departmentName: string | null;
   projectId: string | null;
   projectName: string | null;
+  taxEntityId: string | null;
   purchaseDate: string | null;
   usefulMonths: number | null;
   status: string | null;
@@ -115,6 +117,7 @@ export class AssetService {
       departmentName: row.departmentName,
       projectId: row.projectId,
       projectName: row.projectName,
+      taxEntityId: row.taxEntityId,
       purchaseDate: row.purchaseDate,
       usefulMonths: row.usefulMonths ?? 36,
       status: (row.status ?? 'in_use') as AssetStatus,
@@ -156,6 +159,7 @@ export class AssetService {
       departmentName: hrDepartment.name,
       projectId: astAsset.projectId,
       projectName: erpProject.name,
+      taxEntityId: astAsset.taxEntityId,
       purchaseDate: astAsset.purchaseDate,
       usefulMonths: astAsset.usefulMonths,
       status: astAsset.status,
@@ -217,6 +221,11 @@ export class AssetService {
     if (usefulMonths < 1) {
       throw new BadRequestException('折旧月数至少为 1');
     }
+    const taxEntityId = await resolveDocumentTaxEntity(this.db, {
+      projectId: dto.projectId,
+      taxEntityId: dto.taxEntityId,
+      kind: 'asset',
+    });
     const code = await generateBizCode(
       this.db,
       astAsset,
@@ -234,6 +243,7 @@ export class AssetService {
         netValue: round2(originalValue - residualValue).toFixed(2),
         departmentId: dto.departmentId ?? null,
         projectId: dto.projectId ?? null,
+        taxEntityId,
         purchaseDate: dto.purchaseDate ?? null,
         usefulMonths,
         status: 'in_use',
@@ -244,6 +254,16 @@ export class AssetService {
       throw new NotFoundException('资产创建失败');
     }
     return this.getAssetById(inserted[0].id);
+  }
+
+  async setAssetTaxEntity(id: string, taxEntityId: string): Promise<AssetItem> {
+    const updated = await this.db
+      .update(astAsset)
+      .set({ taxEntityId, updatedAt: new Date() })
+      .where(eq(astAsset.id, id))
+      .returning({ id: astAsset.id });
+    if (updated.length === 0) throw new NotFoundException('资产不存在');
+    return this.getAssetById(id);
   }
 
   private async getAssetById(id: string): Promise<AssetItem> {

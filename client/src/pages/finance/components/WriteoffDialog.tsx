@@ -17,6 +17,7 @@
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useForm } from 'react-hook-form';
 import { toast } from 'sonner';
+import { Explained } from '@client/src/components/erp/ItemHelp';
 import { Button } from '@client/src/components/ui/button';
 import {
   Dialog,
@@ -157,10 +158,15 @@ const WriteoffDialog: React.FC<WriteoffDialogProps> = ({
               name="amount"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>
-                    核销金额（元）{' '}
-                    <span aria-hidden="true" className="text-destructive">*</span>
-                  </FormLabel>
+                  <Explained
+                    title="核销金额"
+                    content="本次用这笔已批准付款冲掉的应付金额。可以小于未付余额。不能超过未付金额。"
+                  >
+                    <FormLabel>
+                      核销金额（元）{' '}
+                      <span aria-hidden="true" className="text-destructive">*</span>
+                    </FormLabel>
+                  </Explained>
                   <FormControl>
                     <Input
                       type="number"

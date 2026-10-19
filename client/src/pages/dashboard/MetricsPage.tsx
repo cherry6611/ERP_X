@@ -9,6 +9,7 @@ import {
   FieldLabel,
   useFieldId,
 } from '@client/src/components/erp/FieldLabel';
+import { Explained } from '@client/src/components/erp/ItemHelp';
 import {
   Select,
   SelectContent,
@@ -221,7 +222,12 @@ const MetricsPage: React.FC = () => {
             <h3 className="text-base font-semibold">预警订阅</h3>
             <div className="grid items-end gap-3 rounded-lg border bg-card p-4 md:grid-cols-5">
               <div className="grid gap-1">
-                <FieldLabel>指标</FieldLabel>
+                <Explained
+                  title="指标"
+                  content="选择要盯的经营数字。告警按这个指标的当前值判断。"
+                >
+                  <FieldLabel>指标</FieldLabel>
+                </Explained>
                 <Select value={subMetricKey} onValueChange={setSubMetricKey}>
                   <SelectTrigger aria-label="预警订阅指标">
                     <SelectValue placeholder="选择指标" />
@@ -236,7 +242,12 @@ const MetricsPage: React.FC = () => {
                 </Select>
               </div>
               <div className="grid gap-1">
-                <FieldLabel>触发方向</FieldLabel>
+                <Explained
+                  title="触发方向"
+                  content="高于阈值告警，还是低于阈值告警。方向选反了，告警会反着响。"
+                >
+                  <FieldLabel>触发方向</FieldLabel>
+                </Explained>
                 <Select
                   value={subDirection}
                   onValueChange={(value) => setSubDirection(value as 'gt' | 'lt')}
@@ -251,7 +262,12 @@ const MetricsPage: React.FC = () => {
                 </Select>
               </div>
               <div className="grid gap-1">
-                <FieldLabel htmlFor={thresholdId}>阈值</FieldLabel>
+                <Explained
+                  title="阈值"
+                  content="指标越过这个数就告警。单位和所选指标一致，例如金额或百分比。"
+                >
+                  <FieldLabel htmlFor={thresholdId}>阈值</FieldLabel>
+                </Explained>
                 <Input
                   id={thresholdId}
                   inputMode="decimal"

@@ -181,11 +181,39 @@ export function CommandMenu({
         ) : null}
         <CommandGroup heading="快捷操作">
           <CommandItem
+            value="新建线索"
+            onSelect={() => go('/crm/leads/new', '新建线索')}
+          >
+            <Plus className="size-4" />
+            新建线索
+          </CommandItem>
+          <CommandItem
+            value="新建商机"
+            onSelect={() => go('/crm/opportunities/new', '新建商机')}
+          >
+            <Plus className="size-4" />
+            新建商机
+          </CommandItem>
+          <CommandItem
             value="新建合同"
-            onSelect={() => go('/contracts', '合同管理')}
+            onSelect={() => go('/contracts/new', '登记合同')}
           >
             <Plus className="size-4" />
             新建合同
+          </CommandItem>
+          <CommandItem
+            value="项目立项"
+            onSelect={() => go('/projects/new', '项目立项')}
+          >
+            <Plus className="size-4" />
+            项目立项
+          </CommandItem>
+          <CommandItem
+            value="登记发票"
+            onSelect={() => go('/finance/invoices/new', '发票登记')}
+          >
+            <Plus className="size-4" />
+            登记发票
           </CommandItem>
           <CommandItem
             value="刷新页面"

@@ -49,6 +49,7 @@ import { TableColumnsType } from 'antd';
 import { CanCapabilityWrite } from '@client/src/platform/auth';
 import { Badge } from '@client/src/components/ui/badge';
 import { Button } from '@client/src/components/ui/button';
+import { ColumnHelpTitle } from '@client/src/components/erp/ItemHelp';
 import { formatMoney } from '@client/src/utils/format';
 import { STATUS_VARIANTS } from '@client/src/utils/biz-labels';
 import { formatTaxSplitLine } from '@client/src/utils/tax-display';
@@ -172,7 +173,12 @@ export function invoiceColumns({
       ),
     },
     {
-      title: '查验状态',
+      title: (
+        <ColumnHelpTitle
+          title="查验状态"
+          content="查验只改变这张发票的税务状态。没有配置查验服务商时，系统只记录状态，不会连到税局。"
+        />
+      ),
       dataIndex: 'verifyStatus',
       width: 100,
       responsive: ['xxl'],
@@ -188,7 +194,12 @@ export function invoiceColumns({
       ),
     },
     {
-      title: '认证状态',
+      title: (
+        <ColumnHelpTitle
+          title="认证状态"
+          content="认证只对进项发票有意义，用来勾选抵扣。销项发票不能认证。没有配置服务时，只记录状态。"
+        />
+      ),
       dataIndex: 'certificationStatus',
       width: 110,
       responsive: ['xxl'],

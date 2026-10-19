@@ -14,6 +14,11 @@ import { ATTACHMENT_RESOURCE_TYPES } from '@shared/api.interface';
 import type { AttachmentResourceType } from '@shared/api.interface';
 import { ActorAccessService } from '@server/common/auth/actor-access.service';
 import type { RequestActor } from '@server/common/auth/actor';
+import {
+  applyTaxEntityScope,
+  DataScopeService,
+  type DataScopeResource,
+} from '@server/common/auth/data-scope.service';
 import { isAllowedFeishuUrl } from '@server/common/security/feishu-url';
 import { ProjectAclService } from '@server/modules/projects/project-acl.service';
 
@@ -58,6 +63,23 @@ const FINANCE_RESOURCES = new Set<AttachmentResourceType>([
   'erp_project_cost',
 ]);
 
+/** 财务只读不再无条件放行：这些单据按纳税主体配置收窄。未配置时仍全量。 */
+const FINANCE_TAX_SCOPE: Partial<Record<AttachmentResourceType, DataScopeResource>> = {
+  fin_voucher: 'voucher',
+  erp_invoice: 'finance_ledger',
+  erp_contract: 'contract',
+  fin_expense_claim: 'finance_ledger',
+  fin_expense_apply: 'finance_ledger',
+};
+
+const TAX_ENTITY_TABLES = new Set<AttachmentResourceType>([
+  'fin_voucher',
+  'erp_invoice',
+  'erp_contract',
+  'fin_expense_claim',
+  'fin_expense_apply',
+]);
+
 const HR_RESOURCES = new Set<AttachmentResourceType>(['hr_leave_request', 'hr_payroll']);
 
 const ADMIN_RESOURCES = new Set<AttachmentResourceType>([
@@ -70,7 +92,8 @@ export class ResourceAclService {
   constructor(
     @Inject(DRIZZLE_DATABASE) private readonly db: PostgresJsDatabase,
     private readonly actorAccess: ActorAccessService,
-    private readonly projectAcl: ProjectAclService
+    private readonly projectAcl: ProjectAclService,
+    private readonly dataScope: DataScopeService,
   ) {}
 
   async assertCanAccess(
@@ -102,6 +125,7 @@ export class ResourceAclService {
       FINANCE_RESOURCES.has(resourceType) &&
       (await this.actorAccess.hasAnyRole(actor.userId, ['finance_viewer']))
     ) {
+      await this.assertFinanceScope(actor, resourceType, resourceId);
       return;
     }
     if (
@@ -114,6 +138,61 @@ export class ResourceAclService {
       throw new ForbiddenException('无权访问该单据附件');
     }
     throw new ForbiddenException('无权访问该单据附件');
+  }
+
+  /**
+   * 财务只读角色下载附件时跟随行级配置。
+   * 范围是 all 或尚未配置时保持原来的全量放行；配成指定纳税主体后，单据主体不在名单里就拒绝。
+   */
+  private async assertFinanceScope(
+    actor: RequestActor,
+    resourceType: AttachmentResourceType,
+    resourceId: string,
+  ): Promise<void> {
+    if (resourceType === 'erp_project_cost') {
+      const resolved = await this.dataScope.resolveScope(actor.roles ?? [], 'cost');
+      if (resolved.from !== 'default' && resolved.scope !== 'all') {
+        throw new ForbiddenException('无权访问该单据附件');
+      }
+      return;
+    }
+    const resource = FINANCE_TAX_SCOPE[resourceType];
+    if (!resource) return;
+    const resolved = await this.dataScope.resolveScope(actor.roles ?? [], resource);
+    if (
+      resolved.from === 'default' ||
+      resolved.from === 'bypass' ||
+      resolved.scope === 'all'
+    ) {
+      return;
+    }
+    const filter = applyTaxEntityScope(resolved);
+    if (filter.kind === 'unrestricted') return;
+    if (filter.kind === 'denied') {
+      throw new ForbiddenException('无权访问该单据附件');
+    }
+    const taxEntityId = await this.taxEntityOf(resourceType, resourceId);
+    if (!taxEntityId || !filter.taxEntityIds.includes(taxEntityId)) {
+      throw new ForbiddenException('无权访问该单据附件');
+    }
+  }
+
+  private async taxEntityOf(
+    resourceType: AttachmentResourceType,
+    resourceId: string,
+  ): Promise<string | null> {
+    if (!TAX_ENTITY_TABLES.has(resourceType)) return null;
+    const tableName = RESOURCE_TABLE[resourceType];
+    const rows: unknown = await this.db.execute(
+      sql`SELECT tax_entity_id::text AS tax_entity_id
+          FROM ${sql.raw(`"${tableName}"`)}
+          WHERE id = ${resourceId}
+          LIMIT 1`,
+    );
+    const list = Array.isArray(rows)
+      ? (rows as { tax_entity_id: string | null }[])
+      : ((rows as { rows?: { tax_entity_id: string | null }[] }).rows ?? []);
+    return list[0]?.tax_entity_id ?? null;
   }
 
   assertFileUrl(fileUrl: string): void {

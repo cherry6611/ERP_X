@@ -26,6 +26,7 @@ import OverviewTab from './components/OverviewTab';
 import type { OverviewStat } from './components/dashboard-types';
 import { biApi, financeApi, finBudgetApi, hrApi } from '@client/src/api';
 import { useAsyncData } from '@client/src/hooks/useAsyncData';
+import { useAuth } from '@client/src/platform/auth';
 import { formatMoney, formatPercent } from '@client/src/utils/format';
 import { COST_TYPE_LABELS } from '@client/src/utils/biz-labels';
 import type {
@@ -88,6 +89,9 @@ const renderTrendDelta = (delta: number | undefined): React.ReactNode => {
  * ⚠️ 下面几条 F2 说明里写的「694 行」是拆分前的实测值，原文保留未改。
  */
 const DashboardPage: React.FC = () => {
+  const { hasCapability } = useAuth();
+  const canFinance = hasCapability('finance');
+  const canHr = hasCapability('hr');
   const [costBreakdowns, setCostBreakdowns] = useState<
     Record<string, BiProjectCostBreakdownItem[]>
   >({});
@@ -96,31 +100,37 @@ const DashboardPage: React.FC = () => {
     loading,
     error,
     reload,
-  } = useAsyncData(() => biApi.getBiOverview(), []);
+  } = useAsyncData(
+    () => (canFinance ? biApi.getBiOverview() : Promise.resolve(undefined)),
+    [canFinance],
+  );
   const { data: margins } = useAsyncData<ProjectMargin[]>(
-    () => biApi.getProjectMargins(),
-    [],
+    () => (canFinance ? biApi.getProjectMargins() : Promise.resolve([])),
+    [canFinance],
   );
   const { data: contributions } = useAsyncData<CustomerContribution[]>(
-    () => biApi.getCustomerContributions(),
-    [],
+    () => (canFinance ? biApi.getCustomerContributions() : Promise.resolve([])),
+    [canFinance],
   );
   const { data: trends } = useAsyncData<MonthlyTrend[]>(
-    () => biApi.getMonthlyTrends(),
-    [],
+    () => (canFinance ? biApi.getMonthlyTrends() : Promise.resolve([])),
+    [canFinance],
   );
   const { data: taxDistribution } = useAsyncData(
-    () => biApi.getTaxDistribution(),
-    []
+    () => (canFinance ? biApi.getTaxDistribution() : Promise.resolve([])),
+    [canFinance],
   );
-  const { data: aging } = useAsyncData<AgingBucket[]>(() => financeApi.getAging(), []);
+  const { data: aging } = useAsyncData<AgingBucket[]>(
+    () => (canFinance ? financeApi.getAging() : Promise.resolve([])),
+    [canFinance],
+  );
   const { data: hrOverview } = useAsyncData<HrOverview>(
-    () => hrApi.getHrOverview(),
-    [],
+    () => (canHr ? hrApi.getHrOverview() : Promise.resolve(undefined)),
+    [canHr],
   );
   const { data: budgetExecutions } = useAsyncData<BudgetExecution[]>(
-    () => finBudgetApi.getExecutions(),
-    [],
+    () => (canFinance ? finBudgetApi.getExecutions() : Promise.resolve([])),
+    [canFinance],
   );
 
   /*
@@ -347,6 +357,7 @@ const DashboardPage: React.FC = () => {
           value: formatMoney(overview.contractAmount),
           icon: FileText,
           tone: 'primary',
+          help: '全部合同的含税金额合计，不按月份切开。和财务报表不一致时，以报表为准。',
         },
         {
           label: '已确认收入',
@@ -354,6 +365,7 @@ const DashboardPage: React.FC = () => {
           icon: CircleDollarSign,
           tone: 'success',
           delta: renderTrendDelta(revenueDelta),
+          help: '状态为已确认的收入，减去已生效的调整，按不含税净额。还没开票的也算在这里。和报表不一致时，以报表为准。',
         },
         {
           label: '已归集成本',
@@ -361,6 +373,7 @@ const DashboardPage: React.FC = () => {
           icon: Coins,
           tone: 'warning',
           delta: renderTrendDelta(costDelta),
+          help: '已经记到项目成本上的金额。和报表不一致时，以报表为准。',
         },
         {
           label: '毛利 / 毛利率',
@@ -368,6 +381,7 @@ const DashboardPage: React.FC = () => {
           icon: Percent,
           tone: 'success',
           delta: renderTrendDelta(grossDelta),
+          help: '已确认收入减去已归集成本。收入为 0 时毛利率按 0。和报表不一致时，以报表为准。',
         },
         {
           label: '期间费用',
@@ -375,6 +389,7 @@ const DashboardPage: React.FC = () => {
           icon: Receipt,
           tone: 'info',
           delta: renderTrendDelta(periodExpenseDelta),
+          help: '没有进项目成本的工资分摊、资产分摊，以及已审批或已付款的行政缴费。和报表不一致时，以报表为准。',
         },
         {
           label: '营业利润',
@@ -388,24 +403,28 @@ const DashboardPage: React.FC = () => {
             ),
           icon: Landmark,
           tone: 'primary',
+          help: '毛利减去期间费用。亏损时数字显示为红色。和报表不一致时，以报表为准。',
         },
         {
           label: '应收余额',
           value: formatMoney(overview.openArAmount),
           icon: HandCoins,
           tone: 'neutral',
+          help: '未结清或部分结清的应收，金额减去已核销。已结清和已作废不计入。',
         },
         {
           label: '应付余额',
           value: formatMoney(overview.openApAmount),
           icon: CreditCard,
           tone: 'neutral',
+          help: '待审、已审或部分付款的应付，金额减去已付。',
         },
         {
           label: '活跃项目',
           value: String(overview.activeProjectCount),
           icon: Briefcase,
           tone: 'primary',
+          help: '立项、执行、交付、验收中的项目。已关闭和已取消不算。',
         },
         {
           label: '生效合同 / 客户数',
@@ -420,6 +439,9 @@ const DashboardPage: React.FC = () => {
 
   return (
     <PageShell title="经营看板" description="核心经营指标、趋势与分域概览">
+      {!canFinance && !canHr ? (
+        <p className="text-sm text-muted-foreground">当前账号没有财务或人事看板权限。</p>
+      ) : null}
       <DataState
         loading={loading}
         error={error}

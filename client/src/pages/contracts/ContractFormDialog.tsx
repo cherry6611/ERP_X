@@ -41,7 +41,7 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { useForm } from 'react-hook-form';
 import { toast } from 'sonner';
 import DateField from '@client/src/components/erp/DateField';
-import FieldHelp from '@client/src/components/erp/FieldHelp';
+import { Explained } from '@client/src/components/erp/ItemHelp';
 import ContractFormFooter from './components/ContractFormFooter';
 import { Button } from '@client/src/components/ui/button';
 import {
@@ -170,9 +170,8 @@ const ContractFormDialog: React.FC<ContractFormDialogProps> = ({
                * （`contract-update-guard.ts`），这里只提前说明，避免使用者
                * 反复调整客户后拿到一句看不懂的报错。
                */
-              <p className="text-xs text-muted-foreground">
-                该合同已非草稿：金额与客户仅在草稿状态可改（已开具的发票与已登记的应收挂在原客户上）；
-                名称、计费模式、负责人、日期与备注可直接修改。
+              <p className="text-[12px] leading-[18px] text-muted-foreground">
+                已非草稿：金额与客户不能改。
               </p>
             ) : null}
             <FormField
@@ -196,9 +195,14 @@ const ContractFormDialog: React.FC<ContractFormDialogProps> = ({
                 name="customerId"
                 render={({ field }) => (
                   <FormItem className="flex-1">
-                    <FormLabel>
-                      客户 <span aria-hidden="true" className="text-destructive">*</span>
-                    </FormLabel>
+                    <Explained
+                      title="客户"
+                      content="草稿里可以改。审批通过后不能再改客户，因为已开发票和已登记应收挂在原来的客户上。"
+                    >
+                      <FormLabel>
+                        客户 <span aria-hidden="true" className="text-destructive">*</span>
+                      </FormLabel>
+                    </Explained>
                     <Select
                       value={field.value}
                       onValueChange={(value) => {
@@ -243,9 +247,14 @@ const ContractFormDialog: React.FC<ContractFormDialogProps> = ({
                 name="billingModel"
                 render={({ field }) => (
                   <FormItem className="w-44">
-                    <FormLabel>
-                      计费模式 <span aria-hidden="true" className="text-destructive">*</span>
-                    </FormLabel>
+                    <Explained
+                      title="计费模式"
+                      content="标明按项目、按量、订阅还是框架结算。它不改变税率。"
+                    >
+                      <FormLabel>
+                        计费模式 <span aria-hidden="true" className="text-destructive">*</span>
+                      </FormLabel>
+                    </Explained>
                     <Select onValueChange={field.onChange} value={field.value}>
                       <FormControl>
                         <SelectTrigger>
@@ -271,10 +280,15 @@ const ContractFormDialog: React.FC<ContractFormDialogProps> = ({
                 name="amount"
                 render={({ field }) => (
                   <FormItem className="flex-1">
-                    <FormLabel>
-                      金额（含税）{' '}
-                      <span aria-hidden="true" className="text-destructive">*</span>
-                    </FormLabel>
+                    <Explained
+                      title="金额（含税）"
+                      content="合同的价税合计。草稿里可以改。审批通过后不能再改。"
+                    >
+                      <FormLabel>
+                        金额（含税）{' '}
+                        <span aria-hidden="true" className="text-destructive">*</span>
+                      </FormLabel>
+                    </Explained>
                     <FormControl>
                       <Input
                         type="number"
@@ -295,7 +309,12 @@ const ContractFormDialog: React.FC<ContractFormDialogProps> = ({
                 name="taxEntityId"
                 render={({ field }) => (
                   <FormItem className="flex-1">
-                    <FormLabel>纳税主体</FormLabel>
+                    <Explained
+                      title="纳税主体"
+                      content="决定这张合同默认能选哪些税率。留空时使用系统默认主体。客户如果绑定了主体，留空也会按那个主体校正税率。"
+                    >
+                      <FormLabel>纳税主体</FormLabel>
+                    </Explained>
                     <Select
                       value={field.value || '__default__'}
                       onValueChange={(value) => {
@@ -345,7 +364,12 @@ const ContractFormDialog: React.FC<ContractFormDialogProps> = ({
                   const rates = resolveRateOptions(entity);
                   return (
                     <FormItem className="w-36">
-                      <div className="flex items-center gap-1"><FormLabel>税率（%）</FormLabel><FieldHelp label="税率">按纳税主体默认档位带出；小规模与一般纳税人的可选档位不同。</FieldHelp></div>
+                      <Explained
+                        title="税率"
+                        content="按纳税主体的默认档位带出。小规模纳税人和一般纳税人可选的档位不同，单据上仍可以改。"
+                      >
+                        <FormLabel>税率（%）</FormLabel>
+                      </Explained>
                       <Select
                         value={String(field.value)}
                         onValueChange={(value) => field.onChange(Number(value))}
@@ -429,7 +453,12 @@ const ContractFormDialog: React.FC<ContractFormDialogProps> = ({
                 name="paymentTerms"
                 render={({ field }) => (
                   <FormItem className="flex-1">
-                    <FormLabel>付款条款</FormLabel>
+                    <Explained
+                      title="付款条款"
+                      content="约定客户怎么付款，例如验收后 30 天。这里只作记录，不自动生成应收。"
+                    >
+                      <FormLabel>付款条款</FormLabel>
+                    </Explained>
                     <FormControl>
                       <Input placeholder="如：验收后 30 天" {...field} />
                     </FormControl>
@@ -455,6 +484,7 @@ const ContractFormDialog: React.FC<ContractFormDialogProps> = ({
             <ContractFormFooter
               asPage={asPage}
               isEdit={Boolean(editTarget)}
+              submitting={form.formState.isSubmitting}
               onCancel={onCancel}
             />
           </form>

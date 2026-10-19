@@ -51,7 +51,7 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { useForm } from 'react-hook-form';
 import { z } from 'zod';
 import { toast } from 'sonner';
-import { contractsApi, projectsApi, purApi } from '@client/src/api';
+import { contractsApi, masterDataApi, projectsApi, purApi } from '@client/src/api';
 import { Button } from '@client/src/components/ui/button';
 import {
   Dialog,
@@ -97,6 +97,7 @@ const orderSchema = z.object({
   supplierId: z.string().min(1, '请选择供应商'),
   contractId: z.string(),
   projectId: z.string(),
+  taxEntityId: z.string(),
   itemName: z.string().min(1, '请填写采购品名'),
   category: z.string().min(1, '请选择采购类别'),
   quantity: z.coerce.number().int().min(1, '数量至少为 1'),
@@ -110,6 +111,7 @@ const EMPTY_FORM = {
   supplierId: '',
   contractId: '',
   projectId: '',
+  taxEntityId: '',
   itemName: '',
   category: 'service',
   quantity: 1,
@@ -161,6 +163,7 @@ const CreatePurOrderDialog: React.FC<CreatePurOrderDialogProps> = ({
    * 已批准的采购申请（服务端上限 100，故 pageSize 直接取 100）。
    * 过滤规则见 `../pur-order-rules`：approved 且未被非取消订单占用。
    */
+  const { data: taxEntities } = useAsyncData(() => masterDataApi.listTaxEntities(), []);
   const { data: approvedRequests } = useAsyncData(
     () => purApi.listRequests({ status: 'approved', pageSize: 100 }),
     [],
@@ -186,6 +189,7 @@ const CreatePurOrderDialog: React.FC<CreatePurOrderDialogProps> = ({
       supplierId: values.supplierId,
       contractId: values.contractId || undefined,
       projectId: values.projectId || undefined,
+      taxEntityId: values.taxEntityId || undefined,
       itemName: values.itemName,
       category: values.category as CreatePurOrderDto['category'],
       quantity: values.quantity,
@@ -431,6 +435,32 @@ const CreatePurOrderDialog: React.FC<CreatePurOrderDialogProps> = ({
                 )}
               />
             </div>
+            <FormField
+              control={form.control}
+              name="taxEntityId"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>我方纳税主体</FormLabel>
+                  <Select value={field.value || undefined} onValueChange={field.onChange}>
+                    <FormControl>
+                      <SelectTrigger>
+                        <SelectValue placeholder="默认用项目合同主体，可改" />
+                      </SelectTrigger>
+                    </FormControl>
+                    <SelectContent>
+                      {(taxEntities ?? [])
+                        .filter((entity) => entity.status === 'active')
+                        .map((entity) => (
+                          <SelectItem key={entity.id} value={entity.id}>
+                            {entity.name}
+                          </SelectItem>
+                        ))}
+                    </SelectContent>
+                  </Select>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
             <FormField
               control={form.control}
               name="remark"

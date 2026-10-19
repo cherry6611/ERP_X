@@ -4,6 +4,8 @@ interface PageShellProps {
   title: string;
   description?: string;
   actions?: React.ReactNode;
+  /** 标题行最右侧的页面说明，位于全部按钮之后 */
+  help?: React.ReactNode;
   children: React.ReactNode;
 }
 
@@ -11,30 +13,22 @@ const PageShell: React.FC<PageShellProps> = ({
   title,
   description,
   actions,
+  help,
   children,
 }) => (
-  <div className="mx-auto flex min-h-full w-full min-w-0 max-w-[1480px] flex-col gap-6 p-7">
+  <div className="mx-auto flex min-h-full w-full min-w-0 max-w-[1440px] flex-col gap-4 px-6 py-5">
     <div className="flex items-start justify-between gap-6">
       <div className="min-w-0">
-        {/*
-          P2-4（§5.10）：标题字号统一到规范值 `text-2xl`（24px）。
-          
-          原实现是 `text-[22px] leading-[30px]`，而 `AGENTS.md` 的排版规范写的是
-          「页面标题 `text-2xl font-semibold`」。2px 的差异本身无关紧要，
-          真正的问题是**规范与实现不一致**：这让"规范可 grep 验证"这件事失效 ——
-          按规范搜 `text-2xl` 会得出"没有一个页面符合规范"的错误结论，
-          而按 `text-[22px]` 搜又会得出"规范写错了"。
-          
-          Tailwind 的 `text-2xl` 自带 `line-height: 2rem`(32px)，比原来的 30px
-          略松，与 `text-2xl` + `tracking-tight` 的观感更一致。
-        */}
-        <h1 className="text-2xl font-semibold tracking-tight">{title}</h1>
+        <h1 className="text-xl font-semibold tracking-tight">{title}</h1>
         {description ? (
-          <p className="mt-1 text-sm text-muted-foreground">{description}</p>
+          <p className="mt-1 text-[13px] leading-5 text-muted-foreground">{description}</p>
         ) : null}
       </div>
-      {actions ? (
-        <div className="flex max-w-full shrink-0 flex-wrap items-center justify-end gap-2">{actions}</div>
+      {actions || help ? (
+        <div className="flex max-w-full shrink-0 flex-wrap items-center justify-end gap-2">
+          {actions}
+          {help}
+        </div>
       ) : null}
     </div>
     {children}

@@ -41,6 +41,7 @@ import {
   FormLabel,
   FormMessage,
 } from '@/components/ui/form';
+import { Explained } from '@client/src/components/erp/ItemHelp';
 import { Input } from '@/components/ui/input';
 import {
   Select,
@@ -160,7 +161,12 @@ const ApDialog: React.FC<ApDialogProps> = ({
                 name="dueDate"
                 render={({ field }) => (
                   <FormItem className="flex-1">
-                    <FormLabel>到期日</FormLabel>
+                    <Explained
+                      title="到期日"
+                      content="账龄和付款提醒从这一天起算。不填时，这笔未付应付不按逾期计算。"
+                    >
+                      <FormLabel>到期日</FormLabel>
+                    </Explained>
                     <DateField value={field.value} onChange={field.onChange} />
                     <FormMessage />
                   </FormItem>
@@ -181,7 +187,7 @@ const ApDialog: React.FC<ApDialogProps> = ({
               )}
             />
             <DialogFooter>
-              <Button type="submit">提交登记</Button>
+              <Button type="submit" disabled={apForm.formState.isSubmitting}>提交登记</Button>
             </DialogFooter>
           </form>
         </Form>

@@ -3,8 +3,7 @@ import { toast } from 'sonner';
 import { AlertTriangle, PlayCircle, RefreshCw } from 'lucide-react';
 import PageShell from '@client/src/components/PageShell';
 import FilterBar from '@client/src/components/erp/FilterBar';
-import ActionHelp from '@client/src/components/erp/ActionHelp';
-import ActionGroup from '@client/src/components/erp/ActionGroup';
+import ButtonHelp from '@client/src/components/erp/ButtonHelp';
 import PeriodSelect from '@client/src/components/erp/PeriodSelect';
 import { Button } from '@client/src/components/ui/button';
 import {
@@ -191,12 +190,9 @@ const YearEndPage: React.FC = () => {
          * 它应当与其余筛选控件分开、位置固定、更醒目。
          */
         <CanCapabilityWrite capability="finance_write">
-          <ActionGroup
-            help={
-              <ActionHelp title="执行年结结转">
-                结转损益并关闭当前年度，执行后账务期间会锁定；反年结需要单独发起并填写原因。
-              </ActionHelp>
-            }
+          <ButtonHelp
+            title="执行年结结转"
+            content="先看结转预览，再执行。结转损益并关闭当前年度，凭证由系统在同一事务里生成。执行后该年度的账务期间会锁定，不能再改该年度的凭证。反年结要另外发起，并填写原因。"
           >
             <Button
               type="button"
@@ -206,7 +202,7 @@ const YearEndPage: React.FC = () => {
               <PlayCircle className="size-4" />
               {carrying ? '结转中…' : '执行年结结转'}
             </Button>
-          </ActionGroup>
+          </ButtonHelp>
         </CanCapabilityWrite>
       }
     >

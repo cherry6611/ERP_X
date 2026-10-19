@@ -77,3 +77,36 @@ export function round2(value: number): number {
   const result = Number(`${intPart}.${kept}`);
   return negative ? -result : result;
 }
+
+/**
+ * 把金额换成整数分，供借贷比较和差额判断。
+ * 先走 `round2`，避免 `1.005` 在浮点下变成 100 分。
+ * 非有限数返回 null，调用方必须拒绝，不能当成 0。
+ */
+export function yuanToCents(value: number | string | null | undefined): bigint | null {
+  if (value == null || value === '') return 0n;
+  const numeric = typeof value === 'number' ? value : Number(String(value).trim());
+  const rounded = round2(numeric);
+  if (!Number.isFinite(rounded)) return null;
+  const text = rounded.toFixed(2);
+  const negative = text.startsWith('-');
+  const [whole, frac] = (negative ? text.slice(1) : text).split('.');
+  const cents = BigInt(whole || '0') * 100n + BigInt(frac || '0');
+  return negative ? -cents : cents;
+}
+
+/** 分转成两位小数字符串，用于落库，避免 `String(0.1+0.2)`。 */
+export function centsToYuanText(cents: bigint): string {
+  const negative = cents < 0n;
+  const abs = negative ? -cents : cents;
+  const whole = abs / 100n;
+  const frac = (abs % 100n).toString().padStart(2, '0');
+  return `${negative ? '-' : ''}${whole}.${frac}`;
+}
+
+/** 金额落库文本。无法换算时返回 null。 */
+export function moneyText(value: number | string | null | undefined): string | null {
+  const cents = yuanToCents(value);
+  if (cents == null) return null;
+  return centsToYuanText(cents);
+}

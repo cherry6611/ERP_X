@@ -162,7 +162,7 @@ export const ROUTE_CAPABILITY_RULES: RouteCapabilityRule[] = [
     prefix: 'api/data-asset',
     read: 'data_asset',
     write: null,
-    note: '数据资产：已从 audit 分离为独立能力码（仍仅 admin —— 该模块无行级范围）',
+    note: '数据资产：仍仅 admin。读接口已按项目可见合同收窄，放开角色前不要删掉这层过滤',
   },
   {
     prefix: 'api/notifications',

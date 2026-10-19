@@ -28,6 +28,7 @@ import React from 'react';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useForm } from 'react-hook-form';
 import { toast } from 'sonner';
+import { Explained } from '@client/src/components/erp/ItemHelp';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -273,7 +274,12 @@ const InvoiceFormDialog: React.FC<InvoiceFormDialogProps> = ({
                 name="arId"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>关联应收（可选）</FormLabel>
+                    <Explained
+                      title="关联应收"
+                      content="把这张销项发票挂到一笔应收上，方便以后核销。可以不选。"
+                    >
+                      <FormLabel>关联应收（可选）</FormLabel>
+                    </Explained>
                     <Select onValueChange={field.onChange} value={field.value}>
                       <FormControl>
                         <SelectTrigger>
@@ -368,7 +374,12 @@ const InvoiceFormDialog: React.FC<InvoiceFormDialogProps> = ({
                 const rates = resolveRateOptions(entity);
                 return (
                   <FormItem>
-                    <FormLabel>税率（%）</FormLabel>
+                    <Explained
+                      title="税率"
+                      content="按合同所属纳税主体的默认档位带出。小规模纳税人和一般纳税人可选档位不同。"
+                    >
+                      <FormLabel>税率（%）</FormLabel>
+                    </Explained>
                     <Select
                       value={String(field.value)}
                       onValueChange={(value) => field.onChange(Number(value))}

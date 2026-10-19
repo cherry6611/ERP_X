@@ -371,6 +371,7 @@ export const erpAdminRentContract = pgTable("erp_admin_rent_contract", {
   endDate: date("end_date").notNull(),
   paymentCycle: varchar("payment_cycle", { length: 20 }).notNull().default('monthly'),
   status: varchar("status", { length: 20 }).notNull().default('draft'),
+  taxEntityId: uuid("tax_entity_id"),
   remark: text("remark"),
   // System field: Creation time (auto-filled, do not modify)
   createdAt: customTimestamptz("_created_at", { precision: 3 }).notNull().default(sql`CURRENT_TIMESTAMP`),
@@ -637,6 +638,8 @@ export const astAsset = pgTable("ast_asset", {
   netValue: numeric("net_value", { precision: 18, scale: 2 }).default('0'),
   departmentId: uuid("department_id"),
   projectId: uuid("project_id"),
+  /** 我方纳税主体。合同已有主体时折旧以合同为准；多主体且合同无主体时必填。 */
+  taxEntityId: uuid("tax_entity_id"),
   purchaseOrderId: uuid("purchase_order_id"),
   purchaseDate: date("purchase_date"),
   usefulMonths: integer("useful_months").default(36),
@@ -748,6 +751,7 @@ export const purOrder = pgTable("pur_order", {
   contractId: uuid("contract_id"),
   supplierId: uuid("supplier_id"),
   projectId: uuid("project_id"),
+  taxEntityId: uuid("tax_entity_id"),
   itemName: varchar("item_name", { length: 200 }).notNull(),
   category: varchar("category", { length: 20 }).default('service'),
   quantity: integer("quantity").default(1),
@@ -1171,6 +1175,8 @@ export const finExpenseClaim = pgTable("fin_expense_claim", {
   applyId: uuid("apply_id"),
   departmentId: uuid("department_id"),
   projectId: uuid("project_id"),
+  /** 我方纳税主体。无项目且多主体时必填；有项目时以合同主体为准。 */
+  taxEntityId: uuid("tax_entity_id"),
   expenseCategory: varchar("expense_category", { length: 50 }),
   amount: numeric("amount", { precision: 18, scale: 2 }).default('0'),
   expenseDate: date("expense_date"),
@@ -1201,6 +1207,8 @@ export const finExpenseApply = pgTable("fin_expense_apply", {
   title: varchar("title", { length: 200 }).notNull(),
   departmentId: uuid("department_id"),
   projectId: uuid("project_id"),
+  /** 我方纳税主体。无项目且多主体时必填；有项目时以合同主体为准。 */
+  taxEntityId: uuid("tax_entity_id"),
   expenseCategory: varchar("expense_category", { length: 50 }),
   amount: numeric("amount", { precision: 18, scale: 2 }).default('0'),
   expectDate: date("expect_date"),
@@ -1622,6 +1630,8 @@ export const erpInvoice = pgTable("erp_invoice", {
   supplierId: uuid("supplier_id"),
   /** C-05：红字发票与来源单据的关联键（如 `sales-return:SRT2026100001`） */
   sourceRef: varchar("source_ref", { length: 100 }),
+  /** 登记表单的幂等键。同一键重试返回已有发票。 */
+  clientRequestId: varchar("client_request_id", { length: 64 }),
   /** C-01：发票查验状态（unverified/verifying/verified/failed），默认未查验 */
   verifyStatus: varchar("verify_status", { length: 20 }).notNull().default("unverified"),
   /** C-01：最近一次查验完成时间 */
@@ -1659,6 +1669,9 @@ export const erpInvoice = pgTable("erp_invoice", {
     WHEN (current_setting('app.user_id'::text, true) = ''::text) THEN NULL`),
 }, (table) => [
   uniqueIndex("uq_erp_invoice_code").on(table.code),
+  uniqueIndex("uq_erp_invoice_client_request")
+    .on(table.clientRequestId)
+    .where(sql`${table.clientRequestId} IS NOT NULL`),
   index("idx_erp_invoice_contract").on(table.contractId),
   index("idx_erp_invoice_project").on(table.projectId),
   index("idx_erp_invoice_ap").on(table.apId),
@@ -2202,6 +2215,7 @@ export const erpProjectCost = pgTable("erp_project_cost", {
   remark: text("remark"),
   departmentId: uuid("department_id"),
   contractId: uuid("contract_id"),
+  taxEntityId: uuid("tax_entity_id"),
   isAccrual: integer("is_accrual").notNull().default(0),
   offsetOf: uuid("offset_of"),
   // System field: Creation time (auto-filled, do not modify)
@@ -2326,10 +2340,6 @@ export const erpProject = pgTable("erp_project", {
   uniqueIndex("uq_erp_project_code").on(table.code),
   index("idx_erp_project_contract").on(table.contractId),
   index("idx_erp_project_won_quotation").on(table.wonQuotationId),
-  // 一份合同只能立项一次（SQL 迁移已建，此处补声明防被 push 删除）
-  uniqueIndex("uq_erp_project_one_contract")
-    .on(table.contractId)
-    .where(sql`${table.contractId} IS NOT NULL`),
   index("idx_project_embedding").using("hnsw", table.embedding),
 ]);
 

@@ -90,6 +90,10 @@ export class CreatePurOrderDto implements ICreatePurOrderDto {
   @IsUUID()
   projectId?: string;
 
+  @IsOptional()
+  @IsUUID()
+  taxEntityId?: string;
+
   @IsString()
   @IsNotEmpty()
   itemName!: string;

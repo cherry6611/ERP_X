@@ -11,6 +11,7 @@ import {
   type PostgresJsDatabase,
 } from '@server/platform';
 import { and, count, desc, eq, ne, sql, sum } from 'drizzle-orm';
+import { resolveDocumentTaxEntity } from '@server/common/tax/document-tax-entity';
 import {
   astAsset,
   erpApBill,
@@ -410,6 +411,11 @@ export class PurService {
       );
     }
 
+    const taxEntityId = await resolveDocumentTaxEntity(this.db, {
+      projectId: dto.projectId,
+      taxEntityId: dto.taxEntityId,
+      kind: 'expense',
+    });
     const code = await generateBizCode(this.db, purOrder, purOrder.code, 'PO');
     const inserted = await this.db.transaction(async (tx) => {
       // F4X-7：必须关联已批准采购申请，且一申请一有效订单
@@ -452,7 +458,11 @@ export class PurService {
       // F5：合同额度校验加行锁，防并发超额穿透
       if (dto.contractId) {
         const contractRows = await tx
-          .select({ code: erpContract.code, amount: erpContract.amount })
+          .select({
+            code: erpContract.code,
+            amount: erpContract.amount,
+            billingModel: erpContract.billingModel,
+          })
           .from(erpContract)
           .where(eq(erpContract.id, dto.contractId))
           .for('update');
@@ -478,7 +488,9 @@ export class PurService {
          * 全仓另 5 处同类内联写法已统一迁移到 `round2`；本处与项目权重闸门是遗漏。
          */
         const cumulative = round2(orderedAmount + amount);
-        if (cumulative > contractAmount + 0.001) {
+        const unlimited =
+          contractRows[0].billingModel === 'framework' && contractAmount <= 0;
+        if (!unlimited && cumulative > contractAmount + 0.001) {
           throw new BadRequestException(
             `采购订单金额超出合同额度：合同 ${contractRows[0].code} ` +
               `总额 ${contractAmount.toFixed(2)}，已下单 ${orderedAmount.toFixed(2)}，` +
@@ -496,6 +508,7 @@ export class PurService {
           contractId: dto.contractId,
           supplierId: dto.supplierId,
           projectId: dto.projectId,
+          taxEntityId,
           itemName: dto.itemName,
           category: dto.category,
           quantity: dto.quantity,
@@ -548,6 +561,8 @@ export class PurService {
     let voucherAmount = 0;
     let voucherSupplierId = '';
     let voucherTaxRate: number | null = null;
+    let voucherTaxEntityId: string | null = null;
+    let voucherProjectId: string | null = null;
     let acceptDate = todayInShanghai();
     let orderCode = '';
     let capitalizeAsset = false;
@@ -590,6 +605,8 @@ export class PurService {
       const projectId = order.projectId;
       const category = order.category ?? 'service';
       voucherAmount = amount;
+      voucherTaxEntityId = order.taxEntityId ?? null;
+      voucherProjectId = order.projectId ?? null;
       voucherSupplierId = supplierId;
       voucherTaxRate =
         order.taxRate != null && Number.isFinite(Number(order.taxRate))
@@ -714,9 +731,15 @@ export class PurService {
     if (voucherAmount > 0) {
       try {
         // U-02：优先订单 taxRate 作为 TaxResolver upstream
+        const entityId = await resolveDocumentTaxEntity(this.db, {
+          projectId: voucherProjectId,
+          taxEntityId: voucherTaxEntityId,
+          kind: 'expense',
+        });
         const resolved = await this.taxResolver.resolve({
           upstream: voucherTaxRate,
           supplierId: voucherSupplierId || undefined,
+          taxEntityId: entityId,
           side: 'input',
         });
         await this.voucherHookService.generateVoucherDraft({
@@ -724,6 +747,7 @@ export class PurService {
           sourceRef: `ap:${apCode}`,
           voucherDate: acceptDate,
           summary: `采购验收 ${orderCode}`,
+          taxEntityId: entityId ?? undefined,
           // F4X-8：设备资本化走 1601，不进当期管理费用
           lines: capitalizeAsset
             ? inputCapitalizeLines(voucherAmount, resolved.rate)

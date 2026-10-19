@@ -10,8 +10,12 @@ import { generateBizCode } from '@server/common/utils/biz-code';
 import { unwrapRows } from '@server/common/utils/rows';
 import { todayInShanghai } from '@server/common/utils/biz-date';
 import { assertFiscalYearOpen } from '@server/common/utils/period-guard';
-import { resolveVoucherTaxEntityId } from '@server/common/tax/tax-entity-resolver';
+import {
+  listActiveTaxEntityIds,
+  resolveVoucherTaxEntityId,
+} from '@server/common/tax/tax-entity-resolver';
 import { AccountResolverService, type ResolvedAccount } from './account-resolver.service';
+import { centsToYuanText, yuanToCents } from '@shared/number';
 
 export interface VoucherHookLine {
   accountCode: string;
@@ -106,14 +110,21 @@ export class VoucherHookService {
       // P0-3：会计年度已年结则该年度期间只读（月结与年结是两套闸门，必须都接线）
       await assertFiscalYearOpen(db, period);
 
-      let totalDebit = 0;
-      let totalCredit = 0;
+      let totalDebit = 0n;
+      let totalCredit = 0n;
       for (const line of params.lines) {
-        totalDebit += Number(line.debit ?? 0);
-        totalCredit += Number(line.credit ?? 0);
+        const debit = yuanToCents(line.debit ?? 0);
+        const credit = yuanToCents(line.credit ?? 0);
+        if (debit == null || credit == null) {
+          return fail('分录金额无法换算到分');
+        }
+        totalDebit += debit;
+        totalCredit += credit;
       }
-      if (Math.round(totalDebit * 100) !== Math.round(totalCredit * 100)) {
-        return fail(`借贷不平衡（借 ${totalDebit} / 贷 ${totalCredit}）`);
+      if (totalDebit !== totalCredit) {
+        return fail(
+          `借贷不平衡（借 ${centsToYuanText(totalDebit)} / 贷 ${centsToYuanText(totalCredit)}）`,
+        );
       }
 
       const existing = await db
@@ -137,6 +148,12 @@ export class VoucherHookService {
         sourceRef: params.sourceRef,
         sourceType: params.sourceType,
       });
+      if (!taxEntityId) {
+        const active = await listActiveTaxEntityIds(db);
+        // 还没有任何启用主体时保持旧行为（凭证主体留空），避免空库无法记账。
+        // 一旦存在启用主体，推不出归属就不再落默认主体，也不插入无主体凭证。
+        if (active.length > 0) return fail('未归属纳税主体');
+      }
 
       const code = await generateBizCode(db, finVoucher, finVoucher.code, 'VCH');
       const writeVoucher = async (target: PostgresJsDatabase) => {
@@ -234,7 +251,9 @@ export class VoucherHookService {
    * 则表现为嵌套事务冲突。现在拆成两步：短事务内「认领」并立即提交，
    * 事务外再做重放。
    */
-  async retryPendingJobs(limit = 20): Promise<{ retried: number; dead: number }> {
+  async retryPendingJobs(
+    limit = 20,
+  ): Promise<{ retried: number; dead: number; deadSourceRefs: string[] }> {
     type JobRow = {
       id: string;
       source_type: string;
@@ -250,7 +269,7 @@ export class VoucherHookService {
         FROM comp_voucher_job
         WHERE (
                 (
-                  status = 'failed'
+                  status IN ('failed', 'pending')
                   AND (next_retry_at IS NULL OR next_retry_at <= CURRENT_TIMESTAMP)
                 )
                 OR (
@@ -277,6 +296,7 @@ export class VoucherHookService {
 
     let retried = 0;
     let dead = 0;
+    const deadSourceRefs: string[] = [];
     for (const job of claimed) {
       let params: VoucherDraftParams | null = null;
       try {
@@ -295,14 +315,26 @@ export class VoucherHookService {
           WHERE id = ${job.id}
         `);
         dead += 1;
+        deadSourceRefs.push(job.source_ref);
         continue;
       }
       const result = await this.generateVoucherDraft(params);
       if (result === 'created') {
         retried += 1;
+      } else if (result === 'failed') {
+        const attempts = Number(job.attempts ?? 0) + 1;
+        if (attempts >= 8) {
+          await this.db.execute(sql`
+            UPDATE comp_voucher_job
+            SET status = 'dead', updated_at = CURRENT_TIMESTAMP
+            WHERE id = ${job.id} AND status <> 'done'
+          `);
+          dead += 1;
+          deadSourceRefs.push(job.source_ref);
+        }
       }
     }
-    return { retried, dead };
+    return { retried, dead, deadSourceRefs };
   }
 
   /**
@@ -319,9 +351,97 @@ export class VoucherHookService {
   }> {
     const result = await this.retryPendingJobs(50);
     this.logger.log(
-      `凭证补偿对账完成：重试 ${result.retried} 笔 / 标记 dead ${result.dead} 笔`,
+      `凭证补偿对账完成：重试 ${result.retried} 笔 / 标记 dead ${result.dead} 笔 / ${result.deadSourceRefs.join(',')}`,
     );
     return result;
+  }
+
+  /**
+   * 业务事务内先占一条待生成记录。进程在凭证写出之前退出时，队列里已经有这张单，
+   * 重试会在 next_retry_at 之后接手。成功写出后由 clearFailure 标成 done。
+   */
+  async reserveCompensation(
+    db: PostgresJsDatabase,
+    params: VoucherDraftParams,
+    reason: string,
+  ): Promise<void> {
+    if (!params.lines?.length) {
+      this.logger.error(
+        `补偿预留缺少分录，跳过入队 source=${params.sourceType}:${params.sourceRef}`,
+      );
+      return;
+    }
+    await db.execute(sql`
+      INSERT INTO comp_voucher_job (
+        source_type, source_ref, status, last_error, payload, attempts, next_retry_at, updated_at
+      ) VALUES (
+        ${params.sourceType},
+        ${params.sourceRef},
+        'pending',
+        ${reason},
+        ${JSON.stringify({ ...params, voucherDate: params.voucherDate.slice(0, 10) })},
+        0,
+        CURRENT_TIMESTAMP + interval '2 minutes',
+        CURRENT_TIMESTAMP
+      )
+      ON CONFLICT (source_type, source_ref) DO UPDATE
+      SET payload = EXCLUDED.payload,
+          last_error = EXCLUDED.last_error,
+          status = CASE
+            WHEN comp_voucher_job.status = 'done' THEN 'done'
+            ELSE 'pending'
+          END,
+          next_retry_at = CASE
+            WHEN comp_voucher_job.status = 'done' THEN comp_voucher_job.next_retry_at
+            ELSE CURRENT_TIMESTAMP + interval '2 minutes'
+          END,
+          updated_at = CURRENT_TIMESTAMP
+    `);
+  }
+
+  async summarizeQueue(): Promise<{
+    pending: number;
+    processing: number;
+    failed: number;
+    dead: number;
+    items: Array<{ sourceRef: string; sourceType: string; status: string; lastError: string | null }>;
+  }> {
+    const counts = unwrapRows<{ status: string; total: number }>(
+      await this.db.execute(sql`
+        SELECT status, count(*)::int AS total
+        FROM comp_voucher_job
+        GROUP BY status
+      `),
+    );
+    const tally = { pending: 0, processing: 0, failed: 0, dead: 0 };
+    for (const row of counts) {
+      if (row.status === 'pending' || row.status === 'processing' || row.status === 'failed' || row.status === 'dead') {
+        tally[row.status] = Number(row.total ?? 0);
+      }
+    }
+    const items = unwrapRows<{
+      source_ref: string;
+      source_type: string;
+      status: string;
+      last_error: string | null;
+    }>(
+      await this.db.execute(sql`
+        SELECT source_ref, source_type, status, last_error
+        FROM comp_voucher_job
+        WHERE status IN ('pending', 'processing', 'failed', 'dead')
+        ORDER BY updated_at DESC
+        LIMIT 50
+      `),
+    );
+    return {
+      ...tally,
+      items: items.map((row) => ({
+        sourceRef: row.source_ref,
+        sourceType: row.source_type,
+        status: row.status,
+        lastError: row.last_error,
+      })),
+    };
   }
 
   /** 将失败记入重试队列。表不存在时只打日志。 */

@@ -44,7 +44,10 @@ import {
   type TaxEntityFilter,
 } from '@server/common/auth/data-scope.service';
 import { unwrapRows } from '@server/common/utils/rows';
-import { resolveVoucherTaxEntityId } from '@server/common/tax/tax-entity-resolver';
+import {
+  listActiveTaxEntityIds,
+  resolveVoucherTaxEntityId,
+} from '@server/common/tax/tax-entity-resolver';
 import { assertFiscalYearOpen, assertPeriodOpen as assertPeriodOpenGuard } from '@server/common/utils/period-guard';
 import { round2 } from '@server/common/utils/number';
 import type {
@@ -722,6 +725,9 @@ export class VoucherService {
     // 与 AGENTS.md 的「新增外部 IO 必须在事务外」同源 —— **读多张表的推导逻辑
     // 不应占用写事务**，否则事务持有时间无谓变长，锁竞争加剧。
     const taxEntityId = await this.resolveTaxEntityId(dto);
+    if (!taxEntityId && (await listActiveTaxEntityIds(this.db)).length > 0) {
+      throw new BadRequestException('请选择我方纳税主体');
+    }
     await this.db.transaction(async (tx) => {
       const inserted = await tx
         .insert(finVoucher)

@@ -14,4 +14,5 @@ export type OverviewStat = {
   icon: LucideIcon;
   tone: 'primary' | 'success' | 'warning' | 'info' | 'neutral';
   delta?: React.ReactNode;
+  help?: React.ReactNode;
 };

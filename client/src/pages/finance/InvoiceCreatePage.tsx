@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo } from 'react';
+import React, { useEffect, useMemo, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useForm } from 'react-hook-form';
@@ -7,7 +7,7 @@ import { toast } from 'sonner';
 import { ArrowLeft } from 'lucide-react';
 import PageShell from '@client/src/components/PageShell';
 import StickyActionBar from '@client/src/components/erp/StickyActionBar';
-import FieldHelp from '@client/src/components/erp/FieldHelp';
+import { Explained } from '@client/src/components/erp/ItemHelp';
 import { Button } from '@client/src/components/ui/button';
 import {
   Form,
@@ -143,6 +143,8 @@ const InvoiceCreatePage: React.FC = () => {
     }),
   );
 
+  const clientRequestId = useRef(crypto.randomUUID());
+
   const onSubmit = form.handleSubmit(async (values) => {
     const dto: CreateInvoiceDto = {
       direction: values.direction,
@@ -159,6 +161,7 @@ const InvoiceCreatePage: React.FC = () => {
       invoiceNo: values.invoiceNo || undefined,
       invoiceDate: values.invoiceDate || undefined,
       remark: values.remark || undefined,
+      clientRequestId: clientRequestId.current,
     };
     try {
       const created = await financeApi.createInvoice(dto);
@@ -198,7 +201,12 @@ const InvoiceCreatePage: React.FC = () => {
               name="direction"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>方向</FormLabel>
+                  <Explained
+                    title="方向"
+                    content="销项是对外开出的发票，要选合同。进项是收到的发票，要选供应商。作废会释放这张发票占用的可开票金额，不能恢复。"
+                  >
+                    <FormLabel>方向</FormLabel>
+                  </Explained>
                   <Select onValueChange={field.onChange} value={field.value}>
                     <FormControl>
                       <SelectTrigger>
@@ -280,7 +288,12 @@ const InvoiceCreatePage: React.FC = () => {
               name="invoiceType"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>发票类型</FormLabel>
+                  <Explained
+                    title="发票类型"
+                    content="专票、普票或电子发票，只影响票面类型，不改变能选的税率档位。"
+                  >
+                    <FormLabel>发票类型</FormLabel>
+                  </Explained>
                   <Select onValueChange={field.onChange} value={field.value}>
                     <FormControl>
                       <SelectTrigger>
@@ -303,7 +316,12 @@ const InvoiceCreatePage: React.FC = () => {
                 name="amount"
                 render={({ field }) => (
                   <FormItem className="flex-1">
-                    <FormLabel>开票金额（含税）</FormLabel>
+                    <Explained
+                      title="开票金额（含税）"
+                      content="这张发票的价税合计。下面一行是按当前税率拆出的不含税金额和税额。"
+                    >
+                      <FormLabel>开票金额（含税）</FormLabel>
+                    </Explained>
                     <FormControl>
                       <Input
                         type="number"
@@ -328,7 +346,12 @@ const InvoiceCreatePage: React.FC = () => {
                 name="taxRate"
                 render={({ field }) => (
                   <FormItem className="w-28">
-                    <div className="flex items-center gap-1"><FormLabel>税率 %</FormLabel><FieldHelp label="税率">按纳税主体默认档位带出，可选档位随主体类型变化。</FieldHelp></div>
+                    <Explained
+                      title="税率"
+                      content="按合同所属纳税主体的默认档位带出。小规模纳税人和一般纳税人可选档位不同。"
+                    >
+                      <FormLabel>税率 %</FormLabel>
+                    </Explained>
                     <Select
                       value={String(field.value)}
                       onValueChange={(v) => field.onChange(Number(v))}
@@ -357,7 +380,12 @@ const InvoiceCreatePage: React.FC = () => {
                 name="arId"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>关联应收（可选）</FormLabel>
+                    <Explained
+                      title="关联应收"
+                      content="把这张销项发票挂到一笔应收上，方便以后核销。可以不选。"
+                    >
+                      <FormLabel>关联应收（可选）</FormLabel>
+                    </Explained>
                     <Select onValueChange={field.onChange} value={field.value}>
                       <FormControl>
                         <SelectTrigger>
@@ -431,7 +459,9 @@ const InvoiceCreatePage: React.FC = () => {
               >
                 取消
               </Button>
-              <Button type="submit">保存</Button>
+              <Button type="submit" disabled={form.formState.isSubmitting}>
+                {form.formState.isSubmitting ? '保存中' : '保存'}
+              </Button>
             </StickyActionBar>
           </form>
         </Form>

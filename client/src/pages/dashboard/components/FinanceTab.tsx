@@ -1,4 +1,5 @@
 import React from 'react';
+import { ColumnHelpTitle } from '@client/src/components/erp/ItemHelp';
 import { EChart } from '@client/src/components/EChart';
 import type { EChartsOption } from 'echarts';
 import { Table, TableColumnsType } from 'antd';
@@ -88,20 +89,35 @@ const FinanceTab: React.FC<FinanceTabProps> = ({
       ),
     },
     {
-      title: '毛利率',
+      title: (
+        <ColumnHelpTitle
+          title="毛利率"
+          content="毛利除以已确认收入。收入为 0 时按 0。和报表不一致时，以报表为准。"
+        />
+      ),
       dataIndex: 'marginRate',
       width: 100,
       render: (v: number) => formatPercent(v),
     },
     {
-      title: '分摊固定成本',
+      title: (
+        <ColumnHelpTitle
+          title="分摊固定成本"
+          content="分到这个项目上的工资、折旧等固定成本。"
+        />
+      ),
       dataIndex: 'allocatedFixedCost',
       width: 140,
       align: 'right',
       render: (v: number) => formatMoney(v),
     },
     {
-      title: '贡献净额',
+      title: (
+        <ColumnHelpTitle
+          title="贡献净额"
+          content="毛利再减去分摊到项目上的固定成本。用来看这个项目扣掉公共费用后还剩多少。"
+        />
+      ),
       dataIndex: 'contributionMargin',
       width: 140,
       align: 'right',
@@ -202,6 +218,7 @@ const FinanceTab: React.FC<FinanceTabProps> = ({
                   icon={card.icon}
                   tone={card.tone}
                   delta={card.delta}
+                  help={card.help}
                 />
               </div>
             ))}

@@ -50,3 +50,37 @@ export function computeBillable(
   );
   return round2((Number(contractAmount) || 0) - invoiced);
 }
+
+/**
+ * 框架合同销项额度。
+ * 头金额为 0：只按本项目已确认收入。
+ * 头金额大于 0：还要受合同总额约束。
+ */
+export function decideFrameworkSalesLimit(input: {
+  headerAmount: number;
+  invoiceAmount: number;
+  contractInvoiced: number;
+  projectRevenue: number;
+  projectInvoiced: number;
+}): { ok: true } | { ok: false; reason: string } {
+  if (input.projectRevenue <= 0.001) {
+    return { ok: false, reason: '该项目尚无已确认收入' };
+  }
+  const projectLeft = round2(input.projectRevenue - input.projectInvoiced);
+  if (input.invoiceAmount > projectLeft + 0.001) {
+    return {
+      ok: false,
+      reason: `开票金额超过该项目可开金额，当前可开 ${projectLeft}`,
+    };
+  }
+  if (input.headerAmount > 0.001) {
+    const contractLeft = round2(input.headerAmount - input.contractInvoiced);
+    if (input.invoiceAmount > contractLeft + 0.001) {
+      return {
+        ok: false,
+        reason: `开票金额超过框架合同可开金额，当前可开 ${contractLeft}`,
+      };
+    }
+  }
+  return { ok: true };
+}

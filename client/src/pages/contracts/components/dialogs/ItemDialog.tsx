@@ -135,7 +135,12 @@ const ItemDialog: React.FC<ItemDialogProps> = ({
               if (!contractId) return;
               void contractsApi
                 .createContractItem(contractId, itemDraft)
-                .then(() => {
+                .then((result) => {
+                  if (result.differs) {
+                    toast.warning(
+                      `明细合计 ${result.itemSum} 与合同金额 ${result.headerAmount} 不一致，提交前需要改平`,
+                    );
+                  }
                   onOpenChange(false);
                   // 修复 P0-3：重置时同样要校正，否则又把 6 塞回小规模主体的下拉里
                   setItemDraft(

@@ -41,6 +41,7 @@ import React, { useEffect, useState } from 'react';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useForm } from 'react-hook-form';
 import { toast } from 'sonner';
+import { Explained } from '@client/src/components/erp/ItemHelp';
 import DateField from '@client/src/components/erp/DateField';
 import { Button } from '@client/src/components/ui/button';
 import {
@@ -277,7 +278,12 @@ const EmployeeFormDialog: React.FC<EmployeeFormDialogProps> = ({
                   name="employmentType"
                   render={({ field }) => (
                     <FormItem className="flex-1">
-                      <FormLabel>用工类型</FormLabel>
+                      <Explained
+                        title="用工类型"
+                        content="正式、劳务或实习等。它决定人事口径，不直接改工资单上的个税和社保。"
+                      >
+                        <FormLabel>用工类型</FormLabel>
+                      </Explained>
                       <Select onValueChange={field.onChange} value={field.value}>
                         <FormControl>
                           <SelectTrigger>
@@ -330,7 +336,12 @@ const EmployeeFormDialog: React.FC<EmployeeFormDialogProps> = ({
                   name="ssBase"
                   render={({ field }) => (
                     <FormItem className="flex-1">
-                      <FormLabel>缴费基数</FormLabel>
+                      <Explained
+                        title="缴费基数"
+                        content="社保和公积金按这个基数计算，不是按当月实发工资。基数一般由参保地规定上下限。"
+                      >
+                        <FormLabel>缴费基数</FormLabel>
+                      </Explained>
                       <FormControl>
                         <Input placeholder="可选，默认按应发" {...field} />
                       </FormControl>
@@ -415,7 +426,12 @@ const EmployeeFormDialog: React.FC<EmployeeFormDialogProps> = ({
                   name="employmentType"
                   render={({ field }) => (
                     <FormItem className="flex-1">
-                      <FormLabel>用工类型</FormLabel>
+                      <Explained
+                        title="用工类型"
+                        content="正式、劳务或实习等。它决定人事口径，不直接改工资单上的个税和社保。"
+                      >
+                        <FormLabel>用工类型</FormLabel>
+                      </Explained>
                       <Select onValueChange={field.onChange} value={field.value || undefined}>
                         <FormControl>
                           <SelectTrigger>
@@ -468,7 +484,12 @@ const EmployeeFormDialog: React.FC<EmployeeFormDialogProps> = ({
                   name="ssBase"
                   render={({ field }) => (
                     <FormItem className="flex-1">
-                      <FormLabel>缴费基数</FormLabel>
+                      <Explained
+                        title="缴费基数"
+                        content="社保和公积金按这个基数计算，不是按当月实发工资。基数一般由参保地规定上下限。"
+                      >
+                        <FormLabel>缴费基数</FormLabel>
+                      </Explained>
                       <FormControl>
                         <Input placeholder="可选，默认按应发" {...field} />
                       </FormControl>

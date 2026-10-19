@@ -11,6 +11,8 @@ import {
   type PostgresJsDatabase,
 } from '@server/platform';
 import { and, asc, count, eq, inArray, ne, or, sql, sum } from 'drizzle-orm';
+import { resolveDocumentTaxEntity } from '@server/common/tax/document-tax-entity';
+import { moneyText } from '@shared/number';
 import {
   erpApBill,
   erpProject,
@@ -30,6 +32,7 @@ import {
   type ExpenseRecordDims,
 } from '../fin-budget/fin-budget.service';
 import { computeBudgetCheck } from './budget-check';
+import { decideProjectBaseline } from './project-baseline';
 import { todayInShanghai } from '@server/common/utils/biz-date';
 import type {
   CreateExpenseApplyDto,
@@ -76,6 +79,7 @@ interface ApplyRow {
   departmentName: string | null;
   projectId: string | null;
   projectName: string | null;
+  taxEntityId: string | null;
   expenseCategory: string | null;
   amount: string | null;
   expectDate: string | null;
@@ -94,6 +98,7 @@ interface ClaimRow {
   departmentName: string | null;
   projectId: string | null;
   projectName: string | null;
+  taxEntityId: string | null;
   expenseCategory: string | null;
   amount: string | null;
   expenseDate: string | null;
@@ -115,8 +120,14 @@ export class FinExpenseService {
   /* ========== 预算校验（事中） ========== */
 
   private async checkBudget(
-    doc: DocDims & { amount: number }
+    doc: DocDims & { amount: number },
+    scope?: {
+      db?: PostgresJsDatabase;
+      excludeApplyId?: string;
+      excludeClaimId?: string;
+    },
   ): Promise<BudgetCheckResult> {
+    const conn = scope?.db ?? this.db;
     const budgetRows: Array<{
       id: string;
       departmentId: string | null;
@@ -124,7 +135,7 @@ export class FinExpenseService {
       expenseCategory: string | null;
       period: string | null;
       budgetAmount: string | null;
-    }> = await this.db
+    }> = await conn
       .select({
         id: finBudget.id,
         departmentId: finBudget.departmentId,
@@ -145,8 +156,8 @@ export class FinExpenseService {
      * 再查申请/报销去算占用 —— 否则无预算部门会白跑两次全表查询。
      * 这里消费 `computeBudgetCheck` 的纯计算部分，查询仍在本方法内。
      */
-    const [applyRows, claimRows] = await Promise.all([
-      this.db
+    const [applyRowsRaw, claimRowsRaw] = await Promise.all([
+      conn
         .select({
           id: finExpenseApply.id,
           departmentId: finExpenseApply.departmentId,
@@ -160,7 +171,7 @@ export class FinExpenseService {
         .where(
           inArray(finExpenseApply.status, ['pending', 'approved'])
         ),
-      this.db
+      conn
         .select({
           id: finExpenseClaim.id,
           departmentId: finExpenseClaim.departmentId,
@@ -179,6 +190,12 @@ export class FinExpenseService {
           ])
         ),
     ]);
+    const applyRows = applyRowsRaw.filter(
+      (row) => row.id !== scope?.excludeApplyId,
+    );
+    const claimRows = claimRowsRaw.filter(
+      (row) => row.id !== scope?.excludeClaimId,
+    );
 
     /*
      * §5.9：闸门计算（占用/已执行/超额判据 + 提示文案）已抽到 `./budget-check`
@@ -213,31 +230,78 @@ export class FinExpenseService {
     });
   }
 
-  /** 项目基线：Σ erp_project_cost.amount + 本次 ≤ erp_project.budget */
-  private async assertProjectBaseline(
+  /**
+   * 项目基线（R3 创建即占用）。调用方须已对项目行 FOR UPDATE。
+   * 占用 = 已归集成本 + 在途报销 + 未被有效报销引用的在途申请。
+   * exclude 掉当前单据，避免创建报销时把关联申请算两次、审批时把当前报销算两次。
+   */
+  private async assertProjectOccupancy(
+    db: PostgresJsDatabase,
     projectId: string | null | undefined,
-    amount: number
+    amount: number,
+    exclude: { applyId?: string; claimId?: string },
   ): Promise<void> {
     if (!projectId) return;
-    const projectRows: Array<{ budget: string | null }> = await this.db
-      .select({ budget: erpProject.budget })
-      .from(erpProject)
-      .where(eq(erpProject.id, projectId))
-      .limit(1);
-    if (projectRows.length === 0) return;
-    const costRows: Array<{ total: string | null }> = await this.db
-      .select({ total: sum(erpProjectCost.amount) })
-      .from(erpProjectCost)
-      .where(eq(erpProjectCost.projectId, projectId));
-    const totalCost = Number(costRows[0]?.total ?? 0);
-    const budget = Number(projectRows[0].budget ?? 0);
-    if (totalCost + amount > budget) {
-      const over = totalCost + amount - budget;
-      throw new BadRequestException(
-        `超出项目预算基线：项目预算 ${budget} 元，已归集成本 ${totalCost} 元，` +
-          `本次 ${amount} 元，超出 ${over} 元`
-      );
+    const rows = await db.execute(sql`
+      SELECT
+        (SELECT count(*) FROM erp_project WHERE id = ${projectId})::int AS project_count,
+        (SELECT budget::text FROM erp_project WHERE id = ${projectId}) AS budget,
+        (
+          coalesce((SELECT sum(amount) FROM erp_project_cost WHERE project_id = ${projectId}), 0)
+          + coalesce((
+            SELECT sum(amount) FROM fin_expense_claim
+            WHERE project_id = ${projectId}
+              AND status IN ('pending', 'escalated')
+              AND (${exclude.claimId ?? null}::uuid IS NULL OR id <> ${exclude.claimId ?? null}::uuid)
+          ), 0)
+          + coalesce((
+            SELECT sum(a.amount) FROM fin_expense_apply a
+            WHERE a.project_id = ${projectId}
+              AND a.status IN ('pending', 'approved')
+              AND (${exclude.applyId ?? null}::uuid IS NULL OR a.id <> ${exclude.applyId ?? null}::uuid)
+              AND NOT EXISTS (
+                SELECT 1 FROM fin_expense_claim c
+                WHERE c.apply_id = a.id
+                  AND coalesce(c.status, '') NOT IN ('rejected', 'voided')
+                  AND (${exclude.claimId ?? null}::uuid IS NULL OR c.id <> ${exclude.claimId ?? null}::uuid)
+              )
+          ), 0)
+        )::text AS occupied
+    `);
+    const list = Array.isArray(rows)
+      ? (rows as Array<Record<string, string | number | null>>)
+      : ((rows as { rows?: Array<Record<string, string | number | null>> }).rows ?? []);
+    const row = list[0];
+    if (!row || Number(row.project_count ?? 0) === 0) {
+      throw new BadRequestException('项目不存在，不能挂到费用单据上');
     }
+    const decision = decideProjectBaseline({
+      projectExists: true,
+      budget: row.budget == null ? null : String(row.budget),
+      occupied: String(row.occupied ?? '0'),
+      amount: amount.toFixed(2),
+    });
+    if (!decision.ok) throw new BadRequestException(decision.reason);
+  }
+
+  private async lockProjectAndPeriodBudgets(
+    db: PostgresJsDatabase,
+    projectId: string | null | undefined,
+    period: string,
+  ): Promise<void> {
+    if (projectId) {
+      await db
+        .select({ id: erpProject.id })
+        .from(erpProject)
+        .where(eq(erpProject.id, projectId))
+        .for('update');
+    }
+    await db
+      .select({ id: finBudget.id })
+      .from(finBudget)
+      .where(eq(finBudget.period, period))
+      .orderBy(asc(finBudget.id))
+      .for('update');
   }
 
   /* ========== 费用申请 ========== */
@@ -276,6 +340,7 @@ export class FinExpenseService {
         departmentName: hrDepartment.name,
         projectId: finExpenseApply.projectId,
         projectName: erpProject.name,
+        taxEntityId: finExpenseApply.taxEntityId,
         expenseCategory: finExpenseApply.expenseCategory,
         amount: finExpenseApply.amount,
         expectDate: finExpenseApply.expectDate,
@@ -310,6 +375,7 @@ export class FinExpenseService {
       departmentName: row.departmentName,
       projectId: row.projectId,
       projectName: row.projectName,
+      taxEntityId: row.taxEntityId,
       expenseCategory: row.expenseCategory ?? '',
       amount: Number(row.amount ?? 0),
       expectDate: row.expectDate,
@@ -331,6 +397,7 @@ export class FinExpenseService {
         departmentName: hrDepartment.name,
         projectId: finExpenseApply.projectId,
         projectName: erpProject.name,
+        taxEntityId: finExpenseApply.taxEntityId,
         expenseCategory: finExpenseApply.expenseCategory,
         amount: finExpenseApply.amount,
         expectDate: finExpenseApply.expectDate,
@@ -359,39 +426,52 @@ export class FinExpenseService {
       expenseCategory: dto.expenseCategory,
       period,
     };
-    const check = await this.checkBudget({ ...doc, amount: dto.amount });
-    if (check.exceeded) {
-      throw new BadRequestException(
-        `预算不足：预算总额 ${check.budgetAmount} 元，已执行 ${check.executed} 元，` +
-          `在途占用 ${check.occupied} 元，本次申请 ${dto.amount} 元，` +
-          `超出 ${check.executed + check.occupied + dto.amount - check.budgetAmount} 元`
-      );
-    }
-    await this.assertProjectBaseline(dto.projectId, dto.amount);
-
+    const taxEntityId = await resolveDocumentTaxEntity(this.db, {
+      projectId: dto.projectId,
+      taxEntityId: dto.taxEntityId,
+      kind: 'expense',
+    });
     const code = await generateBizCode(
       this.db,
       finExpenseApply,
       finExpenseApply.code,
       'EXP'
     );
-    const inserted = await this.db
-      .insert(finExpenseApply)
-      .values({
-        code,
-        applyType: dto.applyType,
-        title: dto.title,
-        departmentId: dto.departmentId ?? null,
-        projectId: dto.projectId ?? null,
-        expenseCategory: dto.expenseCategory,
-        amount: String(dto.amount),
-        expectDate: dto.expectDate ?? null,
-        status: 'pending',
-        reason: dto.reason ?? null,
-        remark: dto.remark ?? null,
-      })
-      .returning({ id: finExpenseApply.id });
-    return this.getApplyById(inserted[0].id);
+    const insertedId = await this.db.transaction(async (tx) => {
+      const conn = tx as unknown as PostgresJsDatabase;
+      await this.lockProjectAndPeriodBudgets(conn, dto.projectId, period);
+      await this.assertProjectOccupancy(conn, dto.projectId, dto.amount, {});
+      const check = await this.checkBudget(
+        { ...doc, amount: dto.amount },
+        { db: conn },
+      );
+      if (check.exceeded) {
+        throw new BadRequestException(
+          `预算不足：预算总额 ${check.budgetAmount} 元，已执行 ${check.executed} 元，` +
+            `在途占用 ${check.occupied} 元，本次申请 ${dto.amount} 元，` +
+            `超出 ${check.executed + check.occupied + dto.amount - check.budgetAmount} 元`
+        );
+      }
+      const inserted = await conn
+        .insert(finExpenseApply)
+        .values({
+          code,
+          applyType: dto.applyType,
+          title: dto.title,
+          departmentId: dto.departmentId ?? null,
+          projectId: dto.projectId ?? null,
+          taxEntityId,
+          expenseCategory: dto.expenseCategory,
+          amount: storedMoney(dto.amount),
+          expectDate: dto.expectDate ?? null,
+          status: 'pending',
+          reason: dto.reason ?? null,
+          remark: dto.remark ?? null,
+        })
+        .returning({ id: finExpenseApply.id });
+      return inserted[0].id;
+    });
+    return this.getApplyById(insertedId);
   }
 
   async applyAction(
@@ -465,6 +545,7 @@ export class FinExpenseService {
         departmentName: hrDepartment.name,
         projectId: finExpenseClaim.projectId,
         projectName: erpProject.name,
+        taxEntityId: finExpenseClaim.taxEntityId,
         expenseCategory: finExpenseClaim.expenseCategory,
         amount: finExpenseClaim.amount,
         expenseDate: finExpenseClaim.expenseDate,
@@ -506,6 +587,7 @@ export class FinExpenseService {
       departmentName: row.departmentName,
       projectId: row.projectId,
       projectName: row.projectName,
+      taxEntityId: row.taxEntityId,
       expenseCategory: row.expenseCategory ?? '',
       amount: Number(row.amount ?? 0),
       expenseDate: row.expenseDate,
@@ -527,6 +609,7 @@ export class FinExpenseService {
         departmentName: hrDepartment.name,
         projectId: finExpenseClaim.projectId,
         projectName: erpProject.name,
+        taxEntityId: finExpenseClaim.taxEntityId,
         expenseCategory: finExpenseClaim.expenseCategory,
         amount: finExpenseClaim.amount,
         expenseDate: finExpenseClaim.expenseDate,
@@ -558,12 +641,25 @@ export class FinExpenseService {
     if (!(dto.amount > 0)) {
       throw new BadRequestException('报销金额必须大于 0');
     }
+    let linkedApply: {
+      status: string | null;
+      amount: string | null;
+      projectId: string | null;
+      taxEntityId: string | null;
+    } | undefined;
     if (dto.applyId) {
       const applyRows: Array<{
         status: string | null;
         amount: string | null;
+        projectId: string | null;
+        taxEntityId: string | null;
       }> = await this.db
-        .select({ status: finExpenseApply.status, amount: finExpenseApply.amount })
+        .select({
+          status: finExpenseApply.status,
+          amount: finExpenseApply.amount,
+          projectId: finExpenseApply.projectId,
+          taxEntityId: finExpenseApply.taxEntityId,
+        })
         .from(finExpenseApply)
         .where(eq(finExpenseApply.id, dto.applyId))
         .limit(1);
@@ -579,6 +675,7 @@ export class FinExpenseService {
           `报销金额超过申请金额：申请 ${applyAmount} 元，本次报销 ${dto.amount} 元`
         );
       }
+      linkedApply = applyRows[0];
     }
 
     const period = docPeriodOf(dto.expenseDate);
@@ -588,34 +685,49 @@ export class FinExpenseService {
       expenseCategory: dto.expenseCategory,
       period,
     };
-    await this.assertProjectBaseline(dto.projectId, dto.amount);
-    const check = await this.checkBudget({ ...doc, amount: dto.amount });
-    const status: ExpenseClaimStatus = check.exceeded
-      ? 'escalated'
-      : 'pending';
-
+    const projectId = dto.projectId ?? linkedApply?.projectId ?? null;
+    doc.projectId = projectId;
+    const taxEntityId = await resolveDocumentTaxEntity(this.db, {
+      projectId,
+      taxEntityId: dto.taxEntityId ?? linkedApply?.taxEntityId ?? undefined,
+      kind: 'expense',
+    });
     const code = await generateBizCode(
       this.db,
       finExpenseClaim,
       finExpenseClaim.code,
       'EXP'
     );
-    const inserted = await this.db
-      .insert(finExpenseClaim)
-      .values({
-        code,
-        applyId: dto.applyId ?? null,
-        departmentId: dto.departmentId ?? null,
-        projectId: dto.projectId ?? null,
-        expenseCategory: dto.expenseCategory,
-        amount: String(dto.amount),
-        expenseDate: dto.expenseDate ?? null,
-        applicant,
-        status,
-        remark: dto.remark ?? null,
-      })
-      .returning({ id: finExpenseClaim.id });
-    return this.getClaimById(inserted[0].id);
+    const insertedId = await this.db.transaction(async (tx) => {
+      const conn = tx as unknown as PostgresJsDatabase;
+      await this.lockProjectAndPeriodBudgets(conn, projectId, period);
+      await this.assertProjectOccupancy(conn, projectId, dto.amount, {
+        applyId: dto.applyId,
+      });
+      const check = await this.checkBudget(
+        { ...doc, amount: dto.amount },
+        { db: conn, excludeApplyId: dto.applyId },
+      );
+      const status: ExpenseClaimStatus = check.exceeded ? 'escalated' : 'pending';
+      const inserted = await conn
+        .insert(finExpenseClaim)
+        .values({
+          code,
+          applyId: dto.applyId ?? null,
+          departmentId: dto.departmentId ?? null,
+          projectId,
+          taxEntityId,
+          expenseCategory: dto.expenseCategory,
+          amount: storedMoney(dto.amount),
+          expenseDate: dto.expenseDate ?? null,
+          applicant,
+          status,
+          remark: dto.remark ?? null,
+        })
+        .returning({ id: finExpenseClaim.id });
+      return inserted[0].id;
+    });
+    return this.getClaimById(insertedId);
   }
 
   /**
@@ -788,13 +900,29 @@ export class FinExpenseService {
             code: voidCostCode,
             projectId: claim.projectId,
             costType: originalCost?.costType ?? 'travel',
-            amount: String(-amount),
+            amount: storedMoney(-amount),
             period: reversePeriod,
             occurredDate: reverseDate,
             sourceRef: `expense-void:${claim.code}`,
             offsetOf: originalCost?.id ?? null,
             remark: `报销单${claim.code} 作废冲回`,
           });
+        }
+        if (amount !== 0) {
+          await this.voucherHookService.reserveCompensation(
+            tx as unknown as PostgresJsDatabase,
+            {
+              sourceType: 'expense',
+              sourceRef: `expense-void:${claim.code}`,
+              voucherDate: reverseDate,
+              summary: `报销作废 ${claim.code}`,
+              lines: [
+                { accountCode: '6602', credit: amount },
+                { accountCode: '2202', debit: amount },
+              ],
+            },
+            '报销作废红字凭证待生成',
+          );
         }
       });
 
@@ -877,6 +1005,13 @@ export class FinExpenseService {
     );
 
     await this.db.transaction(async (tx) => {
+      const conn = tx as unknown as PostgresJsDatabase;
+      if (claim.projectId) {
+        await this.lockProjectAndPeriodBudgets(conn, claim.projectId, expenseDate.slice(0, 7));
+        await this.assertProjectOccupancy(conn, claim.projectId, amount, {
+          claimId: id,
+        });
+      }
       // F4X-9：CAS 状态流转，防双击重复入账
       const updated = await tx
         .update(finExpenseClaim)
@@ -895,7 +1030,7 @@ export class FinExpenseService {
         code: apCode,
         supplierId: null,
         projectId: claim.projectId,
-        amount: String(amount),
+        amount: storedMoney(amount),
         paidAmount: '0',
         dueDate: expenseDate,
         status: 'pending',
@@ -908,7 +1043,7 @@ export class FinExpenseService {
           code: costCode,
           projectId: claim.projectId,
           costType: 'travel',
-          amount: String(amount),
+          amount: storedMoney(amount),
           period: expenseDate.slice(0, 7),
           occurredDate: expenseDate,
           sourceRef: `expense:${claim.code}`,
@@ -948,4 +1083,12 @@ export class FinExpenseService {
 
     return this.getClaimById(id);
   }
+}
+
+function storedMoney(value: number): string {
+  const text = moneyText(value);
+  if (text == null) {
+    throw new BadRequestException('金额无法换算到分');
+  }
+  return text;
 }

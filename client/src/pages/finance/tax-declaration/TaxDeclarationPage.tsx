@@ -2,8 +2,8 @@ import React, { useMemo, useState } from 'react';
 import { toast } from 'sonner';
 import { AlertTriangle, CheckCircle2, Download, FileCheck2, RefreshCw, ShieldCheck } from 'lucide-react';
 import PageShell from '@client/src/components/PageShell';
-import ActionHelp from '@client/src/components/erp/ActionHelp';
-import ActionGroup from '@client/src/components/erp/ActionGroup';
+import ButtonHelp from '@client/src/components/erp/ButtonHelp';
+import { Explained } from '@client/src/components/erp/ItemHelp';
 import NoticeBar from '@client/src/components/erp/NoticeBar';
 import TaxRiskPanel from './TaxRiskPanel';
 import VatLineTable from './components/VatLineTable';
@@ -198,15 +198,10 @@ const TaxDeclarationPage: React.FC = () => {
          * 且确认后不可随意回退 —— 放在筛选控件中间既不显眼也不符合规范
          * （`AGENTS.md`：页头 `actions` 插槽放主操作）。
          */
-        <ActionGroup
-          help={
-            <ActionHelp title="扫描与确认底稿">
-              扫描只做风险检测，不改数据；确认底稿会留痕并锁定本期申报数据。确认前请先指定纳税主体。
-            </ActionHelp>
-          }
-        >
+        <>
           <Button
             type="button"
+            variant="outline"
             disabled={riskLoading}
             onClick={() => void runRiskScan()}
           >
@@ -223,18 +218,23 @@ const TaxDeclarationPage: React.FC = () => {
             )}
           </Button>
           <CanCapabilityWrite capability="finance_write">
-            <Button
-              type="button"
-              onClick={openConfirmDialog}
-              disabled={
-                !data || data.status === 'confirmed' || taxEntityId === ALL_ENTITIES
-              }
+            <ButtonHelp
+              title="确认底稿"
+              content="确认后留下记录，并锁定本期申报数据。未指定单个纳税主体时不能确认。确认后不能在这里直接改回。"
             >
-              <FileCheck2 className="size-4" />
-              {data?.status === 'confirmed' ? '底稿已确认' : '确认底稿'}
-            </Button>
+              <Button
+                type="button"
+                onClick={openConfirmDialog}
+                disabled={
+                  !data || data.status === 'confirmed' || taxEntityId === ALL_ENTITIES
+                }
+              >
+                <FileCheck2 className="size-4" />
+                {data?.status === 'confirmed' ? '底稿已确认' : '确认底稿'}
+              </Button>
+            </ButtonHelp>
           </CanCapabilityWrite>
-        </ActionGroup>
+        </>
       }
     >
       <TaxRiskPanel
@@ -245,9 +245,14 @@ const TaxDeclarationPage: React.FC = () => {
 
       <FilterBar>
         <div className="flex items-center gap-2">
-          <Label htmlFor="vat-period" className="text-xs text-muted-foreground">
-            期间
-          </Label>
+          <Explained
+            title="期间"
+            content="底稿按这个申报期汇总。扫描只做风险检测，不改申报数据。城建税率没填时附加税不出数；申报周期或小型微利资格未确认时，按不减免、不享受计算，可能多缴，不会少缴。"
+          >
+            <Label htmlFor="vat-period" className="text-xs text-muted-foreground">
+              期间
+            </Label>
+          </Explained>
           <PeriodSelect id="vat-period" value={period} onChange={setPeriod} />
         </div>
         <div className="flex items-center gap-2">

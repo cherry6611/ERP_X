@@ -6,6 +6,7 @@ import { z } from 'zod';
 import { toast } from 'sonner';
 import { ArrowLeft } from 'lucide-react';
 import DateField from '@client/src/components/erp/DateField';
+import { Explained } from '@client/src/components/erp/ItemHelp';
 import { DataState } from '@client/src/components/DataState';
 import PageShell from '@client/src/components/PageShell';
 import StickyActionBar from '@client/src/components/erp/StickyActionBar';
@@ -148,7 +149,12 @@ const ProjectEditPage: React.FC = () => {
                   name="wonQuotationId"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>最终成交报价单</FormLabel>
+                      <Explained
+                        title="最终成交报价单"
+                        content="项目金额和预算默认从这张已赢单的报价带出。它不是预算基线，也不是预计总成本。"
+                      >
+                        <FormLabel>最终成交报价单</FormLabel>
+                      </Explained>
                       <Select
                         onValueChange={(v) =>
                           field.onChange(v === '__none__' ? '' : v)
@@ -194,7 +200,12 @@ const ProjectEditPage: React.FC = () => {
                     name="progress"
                     render={({ field }) => (
                       <FormItem className="flex-1">
-                        <FormLabel>进度（%）</FormLabel>
+                        <Explained
+                          title="进度"
+                          content="有里程碑权重时，进度按已达成的权重自动重算。没有里程碑时可以手工填。进度不会自动确认收入或开票。"
+                        >
+                          <FormLabel>进度（%）</FormLabel>
+                        </Explained>
                         <FormControl>
                           <Input
                             type="number"
@@ -218,7 +229,12 @@ const ProjectEditPage: React.FC = () => {
                     name="budget"
                     render={({ field }) => (
                       <FormItem className="flex-1">
-                        <FormLabel>预算基线（元）</FormLabel>
+                        <Explained
+                          title="预算基线"
+                          content="费用能不能提交，看的是这个数。留空时使用合同净额。它不是预计总成本。"
+                        >
+                          <FormLabel>预算基线（元）</FormLabel>
+                        </Explained>
                         <FormControl>
                           <Input
                             type="number"
@@ -239,7 +255,12 @@ const ProjectEditPage: React.FC = () => {
                     name="estimatedTotalCost"
                     render={({ field }) => (
                       <FormItem className="flex-1">
-                        <FormLabel>预计总成本（元）</FormLabel>
+                        <Explained
+                          title="预计总成本"
+                          content="用来提前看项目会不会超支，不参与费用能否提交的判断。费用控制看的是预算基线。"
+                        >
+                          <FormLabel>预计总成本（元）</FormLabel>
+                        </Explained>
                         <FormControl>
                           <Input
                             type="number"

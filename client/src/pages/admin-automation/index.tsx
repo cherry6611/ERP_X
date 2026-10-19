@@ -10,7 +10,7 @@ import { adminApi } from '@client/src/api';
 import { useAsyncData } from '@client/src/hooks/useAsyncData';
 import { getApiErrorMessage } from '@client/src/utils/api-error-message';
 import { confirmDanger } from '@client/src/utils/confirmDanger';
-import type { AutomationConfigItem } from '@shared/api.interface';
+import type { AutomationConfigItem, VoucherJobQueueSummary } from '@shared/api.interface';
 
 const AdminAutomationPage: React.FC = () => {
   const [operatingKey, setOperatingKey] = useState<string | null>(null);
@@ -18,6 +18,12 @@ const AdminAutomationPage: React.FC = () => {
   const { data, loading, error, reload } = useAsyncData(() =>
     adminApi.listAutomationConfig()
   );
+  const {
+    data: voucherQueue,
+    loading: queueLoading,
+    error: queueError,
+    reload: reloadQueue,
+  } = useAsyncData<VoucherJobQueueSummary>(() => adminApi.listVoucherJobs());
 
   const doToggle = async (item: AutomationConfigItem, next: boolean) => {
     if (next === false) {
@@ -32,6 +38,7 @@ const AdminAutomationPage: React.FC = () => {
       await adminApi.updateAutomationConfig(item.taskKey, next);
       toast.success(`任务「${item.taskName}」已${next ? '启用' : '停用'}`);
       await reload();
+      await reloadQueue();
     } catch (err) {
       toast.error(getApiErrorMessage(err, '更新失败'));
     } finally {
@@ -98,6 +105,41 @@ const AdminAutomationPage: React.FC = () => {
       title="自动化任务"
       description="定时任务总开关，停用后到点不执行"
     >
+      <section className="flex flex-col gap-3">
+        <h2 className="text-base font-semibold">凭证补偿队列</h2>
+        <DataState
+          loading={queueLoading}
+          error={queueError}
+          empty={false}
+          onRetry={() => void reloadQueue()}
+        >
+          <div className="flex flex-wrap gap-6 text-sm">
+            <span>待重试 {voucherQueue?.pending ?? 0}</span>
+            <span>处理中 {voucherQueue?.processing ?? 0}</span>
+            <span>失败 {voucherQueue?.failed ?? 0}</span>
+            <span>dead {voucherQueue?.dead ?? 0}</span>
+          </div>
+          {(voucherQueue?.items.length ?? 0) > 0 ? (
+            <Table
+              rowKey={(row) => `${row.sourceType}:${row.sourceRef}`}
+              pagination={false}
+              dataSource={voucherQueue?.items ?? []}
+              columns={[
+                { title: '来源', dataIndex: 'sourceType', width: 140 },
+                { title: '单号', dataIndex: 'sourceRef' },
+                { title: '状态', dataIndex: 'status', width: 120 },
+                {
+                  title: '最近错误',
+                  dataIndex: 'lastError',
+                  render: (value: string | null) => value || '—',
+                },
+              ]}
+            />
+          ) : (
+            <p className="text-sm text-muted-foreground">当前没有待处理的凭证补偿。</p>
+          )}
+        </DataState>
+      </section>
       <DataState
         loading={loading}
         error={error}

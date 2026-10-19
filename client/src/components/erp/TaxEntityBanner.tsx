@@ -17,7 +17,7 @@ const TaxEntityBanner: React.FC = () => {
       tone="warning"
       action={
         <Link
-          to="/tax-entities"
+          to="/masterdata/tax-entities"
           className="text-[12px] font-medium text-primary hover:underline"
         >
           去创建

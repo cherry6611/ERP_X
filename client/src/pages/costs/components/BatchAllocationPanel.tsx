@@ -8,6 +8,7 @@ import {
   FieldLabel,
   useFieldId,
 } from '@client/src/components/erp/FieldLabel';
+import { Explained } from '@client/src/components/erp/ItemHelp';
 import {
   Select,
   SelectContent,
@@ -193,7 +194,12 @@ const BatchAllocationPanel: React.FC<{
           />
         </div>
         <div className="grid gap-1">
-          <FieldLabel htmlFor={periodId}>期间</FieldLabel>
+          <Explained
+            title="期间"
+            content="这笔待分摊金额记入的会计期间。分摊后，各项目分到的金额进该期间的项目成本。"
+          >
+            <FieldLabel htmlFor={periodId}>期间</FieldLabel>
+          </Explained>
           <Input
             id={periodId}
             className="w-28"
@@ -203,7 +209,12 @@ const BatchAllocationPanel: React.FC<{
           />
         </div>
         <div className="grid gap-1">
-          <FieldLabel>成本类型</FieldLabel>
+          <Explained
+            title="成本类型"
+            content="分摊进项目之后，按这个类型归集。人工和灵活用工按不含税，其它类型按含税。"
+          >
+            <FieldLabel>成本类型</FieldLabel>
+          </Explained>
           <Select
             value={costType}
             onValueChange={(v) => setCostType(v as CostType)}
@@ -221,7 +232,12 @@ const BatchAllocationPanel: React.FC<{
           </Select>
         </div>
         <div className="grid gap-1">
-          <FieldLabel htmlFor={amountId}>待分摊总额</FieldLabel>
+          <Explained
+            title="待分摊总额"
+            content="这一期要拆到各个项目上的总金额。各项目分到的金额加起来应等于这个数。"
+          >
+            <FieldLabel htmlFor={amountId}>待分摊总额</FieldLabel>
+          </Explained>
           <Input
             id={amountId}
             className="w-32"

@@ -117,8 +117,13 @@ export async function createContractItem(
     taxRate: number;
     estUnitCost?: number;
   }
-): Promise<ContractItem> {
-  const resp = await axiosForBackend.post<ContractItem>(
+): Promise<{ item: ContractItem; headerAmount: number; itemSum: number; differs: boolean }> {
+  const resp = await axiosForBackend.post<{
+    item: ContractItem;
+    headerAmount: number;
+    itemSum: number;
+    differs: boolean;
+  }>(
     `/api/contracts/${contractId}/items`,
     dto
   );
@@ -128,8 +133,13 @@ export async function createContractItem(
 export async function deleteContractItem(
   contractId: string,
   itemId: string
-): Promise<void> {
-  await axiosForBackend.post(`/api/contracts/${contractId}/items/${itemId}/delete`);
+): Promise<{ headerAmount: number; itemSum: number; differs: boolean }> {
+  const resp = await axiosForBackend.post<{
+    headerAmount: number;
+    itemSum: number;
+    differs: boolean;
+  }>(`/api/contracts/${contractId}/items/${itemId}/delete`);
+  return resp.data;
 }
 
 export async function importQuotationItems(

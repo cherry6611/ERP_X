@@ -1,6 +1,7 @@
 import React from 'react';
 import type { LucideIcon } from 'lucide-react';
 import { cn } from '@client/src/lib/utils';
+import ItemHelp from '@client/src/components/erp/ItemHelp';
 
 type StatTone = 'primary' | 'success' | 'warning' | 'info' | 'neutral';
 
@@ -19,6 +20,8 @@ interface StatCardProps {
   tone?: StatTone;
   delta?: React.ReactNode;
   hint?: React.ReactNode;
+  /** 卡片右上角的口径说明。有这项时不再把教程写在卡片正文里。 */
+  help?: React.ReactNode;
 }
 
 const StatCard: React.FC<StatCardProps> = ({
@@ -28,13 +31,17 @@ const StatCard: React.FC<StatCardProps> = ({
   tone = 'primary',
   delta,
   hint,
+  help,
 }) => (
   <div
     data-ai-section-type="card-stat"
     className="flex flex-col gap-1.5 rounded-xl border border-border/80 bg-card p-4"
   >
     <div className="flex items-start justify-between gap-2">
-      <p className="text-[11px] text-muted-foreground">{label}</p>
+      <p className="inline-flex items-center gap-1 text-[11px] text-muted-foreground">
+        {label}
+        {help ? <ItemHelp title={label} content={help} /> : null}
+      </p>
       {Icon ? (
         <span
           className={cn(

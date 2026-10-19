@@ -28,6 +28,7 @@ export const costSchema = z.object({
   costType: z.string().min(1, '请选择成本类型'),
   amount: z.coerce.number().min(1, '金额必须大于 0'),
   sourceRef: z.string().min(1, '请填写来源摘要'),
+  taxEntityId: z.string(),
   remark: z.string(),
 });
 

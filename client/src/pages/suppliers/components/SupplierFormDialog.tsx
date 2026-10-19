@@ -21,6 +21,7 @@
  *    把这次提交当成"未传该字段"而**保留旧值**，使用者以为清空了、库里其实还在。
  */
 import React, { useState } from 'react';
+import { Explained } from '@client/src/components/erp/ItemHelp';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useForm } from 'react-hook-form';
 import { toast } from 'sonner';
@@ -282,7 +283,12 @@ const SupplierFormDialog = React.forwardRef<SupplierFormDialogHandle, Props>(
                   name="taxEntityId"
                   render={({ field }) => (
                     <FormItem className="flex-1">
-                      <FormLabel>关联纳税主体</FormLabel>
+                      <Explained
+                        title="关联纳税主体"
+                        content="这个供应商进项发票默认用的纳税主体。决定能选哪些税率。"
+                      >
+                        <FormLabel>关联纳税主体</FormLabel>
+                      </Explained>
                       <Select
                         value={field.value || NONE}
                         onValueChange={(value) =>
@@ -319,7 +325,12 @@ const SupplierFormDialog = React.forwardRef<SupplierFormDialogHandle, Props>(
                     const rates = resolveRateOptions(entity);
                     return (
                       <FormItem className="w-36">
-                        <FormLabel>默认税率</FormLabel>
+                        <Explained
+                          title="默认税率"
+                          content="登记这个供应商的进项发票时默认带出的税率。只能选关联纳税主体允许的档位。"
+                        >
+                          <FormLabel>默认税率</FormLabel>
+                        </Explained>
                         <Select
                           value={field.value || NONE}
                           onValueChange={(value) =>

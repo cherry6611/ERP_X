@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { ColumnHelpTitle } from '@client/src/components/erp/ItemHelp';
 import { Link, useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 import { Download, Plus } from 'lucide-react';
@@ -91,7 +92,12 @@ const ProjectsPage: React.FC = () => {
       ),
     },
     {
-      title: '成交报价',
+      title: (
+        <ColumnHelpTitle
+          title="成交报价"
+          content="来自已赢单的报价。它不是预算基线，费用能不能提交看的是预算基线。"
+        />
+      ),
       key: 'wonQuote',
       width: 150,
       render: (_, row) =>
@@ -110,13 +116,25 @@ const ProjectsPage: React.FC = () => {
         ),
     },
     {
-      title: '预算基线',
+      title: (
+        <ColumnHelpTitle
+          title="预算基线"
+          content="费用能不能提交，看的是这个数。留空时使用合同净额。"
+        />
+      ),
       dataIndex: 'budget',
       width: 110,
       align: 'right',
       render: (v: number) => formatMoney(v),
     },
-    { title: '进度', dataIndex: 'progress', width: 70, render: (v: number) => formatPercent(v) },
+    {
+      title: (
+        <ColumnHelpTitle
+          title="进度"
+          content="有里程碑权重时按已达成权重自动重算。进度不会自动确认收入。"
+        />
+      ),
+      dataIndex: 'progress', width: 70, render: (v: number) => formatPercent(v) },
     {
       title: '状态',
       dataIndex: 'status',

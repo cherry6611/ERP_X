@@ -90,6 +90,10 @@ export class CreateCostBodyDto implements CreateCostDto {
   departmentId?: string;
 
   @IsOptional()
+  @IsUUID()
+  taxEntityId?: string;
+
+  @IsOptional()
   @IsString()
   remark?: string;
 }

@@ -25,7 +25,9 @@ import type {
   AdminRentContractStats,
   AutomationConfigItem,
   PagedResult,
+  VoucherJobQueueSummary,
 } from '@shared/api.interface';
+import { VoucherHookService } from '@server/modules/voucher/voucher-hook.service';
 import { AutomationConfigService } from './automation-config.service';
 import { AdminService } from './admin.service';
 import {
@@ -50,7 +52,8 @@ class UpdateAutomationConfigBody {
 export class AdminController {
   constructor(
     private readonly adminService: AdminService,
-    private readonly automationConfigService: AutomationConfigService
+    private readonly automationConfigService: AutomationConfigService,
+    private readonly voucherHook: VoucherHookService,
   ) {}
 
   /* ========== 自动化任务开关 ========== */
@@ -58,6 +61,11 @@ export class AdminController {
   @Get('automation-config')
   async listAutomationConfig(): Promise<AutomationConfigItem[]> {
     return this.automationConfigService.listAll();
+  }
+
+  @Get('voucher-jobs')
+  async voucherJobQueue(): Promise<VoucherJobQueueSummary> {
+    return this.voucherHook.summarizeQueue();
   }
 
   @CanCapability('admin_ops')

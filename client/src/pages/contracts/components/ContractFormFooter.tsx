@@ -5,6 +5,7 @@ import { Button } from '@client/src/components/ui/button';
 interface ContractFormFooterProps {
   asPage: boolean;
   isEdit: boolean;
+  submitting?: boolean;
   onCancel?: () => void;
 }
 
@@ -12,6 +13,7 @@ interface ContractFormFooterProps {
 const ContractFormFooter: React.FC<ContractFormFooterProps> = ({
   asPage,
   isEdit,
+  submitting = false,
   onCancel,
 }) => {
   if (asPage) {
@@ -22,14 +24,14 @@ const ContractFormFooter: React.FC<ContractFormFooterProps> = ({
             取消
           </Button>
         ) : null}
-        <Button type="submit">{isEdit ? '保存修改' : '保存'}</Button>
+        <Button type="submit" disabled={submitting}>{isEdit ? '保存修改' : '保存'}</Button>
       </StickyActionBar>
     );
   }
 
   return (
     <div className="flex justify-end gap-2 border-t pt-3">
-      <Button type="submit">{isEdit ? '保存修改' : '保存'}</Button>
+      <Button type="submit" disabled={submitting}>{isEdit ? '保存修改' : '保存'}</Button>
     </div>
   );
 };

@@ -36,7 +36,9 @@ import { splitTax } from '@shared/tax';
 import {
   CONTRACT_INVOICED_DIRECTION,
   computeBillable,
+  decideFrameworkSalesLimit,
 } from './invoice-billable';
+import { listActiveTaxEntityIds } from '@server/common/tax/tax-entity-resolver';
 import {
   inputIssueLines,
   inputVoidLines,
@@ -48,7 +50,7 @@ import {
   pickVoucherAffectingFields,
   shouldRebuildInvoiceVoucher,
 } from './invoice-edit-guard';
-import { round2 } from '@server/common/utils/number';
+import { moneyText, round2, yuanToCents } from '@shared/number';
 import type {
   CreateInvoiceDto,
   InvoiceCertificationStatus,
@@ -263,11 +265,32 @@ export class InvoiceService {
     if (dto.amount <= 0) {
       throw new BadRequestException('开票金额必须大于 0');
     }
+    const replay = await this.findInvoiceByClientRequest(dto.clientRequestId);
+    if (replay) return replay;
     const direction: InvoiceDirection = dto.direction ?? 'sales';
-    if (direction === 'purchase') {
-      return this.createPurchaseInvoice(dto);
+    try {
+      if (direction === 'purchase') {
+        return await this.createPurchaseInvoice(dto);
+      }
+      return await this.createSalesInvoice(dto);
+    } catch (error) {
+      const again = await this.findInvoiceByClientRequest(dto.clientRequestId);
+      if (again && isUniqueViolation(error)) return again;
+      throw error;
     }
-    return this.createSalesInvoice(dto);
+  }
+
+  private async findInvoiceByClientRequest(
+    clientRequestId: string | undefined,
+  ): Promise<InvoiceItem | null> {
+    if (!clientRequestId) return null;
+    const rows = await this.db
+      .select({ id: erpInvoice.id })
+      .from(erpInvoice)
+      .where(eq(erpInvoice.clientRequestId, clientRequestId))
+      .limit(1);
+    if (rows.length === 0) return null;
+    return this.getInvoiceItem(rows[0].id);
   }
 
   /** 销项开票：金额不得超过合同可开金额，可关联应收。事务内锁合同防并发超额 */
@@ -299,6 +322,12 @@ export class InvoiceService {
       .where(eq(erpContract.id, dto.contractId!))
       .limit(1);
     if (contractTax.length === 0) throw new NotFoundException('合同不存在');
+    if (!contractTax[0].taxEntityId) {
+      const active = await listActiveTaxEntityIds(this.db);
+      if (active.length > 1) {
+        throw new BadRequestException('请选择我方纳税主体');
+      }
+    }
     const resolved = await this.taxResolver.resolve({
       explicit: dto.taxRate,
       upstream: Number(contractTax[0].taxRate ?? NaN),
@@ -349,14 +378,53 @@ export class InvoiceService {
             eq(erpInvoice.direction, CONTRACT_INVOICED_DIRECTION)
           )
         );
-      const billable = computeBillable(
-        contract.amount,
-        invoicedRows.map((row) => row.amount)
-      );
-      if (dto.amount > billable + 0.001) {
-        throw new BadRequestException(
-          `开票金额超过合同可开金额，当前可开 ${billable}`
+      if (contract.billingModel === 'framework') {
+        if (!dto.projectId) {
+          throw new BadRequestException('框架合同开票必须指定项目');
+        }
+        const projectOnly = await tx
+          .select({ amount: erpInvoice.amount })
+          .from(erpInvoice)
+          .where(
+            and(
+              eq(erpInvoice.projectId, dto.projectId),
+              eq(erpInvoice.status, 'issued'),
+              eq(erpInvoice.direction, CONTRACT_INVOICED_DIRECTION),
+            ),
+          );
+        const revenueRows = await tx
+          .select({ total: sum(erpProjectRevenue.amount) })
+          .from(erpProjectRevenue)
+          .where(
+            and(
+              eq(erpProjectRevenue.projectId, dto.projectId),
+              eq(erpProjectRevenue.status, 'recognized'),
+            ),
+          );
+        const decision = decideFrameworkSalesLimit({
+          headerAmount: Number(contract.amount ?? 0),
+          invoiceAmount: dto.amount,
+          contractInvoiced: invoicedRows.reduce(
+            (total, row) => total + Number(row.amount ?? 0),
+            0,
+          ),
+          projectRevenue: Number(revenueRows[0]?.total ?? 0),
+          projectInvoiced: projectOnly.reduce(
+            (total, row) => total + Number(row.amount ?? 0),
+            0,
+          ),
+        });
+        if (!decision.ok) throw new BadRequestException(decision.reason);
+      } else {
+        const billable = computeBillable(
+          contract.amount,
+          invoicedRows.map((row) => row.amount),
         );
+        if (dto.amount > billable + 0.001) {
+          throw new BadRequestException(
+            `开票金额超过合同可开金额，当前可开 ${billable}`,
+          );
+        }
       }
       if (dto.arId) {
         const arRows = await tx
@@ -399,6 +467,7 @@ export class InvoiceService {
           invoiceDate: dto.invoiceDate ?? todayInShanghai(),
           status: 'issued',
           remark: dto.remark,
+          clientRequestId: dto.clientRequestId ?? null,
         })
         .returning();
     });
@@ -512,6 +581,7 @@ export class InvoiceService {
           invoiceDate: dto.invoiceDate ?? todayInShanghai(),
           status: 'issued',
           remark: dto.remark,
+          clientRequestId: dto.clientRequestId ?? null,
         })
         .returning();
     });
@@ -767,6 +837,9 @@ export class InvoiceService {
       .limit(1);
     if (existingRows.length === 0) throw new NotFoundException('发票记录不存在');
     const existing = existingRows[0];
+    if (Object.prototype.hasOwnProperty.call(dto, 'direction')) {
+      throw new BadRequestException('已开具发票不能修改方向，请作废后重新登记');
+    }
 
     /* 本次请求里显式出现的字段（`!== undefined` 才算"要改"） */
     const presentKeys = Object.entries(dto)
@@ -838,10 +911,11 @@ export class InvoiceService {
      * 走重建分支，会把一张从未入账的销项票补成一张收入/销项税凭证，导致
      * 收入、销项税、应收三重重复。这里必须按方向收口：只有进项票才允许重建。
      */
-    const rebuildVoucher = shouldRebuildInvoiceVoucher(
-      dto.direction ?? existing.direction,
+    let rebuildVoucher = shouldRebuildInvoiceVoucher(
+      existing.direction,
       decision,
     );
+    let voidExisting = voucherStatus != null && voucherStatus !== 'voided';
 
     /* ── 组装 patch（金额/税率变化必须重算价税分离）── */
     const patch: Partial<typeof erpInvoice.$inferInsert> = {};
@@ -852,7 +926,6 @@ export class InvoiceService {
       patch.arId = dto.arId;
     }
     if (dto.invoiceType !== undefined) patch.invoiceType = dto.invoiceType;
-    if (dto.direction !== undefined) patch.direction = dto.direction;
     if (dto.projectId !== undefined) patch.projectId = dto.projectId;
     if (dto.contractId !== undefined) patch.contractId = dto.contractId;
     if (dto.supplierId !== undefined) patch.supplierId = dto.supplierId;
@@ -891,7 +964,7 @@ export class InvoiceService {
       customerIdForRate = cRows[0].customerId;
       taxEntityIdForRate = cRows[0].taxEntityId;
     }
-    const isPurchase = (dto.direction ?? existing.direction) === 'purchase';
+    const isPurchase = (existing.direction ?? 'sales') === 'purchase';
     /*
      * 销售发票 PATCH 也必须复用「合同可开金额」校验（与 createSalesInvoice 同口径）。
      * 否则可以先生成 1 元发票、再 PATCH 到 1,000,000，绕过开票上限。
@@ -917,7 +990,13 @@ export class InvoiceService {
         upstreamContractAmount ?? 0,
         otherInvoices.map((row) => row.amount),
       );
-      if (newAmount > billable + 0.01) {
+      const amountCents = yuanToCents(newAmount);
+      const billableCents = yuanToCents(billable);
+      if (
+        amountCents == null ||
+        billableCents == null ||
+        amountCents > billableCents + 1n
+      ) {
         throw new BadRequestException(
           `开票金额 ${newAmount} 超过合同可开金额 ${billable}（合同额 − 其他已开销项发票）`,
         );
@@ -932,7 +1011,11 @@ export class InvoiceService {
     });
     const split = splitTax(newAmount, resolved.rate);
     if (dto.amount !== undefined || affecting.length > 0) {
-      patch.amount = String(newAmount);
+      const amountStored = moneyText(newAmount);
+      if (amountStored == null) {
+        throw new BadRequestException('开票金额无法换算到分');
+      }
+      patch.amount = amountStored;
       patch.taxRate = String(resolved.rate);
       patch.netAmount = String(split.net);
       patch.taxAmount = String(split.tax);
@@ -948,7 +1031,35 @@ export class InvoiceService {
     /* ── 作废旧凭证（若需重建）→ 写发票（同一事务）→ 重建凭证 ── */
     let row: typeof erpInvoice.$inferSelect | undefined;
     await this.db.transaction(async (tx) => {
-      if (rebuildVoucher && voucherStatus !== null) {
+      await tx
+        .select({ id: erpInvoice.id })
+        .from(erpInvoice)
+        .where(eq(erpInvoice.id, id))
+        .for('update');
+      if (affecting.length > 0) {
+        const lockedVouchers = await tx
+          .select({ status: finVoucher.status })
+          .from(finVoucher)
+          .where(
+            and(
+              eq(finVoucher.sourceType, 'invoice'),
+              eq(finVoucher.sourceRef, `invoice:${existing.invoiceNo ?? existing.code}`),
+            ),
+          )
+          .orderBy(sql`case when ${finVoucher.status} = 'voided' then 1 else 0 end`)
+          .limit(1)
+          .for('update');
+        const lockedStatus = (lockedVouchers[0]?.status as typeof voucherStatus) ?? null;
+        const lockedDecision = decideInvoiceEdit({
+          invoiceStatus: existing.status ?? 'issued',
+          voucherStatus: lockedStatus,
+          touchesVoucherFields: true,
+        });
+        if (!lockedDecision.ok) throw new BadRequestException(lockedDecision.reason);
+        rebuildVoucher = shouldRebuildInvoiceVoucher(existing.direction, lockedDecision);
+        voidExisting = lockedStatus != null && lockedStatus !== 'voided';
+      }
+      if (rebuildVoucher && voidExisting) {
         /*
          * 先作废：`generateVoucherDraft` 视"非 voided 的同 sourceRef 凭证"为
          * 已出凭证，不作废就不会生成新的一张。
@@ -1003,4 +1114,15 @@ export class InvoiceService {
 
     return this.getInvoiceItem(id);
   }
+}
+
+function isUniqueViolation(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  if (message.includes('23505') || message.includes('uq_erp_invoice_client_request')) {
+    return true;
+  }
+  if (error && typeof error === 'object' && 'code' in error) {
+    return String((error as { code: unknown }).code) === '23505';
+  }
+  return false;
 }

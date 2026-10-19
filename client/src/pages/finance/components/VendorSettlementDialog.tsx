@@ -27,6 +27,7 @@ import React, { useEffect, useState } from 'react';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useForm } from 'react-hook-form';
 import { toast } from 'sonner';
+import { Explained } from '@client/src/components/erp/ItemHelp';
 import { Table, TableColumnsType } from 'antd';
 import DateField from '@client/src/components/erp/DateField';
 import { DataState } from '@client/src/components/DataState';
@@ -289,7 +290,12 @@ const VendorSettlementDialog: React.FC<VendorSettlementDialogProps> = ({
                 name="dueDate"
                 render={({ field }) => (
                   <FormItem className="flex-1">
-                    <FormLabel>付款到期日</FormLabel>
+                    <Explained
+                      title="付款到期日"
+                      content="这笔供应商结算应在这一天前付款。账龄和提醒从这一天起算。"
+                    >
+                      <FormLabel>付款到期日</FormLabel>
+                    </Explained>
                     <DateField value={field.value} onChange={field.onChange} />
                     <FormMessage />
                   </FormItem>

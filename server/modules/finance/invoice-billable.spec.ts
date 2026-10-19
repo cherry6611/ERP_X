@@ -17,7 +17,11 @@
  *
  * 金额断言一律**精确值**（`toBe`）：金额错了就是真金白银出错，不留容差。
  */
-import { CONTRACT_INVOICED_DIRECTION, computeBillable } from './invoice-billable';
+import {
+  CONTRACT_INVOICED_DIRECTION,
+  computeBillable,
+  decideFrameworkSalesLimit,
+} from './invoice-billable';
 
 describe('computeBillable（合同可开金额）', () => {
   it('无任何已开发票时可开金额 = 合同额', () => {
@@ -65,5 +69,49 @@ describe('computeBillable（合同可开金额）', () => {
     const withPurchaseMixedIn = [31800, 5300];
     expect(computeBillable(contractAmount, salesOnly)).toBe(74200);
     expect(computeBillable(contractAmount, withPurchaseMixedIn)).toBe(68900);
+  });
+});
+
+describe('decideFrameworkSalesLimit', () => {
+  it('项目没有已确认收入时不能开票', () => {
+    expect(
+      decideFrameworkSalesLimit({
+        headerAmount: 0,
+        invoiceAmount: 1,
+        contractInvoiced: 0,
+        projectRevenue: 0,
+        projectInvoiced: 0,
+      }).ok,
+    ).toBe(false);
+  });
+
+  it('无总额框架只按本项目收入封顶', () => {
+    const ok = decideFrameworkSalesLimit({
+      headerAmount: 0,
+      invoiceAmount: 80000,
+      contractInvoiced: 0,
+      projectRevenue: 80000,
+      projectInvoiced: 0,
+    });
+    expect(ok.ok).toBe(true);
+    const over = decideFrameworkSalesLimit({
+      headerAmount: 0,
+      invoiceAmount: 80000.02,
+      contractInvoiced: 0,
+      projectRevenue: 80000,
+      projectInvoiced: 0,
+    });
+    expect(over.ok).toBe(false);
+  });
+
+  it('有总额时全部销项不得超过合同头', () => {
+    const over = decideFrameworkSalesLimit({
+      headerAmount: 1000000,
+      invoiceAmount: 100,
+      contractInvoiced: 1000000,
+      projectRevenue: 500000,
+      projectInvoiced: 0,
+    });
+    expect(over.ok).toBe(false);
   });
 });

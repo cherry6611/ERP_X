@@ -64,6 +64,10 @@ export class CreateAdminRentContractDto implements ICreateAdminRentContractDto {
   paymentCycle?: 'monthly' | 'quarterly' | 'half_yearly' | 'yearly';
 
   @IsOptional()
+  @IsUUID()
+  taxEntityId?: string;
+
+  @IsOptional()
   @IsString()
   remark?: string;
 }

@@ -5,6 +5,7 @@ import {
   CONTRACT_FROZEN_FIELDS,
   CONTRACT_FROZEN_MESSAGE,
   CONTRACT_FROZEN_STATUSES,
+  CONTRACT_ENTITY_LOCKED_MESSAGE,
   contractUpdateBlockReason,
 } from './contract-update-guard';
 
@@ -80,6 +81,13 @@ describe('contractUpdateBlockReason', () => {
       ).toBe(CONTRACT_AMOUNT_LOCKED_MESSAGE);
     });
 
+    it('非草稿改签约主体 → 拒绝', () => {
+      expect(contractUpdateBlockReason('active', { taxEntityId: 'entity-b' })).toBe(
+        CONTRACT_ENTITY_LOCKED_MESSAGE,
+      );
+      expect(contractUpdateBlockReason('draft', { taxEntityId: 'entity-b' })).toBeNull();
+    });
+
     it('判据是"字段出现即拒"，未改动的 customerId 也会被拒 —— 前端必须只下发改动字段', () => {
       // 与既有 amount 守卫同一语义；`contract-edit-model.spec.ts` 从另一侧钉住前端行为
       expect(contractUpdateBlockReason('active', { customerId: 'c-1' })).toBe(
@@ -121,8 +129,12 @@ describe('contractUpdateBlockReason', () => {
   });
 
   describe('常量与判据的对应关系（防止"加了字段忘了加判据"）', () => {
-    it('限草稿集合恰好是 amount 与 customerId', () => {
-      expect([...CONTRACT_DRAFT_ONLY_FIELDS].sort()).toEqual(['amount', 'customerId']);
+    it('限草稿集合包含金额、客户和签约主体', () => {
+      expect([...CONTRACT_DRAFT_ONLY_FIELDS].sort()).toEqual([
+        'amount',
+        'customerId',
+        'taxEntityId',
+      ]);
     });
 
     it('冻结集合与限草稿集合不相交（否则同一字段会有两条互相矛盾的判据）', () => {

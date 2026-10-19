@@ -6,6 +6,7 @@ import { toast } from 'sonner';
 import { CanCapability, CanCapabilityWrite } from '@client/src/platform/auth';
 import { DataState } from '@client/src/components/DataState';
 import StatusBadge from '@client/src/components/erp/StatusBadge';
+import { Explained } from '@client/src/components/erp/ItemHelp';
 import { Button } from '@client/src/components/ui/button';
 import {
   Dialog,
@@ -257,7 +258,12 @@ const ProjectDetailDialog: React.FC<ProjectDetailDialogProps> = ({
                   name="progress"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>进度（%）</FormLabel>
+                      <Explained
+                        title="进度"
+                        content="有里程碑权重时，进度按已达成的权重自动重算。没有里程碑时可以手工填。进度不会自动确认收入或开票。"
+                      >
+                        <FormLabel>进度（%）</FormLabel>
+                      </Explained>
                       <FormControl>
                         <Input
                           type="number"
@@ -279,7 +285,12 @@ const ProjectDetailDialog: React.FC<ProjectDetailDialogProps> = ({
                   name="estimatedTotalCost"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>预计总成本（元）</FormLabel>
+                      <Explained
+                        title="预计总成本"
+                        content="用来提前看项目会不会超支，不参与费用能否提交的判断。费用控制看的是预算基线。"
+                      >
+                        <FormLabel>预计总成本（元）</FormLabel>
+                      </Explained>
                       <FormControl>
                         <Input
                           type="number"

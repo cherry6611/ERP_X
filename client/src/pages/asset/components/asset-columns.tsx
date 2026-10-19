@@ -15,6 +15,7 @@
  * 状态的重置时机，那是行为变更，不是本次拆分的范围。
  */
 import { TableColumnsType } from 'antd';
+import { ColumnHelpTitle } from '@client/src/components/erp/ItemHelp';
 import { AssetStatusBadge, ASSET_CATEGORY_LABELS } from './AssetStatusBadge';
 import { Button } from '@client/src/components/ui/button';
 import { formatMoney } from '@client/src/utils/format';
@@ -44,13 +45,23 @@ export function assetColumns({
       render: (v: number) => formatMoney(v),
     },
     {
-      title: '残值',
+      title: (
+        <ColumnHelpTitle
+          title="残值"
+          content="折旧到这个金额后不再计提。净值是原值减去已提折旧和减值。"
+        />
+      ),
       dataIndex: 'residualValue',
       width: 100,
       render: (v: number) => formatMoney(v),
     },
     {
-      title: '净值',
+      title: (
+        <ColumnHelpTitle
+          title="净值"
+          content="原值减去累计折旧和减值之后还剩的金额。残值是折旧的终点，不是净值。"
+        />
+      ),
       dataIndex: 'netValue',
       width: 110,
       render: (v: number) => (

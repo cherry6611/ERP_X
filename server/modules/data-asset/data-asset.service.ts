@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ForbiddenException,
   Inject,
   Injectable,
   Logger,
@@ -9,7 +10,9 @@ import {
   DRIZZLE_DATABASE,
   type PostgresJsDatabase,
 } from '@server/platform';
-import { and, asc, count, desc, eq, lte } from 'drizzle-orm';
+import { and, asc, count, desc, eq, inArray, isNotNull, lte, or, sql, type SQL } from 'drizzle-orm';
+import type { RequestActor } from '@server/common/auth/actor';
+import { ProjectAclService } from '@server/modules/projects/project-acl.service';
 import {
   daDataset,
   daDatasetField,
@@ -21,6 +24,7 @@ import {
 } from '@server/database/schema';
 import { generateBizCode } from '@server/common/utils/biz-code';
 import { buildDatasetUpdatePlan } from './dataset-patch';
+import { datasetInScope } from './dataset-scope';
 import {
   GRANT_REVOKE_REASON_LABELS,
   MASK_LEVELS,
@@ -112,7 +116,8 @@ export class DataAssetService {
   private readonly logger = new Logger(DataAssetService.name);
 
   constructor(
-    @Inject(DRIZZLE_DATABASE) private readonly db: PostgresJsDatabase
+    @Inject(DRIZZLE_DATABASE) private readonly db: PostgresJsDatabase,
+    private readonly projectAcl: ProjectAclService,
   ) {}
 
   private toDataset(row: DatasetRow): DatasetItem {
@@ -154,9 +159,19 @@ export class DataAssetService {
   async listDatasets(
     status?: string,
     page = 1,
-    pageSize = 20
+    pageSize = 20,
+    actor?: RequestActor,
   ): Promise<PagedResult<DatasetItem>> {
-    const where = status ? eq(daDataset.status, status) : undefined;
+    const filters = [];
+    if (status) filters.push(eq(daDataset.status, status));
+    const scope = await this.readScope(actor);
+    if (!scope.unrestricted) {
+      if (scope.contractIds.length === 0) {
+        return { items: [], total: 0, page, pageSize };
+      }
+      filters.push(inArray(daDataset.contractId, scope.contractIds));
+    }
+    const where = filters.length > 0 ? and(...filters) : undefined;
     const rows: DatasetRow[] = await this.db
       .select({
         id: daDataset.id,
@@ -305,11 +320,16 @@ export class DataAssetService {
     datasetId?: string,
     status?: string,
     page = 1,
-    pageSize = 20
+    pageSize = 20,
+    actor?: RequestActor,
   ): Promise<PagedResult<GrantItem>> {
-    const conditions = [];
+    const conditions: SQL[] = [];
     if (datasetId) conditions.push(eq(daGrant.datasetId, datasetId));
     if (status) conditions.push(eq(daGrant.status, status));
+    const scope = await this.readScope(actor);
+    const scoped = this.grantScopeSql(scope);
+    if (scoped === 'none') return { items: [], total: 0, page, pageSize };
+    if (scoped) conditions.push(scoped);
     const where =
       conditions.length > 0 ? and(...conditions) : undefined;
     const rows: GrantRow[] = await this.db
@@ -340,6 +360,7 @@ export class DataAssetService {
     const totalRows: Array<{ total: number }> = await this.db
       .select({ total: count() })
       .from(daGrant)
+      .leftJoin(daDataset, eq(daGrant.datasetId, daDataset.id))
       .where(where);
     return {
       items: rows.map((row: GrantRow) => this.toGrant(row)),
@@ -480,15 +501,29 @@ export class DataAssetService {
     datasetId?: string;
     page?: number;
     pageSize?: number;
+    actor?: RequestActor;
   }): Promise<PagedResult<GrantRevokeLogItem>> {
     const page = Math.max(1, params.page ?? 1);
     const pageSize = Math.min(Math.max(params.pageSize ?? 20, 1), 200);
-    const conditions = [];
+    const conditions: SQL[] = [];
     if (params.grantId) {
       conditions.push(eq(daGrantRevokeLog.grantId, params.grantId));
     }
     if (params.datasetId) {
       conditions.push(eq(daGrantRevokeLog.datasetId, params.datasetId));
+    }
+    const scope = await this.readScope(params.actor);
+    if (!scope.unrestricted) {
+      if (scope.contractIds.length === 0) {
+        return { items: [], total: 0, page, pageSize };
+      }
+      conditions.push(inArray(
+        daGrantRevokeLog.datasetId,
+        this.db
+          .select({ id: daDataset.id })
+          .from(daDataset)
+          .where(inArray(daDataset.contractId, scope.contractIds)),
+      ));
     }
     const where = conditions.length > 0 ? and(...conditions) : undefined;
     const totalRows = await this.db
@@ -529,8 +564,12 @@ export class DataAssetService {
 
   /* ========== C-13 脱敏字段登记与预览 ========== */
 
-  async listDatasetFields(datasetId: string): Promise<DatasetFieldItem[]> {
-    await this.ensureDatasetExists(datasetId);
+  async listDatasetFields(
+    datasetId: string,
+    actor?: RequestActor,
+  ): Promise<DatasetFieldItem[]> {
+    if (actor) await this.assertDatasetVisible(datasetId, actor);
+    else await this.ensureDatasetExists(datasetId);
     const rows = await this.db
       .select()
       .from(daDatasetField)
@@ -608,13 +647,15 @@ export class DataAssetService {
    */
   async previewMasking(
     datasetId: string,
-    sample: Record<string, unknown>
+    sample: Record<string, unknown>,
+    actor?: RequestActor,
   ): Promise<{
     maskLevel: MaskLevel;
     maskLevelLabel: string;
     masked: Record<string, unknown>;
     blockedColumns: string[];
   }> {
+    await this.assertDatasetVisible(datasetId, actor);
     const dataset = await this.getDatasetById(datasetId);
     const fields = await this.listDatasetFields(datasetId);
     const fieldKinds: Record<string, SensitiveFieldKind> = {};
@@ -666,6 +707,56 @@ export class DataAssetService {
     };
   }
 
+  private async readScope(actor?: RequestActor): Promise<
+    | { unrestricted: true }
+    | { unrestricted: false; contractIds: string[]; projectIds: string[] }
+  > {
+    if (!actor) return { unrestricted: false, contractIds: [], projectIds: [] };
+    const visible = await this.projectAcl.visibleProjectIds(actor);
+    if (!visible) return { unrestricted: true };
+    if (visible.length === 0) {
+      return { unrestricted: false, contractIds: [], projectIds: [] };
+    }
+    const contracts = await this.db
+      .select({ contractId: erpProject.contractId })
+      .from(erpProject)
+      .where(and(inArray(erpProject.id, visible), isNotNull(erpProject.contractId)));
+    const contractIds = contracts
+      .map((row) => row.contractId)
+      .filter((id): id is string => id != null);
+    return { unrestricted: false, contractIds, projectIds: visible };
+  }
+
+  /** 授权按数据集合同或授权上的项目收窄。两边都空则调用方直接返回空集。 */
+  private grantScopeSql(
+    scope: Awaited<ReturnType<DataAssetService['readScope']>>,
+  ): SQL | 'none' | undefined {
+    if (scope.unrestricted) return undefined;
+    const parts: SQL[] = [];
+    if (scope.contractIds.length > 0) {
+      parts.push(inArray(daDataset.contractId, scope.contractIds));
+    }
+    if (scope.projectIds.length > 0) {
+      parts.push(inArray(daGrant.projectId, scope.projectIds));
+    }
+    if (parts.length === 0) return 'none';
+    if (parts.length === 1) return parts[0];
+    return or(...parts);
+  }
+
+  private async assertDatasetVisible(id: string, actor?: RequestActor): Promise<void> {
+    const rows = await this.db
+      .select({ contractId: daDataset.contractId })
+      .from(daDataset)
+      .where(eq(daDataset.id, id))
+      .limit(1);
+    if (rows.length === 0) throw new NotFoundException('数据集不存在');
+    const scope = await this.readScope(actor);
+    if (!datasetInScope(rows[0].contractId, scope)) {
+      throw new ForbiddenException('无权查看该数据集');
+    }
+  }
+
   private async ensureDatasetExists(id: string): Promise<void> {
     const rows = await this.db
       .select({ id: daDataset.id })
@@ -705,9 +796,14 @@ export class DataAssetService {
 
   /* ========== 到期预警 ========== */
 
-  async listGrantWarnings(): Promise<GrantWarningItem[]> {
+  async listGrantWarnings(actor?: RequestActor): Promise<GrantWarningItem[]> {
     const today = getToday();
     const limitDate = getTodayPlusDays(WARN_WINDOW_DAYS);
+    const scope = await this.readScope(actor);
+    const scoped = this.grantScopeSql(scope);
+    if (scoped === 'none') return [];
+    const filters: SQL[] = [eq(daGrant.status, 'active'), lte(daGrant.endDate, limitDate)];
+    if (scoped) filters.push(scoped);
     const rows = await this.db
       .select({
         grantId: daGrant.id,
@@ -719,7 +815,7 @@ export class DataAssetService {
       .from(daGrant)
       .leftJoin(daDataset, eq(daGrant.datasetId, daDataset.id))
       .leftJoin(mdCustomer, eq(daGrant.customerId, mdCustomer.id))
-      .where(and(eq(daGrant.status, 'active'), lte(daGrant.endDate, limitDate)))
+      .where(and(...filters))
       .orderBy(asc(daGrant.endDate));
     return rows.map(
       (row: {
