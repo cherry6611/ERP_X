@@ -2,7 +2,7 @@
 
 晟笙数据服务的一体化经营系统，版本 **2.4.0**。合同、项目、采购、成本、收入、应收应付、总账和报表在同一套账上运转，单据按**纳税主体**归属开票、计税和结账。
 
-运行时要求 **Node.js 22**（见 `.nvmrc`）和 **PostgreSQL 16**。仓库地址：<https://github.com/cherry6611/CS-ERP>（私有）。
+运行时要求 **Node.js 22**（见 `.nvmrc`）和 **PostgreSQL 16**。仓库地址：<https://github.com/cherry6611/ERP_X>。
 
 这份文档给要跑起来、要改代码、要核对账的人。排障步骤、备份回滚和发布检查的操作细节在 [docs/RUNBOOK.md](docs/RUNBOOK.md)。某个后端模块的表、接口和状态机，以该目录下的 `README.md` 为准。
 
