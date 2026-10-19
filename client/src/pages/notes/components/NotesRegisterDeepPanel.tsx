@@ -35,7 +35,7 @@ const NotesRegisterDeepPanel: React.FC<NotesRegisterDeepPanelProps> = ({
       {deep && (
         <div className="flex flex-col gap-4">
           <h3 className="text-base font-semibold">
-            备查簿深化（D-02）
+            备查簿深化
           </h3>
 
           {/* 票号连续性：《票据管理实施办法》要求备查簿连续登记 */}
@@ -223,3 +223,4 @@ const NotesRegisterDeepPanel: React.FC<NotesRegisterDeepPanelProps> = ({
 };
 
 export default NotesRegisterDeepPanel;
+
